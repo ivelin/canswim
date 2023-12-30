@@ -1,2 +1,2 @@
 # canswim
-Toolkit for CANSLIM practitioners
+Toolkit for CANSLIM investment system practitioners
