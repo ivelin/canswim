@@ -1,4 +1,2 @@
-*.tar
-checkpoints/**
-**/*.ckpt
+darts_logs/**
 
