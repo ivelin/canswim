@@ -1,3 +1,4 @@
 darts_logs/**
 data/**
 .env.*
+tmp/**
