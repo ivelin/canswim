@@ -1,3 +1,4 @@
+dotenv
 darts
 yfinance
 fmpsdk
