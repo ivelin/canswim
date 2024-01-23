@@ -2,3 +2,4 @@ darts_logs/**
 data/**
 .env.*
 tmp/**
+**/my_package.egg-info/**
