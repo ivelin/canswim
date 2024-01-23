@@ -48,3 +48,19 @@ def prepare_ticker_series(ticker_dict=None, train_date_start=None):
     print('Added holidays to ticker series.')
     print('Ticker series prepared.')
     return ticker_series
+
+def prepare_target_series(ticker_series=None, target_columns=None):
+    # prepare target univariate series for Close price
+    # target_series = {t: ticker_series[t].univariate_component('Close') for t in ticker_series.keys()}
+
+    def drop_non_target_columns(series):
+        cols = series.columns
+        non_target_columns = list(set(cols) - set(target_columns))
+        new_series = series.drop_columns(col_names=non_target_columns)
+        # print(f'dropped non-target columns: {non_target_columns}')
+        return new_series
+
+    # prepare target multivariate series for Open, Close and Volume
+    target_series = {t: drop_non_target_columns(s) for t,s in ticker_series.items()}
+
+    target_series    
