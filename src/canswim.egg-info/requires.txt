@@ -1,0 +1,3 @@
+darts
+yfinance
+fmpsdk
