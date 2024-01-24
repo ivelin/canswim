@@ -62,5 +62,4 @@ def prepare_target_series(ticker_series=None, target_columns=None):
 
     # prepare target multivariate series for Open, Close and Volume
     target_series = {t: drop_non_target_columns(s) for t,s in ticker_series.items()}
-
-    target_series    
+    return target_series
