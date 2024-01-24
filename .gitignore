@@ -5,3 +5,5 @@ tmp/**
 **/my_package.egg-info/**
 **/__pycache__/**
 **/__pycache__/**
+**/canswim.egg-info/**
+.vscode
