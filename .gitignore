@@ -3,3 +3,5 @@ data/**
 .env.*
 tmp/**
 **/my_package.egg-info/**
+**/__pycache__/**
+**/__pycache__/**
