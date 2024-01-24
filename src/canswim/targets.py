@@ -1,3 +1,6 @@
+
+from typing import Union
+
 from darts import TimeSeries
 from darts.dataprocessing.transformers import MissingValuesFiller
 import pandas as pd
@@ -29,7 +32,7 @@ def prepare_ticker_series(ticker_dict=None, train_date_start=None):
     filler = MissingValuesFiller()
     for t, series in ticker_series.items():
         gaps = series.gaps(mode='any')
-        print(f'ticker: {t} gaps: \n {gaps}')
+        # print(f'ticker: {t} gaps: \n {gaps}')
         series_filled = filler.transform(series)
         # check for any data gaps
         gaps_filled = series_filled.gaps(mode='any')
@@ -49,9 +52,7 @@ def prepare_ticker_series(ticker_dict=None, train_date_start=None):
     print('Ticker series prepared.')
     return ticker_series
 
-def prepare_target_series(ticker_series=None, target_columns=None):
-    # prepare target univariate series for Close price
-    # target_series = {t: ticker_series[t].univariate_component('Close') for t in ticker_series.keys()}
+def prepare_target_series(ticker_series=None, target_columns: Union[str,list] = None):
 
     def drop_non_target_columns(series):
         cols = series.columns
@@ -60,6 +61,15 @@ def prepare_target_series(ticker_series=None, target_columns=None):
         # print(f'dropped non-target columns: {non_target_columns}')
         return new_series
 
-    # prepare target multivariate series for Open, Close and Volume
-    target_series = {t: drop_non_target_columns(s) for t,s in ticker_series.items()}
+    if type(target_columns) is list and len(target_columns) == 1:
+        target_columns = target_columns[0]
+
+    if type(target_columns) is str:
+        # prepare target univariate series for Close price
+        target_series = {t: ticker_series[t].univariate_component(target_columns) for t in ticker_series.keys()}
+        print(f'Preparing univariate target series: {target_columns}')
+    else:
+        # prepare target multivariate series for Open, Close and Volume
+        target_series = {t: drop_non_target_columns(s) for t,s in ticker_series.items()}
+        print(f'Preparing multivariate target series: {target_columns}')
     return target_series
