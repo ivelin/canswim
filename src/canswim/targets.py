@@ -1,6 +1,7 @@
 from typing import Union
 
 from darts.dataprocessing.transformers import MissingValuesFiller
+from darts import TimeSeries
 import pandas as pd
 
 
@@ -12,9 +13,13 @@ class Targets:
     def load_data(self):
         self.load_stock_prices()
 
+    @property
+    def all_stock_tickers(self):
+        stock_tickers = list(set(self.stock_price_dict.keys()))
+        return stock_tickers
+
     def __get_stock_tickers(self, stocks_df=None):
         stock_tickers = stocks_df.columns.levels[0]
-        self.all_stock_tickers = set(list(self.stock_price_dict.keys()))
         return stock_tickers
 
     def load_stock_prices(self):
@@ -36,8 +41,8 @@ class Targets:
                 # print(f'ticker historic data: {ticker_dict[t]}')
         self.stock_price_dict = stock_price_dict
 
-    def prepare_target_series(
-        stock_price_series: dict = None, target_columns: Union[str, list] = None
+    def prepare_data(
+        self, stock_price_series: dict = None, target_columns: Union[str, list] = None
     ):
         def drop_non_target_columns(series):
             cols = series.columns
@@ -63,4 +68,32 @@ class Targets:
                 t: drop_non_target_columns(s) for t, s in stock_price_series.items()
             }
             print(f"Preparing multivariate target series: {target_columns}")
-        return target_series
+        self.target_series = target_series
+
+    def prepare_stock_price_series(
+        self, tickers: set = None, train_date_start: pd.Timestamp = None
+    ):
+        print(f"Preparing ticker series for {len(tickers)} stocks.")
+        stock_price_series = {
+            t: TimeSeries.from_dataframe(self.stock_price_dict[t], freq="B")
+            for t in tickers
+        }
+        print("Ticker series dict created.")
+        filler = MissingValuesFiller()
+        for t, series in stock_price_series.items():
+            # gaps = series.gaps(mode="any")
+            # print(f'ticker: {t} gaps: \n {gaps}')
+            series_filled = filler.transform(series)
+            # check for any data gaps
+            price_gaps = series_filled.gaps(mode="any")
+            assert len(price_gaps) == 0
+            # print(f'ticker: {t} gaps after filler: \n {any_price_gaps}')
+            stock_price_series[t] = series_filled
+        print("Filled missing values in ticker series.")
+        for t, series in stock_price_series.items():
+            stock_price_series[t] = series.slice(train_date_start, series.end_time())
+            # print(f'ticker: {t} , {ticker_series[t]}')
+        # add holidays as future covariates
+        print("Aligned ticker series dict with train start date.")
+        print("Ticker series prepared.")
+        return stock_price_series
