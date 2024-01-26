@@ -353,7 +353,7 @@ class Covariates:
         prange = range(1, n_future_periods + 1)
         assert est_shifted_df.index.is_unique == True
         est_shifted_df = est_shifted_df.shift(
-            periods=prange, suffix="_p"
+            periods=prange, suffix=f"_p_{period}"
         )  # freq=fiscal_freq[period],
         # print('est_shifted_df\n', est_shifted_df)
         # est_shifted_df.add_suffix(f'_p{n}')
