@@ -1,3 +1,4 @@
+from matplotlib import dates
 from pandas.tseries.offsets import BDay
 import matplotlib.pyplot as plt
 from darts.utils.statistics import plot_acf
@@ -68,11 +69,11 @@ class CanswimModel:
             # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
             torch.set_float32_matmul_precision("high")  #  | 'medium'
 
-    def align_targets_and_covariates():
+    def align_targets_and_covariates(self):
         # focus on tickers that we have full data sets for training and validation
-        target_set = set(target_series.keys())
-        future_set = set(future_covariates.keys())
-        past_set = set(past_covariates.keys())
+        target_set = set(self.targets.target_series.keys())
+        future_set = set(self.covariates.future_covariates.keys())
+        past_set = set(self.covariates.past_covariates.keys())
         tickers_with_complete_data = target_set & future_set & past_set
         tickers_without_complete_data = (
             target_set | future_set | past_set
@@ -80,39 +81,34 @@ class CanswimModel:
         print(
             f"Removing time series for tickers with incomplete data sets: {tickers_without_complete_data}. Keeping {tickers_with_complete_data} "
         )
-
         new_target_series = {}
         new_future_covariates = {}
         new_past_covariates = {}
-
         for t in tickers_with_complete_data:
-            new_target_series[t] = target_series[t]
-            new_future_covariates[t] = future_covariates[t]
-            new_past_covariates[t] = past_covariates[t]
-
-        target_series = new_target_series
-        future_covariates = new_future_covariates
-        past_covariates = new_past_covariates
-
+            new_target_series[t] = self.targets.target_series[t]
+            new_future_covariates[t] = self.covariates.future_covariates[t]
+            new_past_covariates[t] = self.covariates.past_covariates[t]
         # align targets with past covs
-        for t, covs in past_covariates.items():
-            ts_sliced = target_series[t].slice_intersect(covs)
-            target_series[t] = ts_sliced
+        for t, covs in new_past_covariates.items():
+            ts_sliced = new_target_series[t].slice_intersect(covs)
+            new_target_series[t] = ts_sliced
             covs_sliced = covs.slice_intersect(ts_sliced)
-            past_covariates[t] = covs_sliced
-
+            new_past_covariates[t] = covs_sliced
         # align targets with future covs
-        for t, covs in future_covariates.items():
-            ts_sliced = target_series[t].slice_intersect(covs)
-            target_series[t] = ts_sliced
+        for t, covs in new_future_covariates.items():
+            ts_sliced = new_target_series[t].slice_intersect(covs)
+            new_target_series[t] = ts_sliced
             covs_sliced = covs.slice_intersect(ts_sliced)
-            future_covariates[t] = covs_sliced
+            new_future_covariates[t] = covs_sliced
+        # apply updates to model series
+        self.targets.target_series = new_target_series
+        self.covariates.past_covariates = new_past_covariates
+        self.covariates.future_covariates = new_future_covariates
 
     def __prepare_data_splits(self):
-        for t, target in self.target_series.items():
+        for t, target in self.targets.target_series.items():
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
             self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
-        for t, target in self.target_series.items():
             if len(target) > self.min_samples:
                 print(f"preparing train, val split for {t}")
                 print(f"{t} test_start: {self.test_start[t]}")
@@ -126,19 +122,18 @@ class CanswimModel:
                 assert len(train.gaps().index) == 0
                 assert (
                     len(val) >= self.n_test_range_days
-                ), f"val samples {len(val)} but must be at least {n_test_range_days}"
+                ), f"val samples {len(val)} but must be at least {self.n_test_range_days}"
                 assert (
-                    len(test) >= n_test_range_days
-                ), f"test samples {len(test)} but must be at least {n_test_range_days}"
+                    len(test) >= self.n_test_range_days
+                ), f"test samples {len(test)} but must be at least {self.n_test_range_days}"
                 self.train_series[t] = train
                 self.val_series[t] = val
                 self.test_series[t] = test
-                past_train, past_val = self.past_covariates[t].split_before(
-                    self.val_start[t]
-                )
+                past_cov = self.covariates.past_covariates[t]
+                past_train, past_val = past_cov.split_before(self.val_start[t])
                 past_val, past_test = past_val.split_before(self.test_start[t])
                 # there should be no gaps in the training data
-                assert len(past_train.gaps().index) == 0
+                assert len(past_train.gaps()) == 0
                 self.past_covariates_train[t] = past_train
                 self.past_covariates_val[t] = past_val
                 self.past_covariates_test[t] = past_test
@@ -174,53 +169,28 @@ class CanswimModel:
         ]
         # print(len(past_cov_test_list))
         self.future_cov_list = [
-            series for ticker, series in sorted(self.future_covariates.items())
+            series
+            for ticker, series in sorted(self.covariates.future_covariates.items())
         ]
         # print(len(future_cov_list))
 
     def __drop_incomplete_series(self):
         # remove tickers that don't have sufficient training data
         target_series_ok = {}
-        for t, target in self.target_series.items():
+        for t, target in self.targets.target_series.items():
             # only include tickers with sufficient data for training
             if len(target) >= self.min_samples:
                 target_series_ok[t] = target
             else:
-                del self.past_covariates[t]
-                del self.future_covariates[t]
+                del self.covariates.past_covariates[t]
+                del self.covariates.future_covariates[t]
                 # print(f'preparing train, val split for {t}')
                 print(f"Removing {t} from training loop. Not enough samples")
-        return target_series_ok
+        self.targets.target_series = target_series_ok
 
     @property
     def stock_tickers(self):
         return self.__stock_tickers
-
-    def __prepare_stock_price_series(self, tickers: set = None, train_date_start=None):
-        print(f"Preparing ticker series for {len(tickers)} stocks.")
-        stock_price_series = {
-            t: TimeSeries.from_dataframe(self.stock_price_dict[t], freq="B")
-            for t in tickers
-        }
-        print("Ticker series dict created.")
-        filler = MissingValuesFiller()
-        for t, series in stock_price_series.items():
-            # gaps = series.gaps(mode="any")
-            # print(f'ticker: {t} gaps: \n {gaps}')
-            series_filled = filler.transform(series)
-            # check for any data gaps
-            any_price_gaps = series_filled.gaps(mode="any")
-            assert not any_price_gaps
-            # print(f'ticker: {t} gaps after filler: \n {any_price_gaps}')
-            stock_price_series[t] = series_filled
-        print("Filled missing values in ticker series.")
-        for t, series in stock_price_series.items():
-            stock_price_series[t] = series.slice(train_date_start, series.end_time())
-            # print(f'ticker: {t} , {ticker_series[t]}')
-        # add holidays as future covariates
-        print("Aligned ticker series dict with train start date.")
-        print("Ticker series prepared.")
-        return stock_price_series
 
     def prepare_data(self):
         # reduce ticker set to a workable sample size for one training loop
@@ -231,24 +201,22 @@ class CanswimModel:
 
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
-        self.stock_price_series = self.__prepare_stock_price_series(
+        self.stock_price_series = self.targets.prepare_stock_price_series(
             tickers=self.stock_tickers, train_date_start=self.train_date_start
         )
         # prepare target time series
         target_columns = ["Close"]
-        self.target_series = self.targets.prepare_target_series(
+        self.targets.prepare_data(
             stock_price_series=self.stock_price_series, target_columns=target_columns
         )
-        # prepare past covariates
-        self.past_covariates = self.covariates.prepare_past_covariates(
-            stock_price_series=self.stock_price_series, target_columns=target_columns
+
+        self.covariates.prepare_data(
+            stock_price_series=self.stock_price_series,
+            target_columns=target_columns,
+            train_date_start=self.train_date_start,
+            min_samples=self.min_samples,
         )
-        # prepare future covariates
-        self.future_covariates = self.covariates.prepare_future_covariates(
-            ticker_series=self.ticker_series, min_samples=self.min_samples
-        )
-        target_series_ok = self.__drop_incomplete_series()
-        target_series = target_series_ok
+        self.__drop_incomplete_series()
         print(f"Preparing train, val, test splits")
         self.__prepare_data_splits()
 
@@ -383,7 +351,7 @@ class CanswimModel:
         axes2 = {}
         for i in range(self.n_plot_samples):
             axes2[i] = axes[i].twinx()
-        for i, t in enumerate(self.target_series.keys()):
+        for i, t in enumerate(self.targets.target_series.keys()):
             if i > self.n_plot_samples - 1:
                 break
             self.train_series[t]["Close"].plot(
@@ -401,7 +369,7 @@ class CanswimModel:
     def plot_seasonality(self):
         # plot sample of target series
         fig, axes = plt.subplots(nrows=1, ncols=self.n_plot_samples, figsize=(12, 4))
-        for i, t in enumerate(self.target_series.keys()):
+        for i, t in enumerate(self.targets.target_series.keys()):
             if i >= self.n_plot_samples:
                 break
             plot_acf(self.train_series[t]["Close"], alpha=0.05, axis=axes[i])
@@ -443,59 +411,59 @@ class CanswimModel:
         #                                                    )
         self.torch_model = optimal_model
 
-    def save(self):
+    def save_model(self):
         self.torch_model.save(self.saved_model_name)
 
     def load_data(self):
         self.targets.load_data()
         self.covariates.load_data()
 
-    def __get_val_start_list():
+    def __get_val_start_list(self):
         val_start_list = []
-        for t, target in sorted(target_series.items()):
-            val_start_list.append(val_start[t])
+        for t, target in sorted(self.targets.target_series.items()):
+            val_start_list.append(self.val_start[t])
         return val_start_list
 
-    def __get_test_start_list():
+    def __get_test_start_list(self):
         val_test_list = []
-        for t, target in sorted(target_series.items()):
-            val_test_list.append(test_start[t])
+        for t, target in sorted(self.targets.target_series.items()):
+            val_test_list.append(self.test_start[t])
         return val_test_list
 
-    def __get_pred_start(start_times=None, offset=None):
+    def __get_pred_start(self, start_times=None, offset=None):
         pred_start = {}
-        bdays_offset = BDay(n=train_history + offset * pred_horizon)
+        bdays_offset = BDay(n=self.train_history + offset * self.pred_horizon)
         for t, start_time in start_times.items():
             pred_start[t] = start_time + bdays_offset
         return pred_start
 
-    def __get_pred_list(pred_start=None):
+    def __get_pred_list(self, pred_start=None):
         pred_list = []
-        for t, target in sorted(target_series.items()):
+        for t, target in sorted(self.targets.target_series.items()):
             pred_series = target.slice(
                 target.start_time(), pred_start[t] - pd.Timedelta(days=1)
             )
             pred_list.append(pred_series)
         return pred_list
 
-    def __get_past_cov_list(pred_start=None):
+    def __get_past_cov_list(self, pred_start=None):
         past_cov_list = []
-        for t, past_cov in sorted(past_covariates.items()):
+        for t, past_cov in sorted(self.past_covariates.items()):
             past_covs_sliced = past_cov.slice(
                 past_cov.start_time(), pred_start[t] - pd.Timedelta(days=1)
             )
             past_cov_list.append(past_covs_sliced)
         return past_cov_list
 
-    def __get_pred(pred_list=None, past_cov_list=None):
+    def __get_pred(self, pred_list=None, past_cov_list=None):
         # pred2 = model.predict(pred_horizon, series=pred2_series, past_covariates=past_covariates, future_covariates=future_covariates, mc_dropout=True, num_samples=500) #   len(val))
-        pred = model.predict(
-            pred_horizon,
+        pred = self.torch_model.predict(
+            self.pred_horizon,
             series=pred_list,
             mc_dropout=True,
             num_samples=500,
             past_covariates=past_cov_list,
-            future_covariates=future_cov_list,
+            future_covariates=self.future_cov_list,
             num_loader_workers=4,
         )
         return pred
@@ -504,7 +472,7 @@ class CanswimModel:
         pred_test_outputs = []
         # get predictions at several points in time over the validation set
         for w in range(3):
-            pred_start = self.__get_pred_start(start_times=test_start, offset=w)
+            pred_start = self.__get_pred_start(start_times=self.test_start, offset=w)
             pred_list = self.__get_pred_list(pred_start)
             past_cov_list = self.__get_past_cov_list(pred_start)
             # print(f'pred_list: \n{pred_list}')
@@ -514,49 +482,55 @@ class CanswimModel:
         pred_val_outputs = []
         # get predictions at several points in time over the validation set
         for w in range(15):
-            pred_start = get_pred_start(start_times=val_start, offset=w)
-            pred_list = get_pred_list(pred_start)
-            past_cov_list = get_past_cov_list(pred_start)
+            pred_start = self.get_pred_start(start_times=self.val_start, offset=w)
+            pred_list = self.get_pred_list(pred_start)
+            past_cov_list = self.get_past_cov_list(pred_start)
             # print(f'pred_list: \n{pred_list}')
-            pred = get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
+            pred = self.get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
             pred_val_outputs.append(pred)
+        return pred_test_outputs, pred_val_outputs
 
-    def plot_test_results(self):
+    def plot_test_results(
+        self,
+        target: TimeSeries = None,
+        pred_val_outputs: {str: TimeSeries} = None,
+        pred_test_outputs: {str: TimeSeries} = None,
+    ):
         # select a reasonable range of train and val data points for convenient visualization of results
         actual = {}
 
         def plot_actual():
-            for i, t in enumerate(sorted(train_series.keys())):
-                if i < n_plot_samples:
-                    tsliced = target_series[t]
-                    actual[t] = tsliced.slice(val_start[t], target.end_time())
+            for i, t in enumerate(sorted(self.train_series.keys())):
+                if i < self.n_plot_samples:
+                    tsliced = self.targets.target_series[t]
+                    actual[t] = tsliced.slice(self.val_start[t], target.end_time())
                     # ax = actual[t]['Open'].plot(label='actual Open', linewidth=1, ax=axes[i])
                     ax = actual[t]["Close"].plot(
                         label="actual Close", linewidth=1, ax=axes[i]
                     )
-                    vol = past_covariates[t]["Volume"].slice(
-                        val_start[t], target.end_time()
+                    vol = self.past_covariates[t]["Volume"].slice(
+                        self.val_start[t], target.end_time()
                     )
                     vol.plot(label="actual Volume", linewidth=1, ax=axes2[i])
 
         def plot_pred(pred_out=None, past_cov_list=None):
             # pred2 = model.predict(pred_horizon, series=pred2_series, past_covariates=past_covariates, future_covariates=future_covariates, mc_dropout=True, num_samples=500) #   len(val))
-            for i, t in enumerate(sorted(train_series.keys())):
-                if i < n_plot_samples:
+            for i, t in enumerate(sorted(self.train_series.keys())):
+                if i < self.n_plot_samples:
                     # ax = pred_out[i]['Open'].plot(label=f'forecast Open', linewidth=2, ax=axes[i])
                     ax = pred_out[i]["Close"].plot(
                         label=f"forecast Close", linewidth=2, ax=axes[i]
                     )
                     plt.legend()
                     # Major ticks every half year, minor ticks every month,
-                    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=range(13)))
-                    ax.xaxis.set_minor_locator(mdates.MonthLocator())
+                    ax.xaxis.set_major_locator(dates.MonthLocator(bymonth=range(13)))
+                    ax.xaxis.set_minor_locator(dates.MonthLocator())
                     ax.grid(True)
                     ax.set_ylabel(f"{t}")
 
-        fig, axes = plt.subplots(nrows=n_plot_samples, ncols=1, figsize=(20, 12))
+        fig, axes = plt.subplots(nrows=self.n_plot_samples, ncols=1, figsize=(20, 12))
         axes2 = {}
-        for i in range(n_plot_samples):
+        for i in range(self.n_plot_samples):
             axes2[i] = axes[i].twinx()
 
         plot_actual()
@@ -564,14 +538,14 @@ class CanswimModel:
         # plot predictions at several points in time over the validation set
         # plot_pred(pred_outputs=pred_outputs, past_cov_list=past_cov_list)
         for pred_out in pred_val_outputs:
-            plot_pred(pred_out=pred_out, past_cov_list=past_cov_list)
+            plot_pred(pred_out=pred_out, past_cov_list=self.past_cov_list)
 
         for pred_out in pred_test_outputs:
-            plot_pred(pred_out=pred_out, past_cov_list=past_cov_list)
+            plot_pred(pred_out=pred_out, past_cov_list=self.past_cov_list)
 
     def backtest(
         self,
-        series=None,
+        series: TimeSeries = None,
         start=None,
         past_covariates=None,
         future_covariates=None,
@@ -607,19 +581,25 @@ class CanswimModel:
         # print(f"Backtest RMSLE = {test_error}")
         return backtest, test_error
 
-    def plot_backtest_results(self, backtest):
+    def plot_backtest_results(
+        self,
+        target: TimeSeries = None,
+        backtest: [TimeSeries] = None,
+        forecast_horizon: int = None,
+    ):
         fig, axes = plt.subplots(figsize=(20, 10))
         # axes2 = axes.twinx()
 
-        actual_sliced = targets_list[0].slice(
-            forecast_start - pd.Timedelta(days=train_history), target.end_time()
+        actual_sliced = self.targets_list[0].slice(
+            self.forecast_start - pd.Timedelta(days=self.train_history),
+            target.end_time(),
         )
         ax = actual_sliced["Close"].plot(label="actual Close", linewidth=2, ax=axes)
         # past_cov_list[i]['Volume'].plot(label='actual Volume', ax=axes2)
 
         # Major ticks every half year, minor ticks every month,
-        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=range(13), interval=1))
-        ax.xaxis.set_minor_locator(mdates.MonthLocator())
+        ax.xaxis.set_major_locator(dates.MonthLocator(bymonth=range(13), interval=1))
+        ax.xaxis.set_minor_locator(dates.MonthLocator())
         ax.grid(True)
         ax.set_ylabel(f"{t}")
 
