@@ -18,14 +18,18 @@ import optuna
 import torch
 from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
-from sklearn.preprocessing import MaxAbsScaler
 
-from darts.dataprocessing.transformers import Scaler
 from darts.metrics import quantile_loss
 
 
-def election_year(idx):
+def election_year_offset(idx):
+    """Calculate offset in number of years from most recent election year."""
     return idx.year % 4
+
+
+def optuna_print_callback(self, study, trial):
+    print(f"Current value: {trial.value}, Current params: {trial.params}")
+    print(f"Best value: {study.best_value}, Best params: {study.best_trial.params}")
 
 
 class CanswimModel:
@@ -152,6 +156,8 @@ class CanswimModel:
                     self.past_covariates_test[t] = past_test
                 except KeyError as e:
                     print(f"Skipping {t} from data splits due to error: ", e)
+                except ValueError as e:
+                    print(f"Skipping {t} from data splits due to error: ", e)
             else:
                 print(
                     f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
@@ -259,7 +265,7 @@ class CanswimModel:
             "datetime_attribute": {"future": ["dayofweek", "month", "quarter", "year"]},
             "position": {"past": ["relative"], "future": ["relative"]},
             "custom": {
-                "future": [election_year]
+                "future": [election_year_offset]
             },  # signal proximity to US election years, which is known to have significance to market cycles.
             # "transformer": scaler
         }
@@ -694,16 +700,13 @@ class CanswimModel:
         return loss_val if loss_val != np.nan else float("inf")
 
     # for convenience, print some optimization trials information
-    def _optuna_print_callback(self, study, trial):
-        print(f"Current value: {trial.value}, Current params: {trial.params}")
-        print(f"Best value: {study.best_value}, Best params: {study.best_trial.params}")
 
     def find_model(self):
         study = optuna.create_study(direction="minimize")
         study.optimize(
             self._optuna_objective,
             n_trials=100,
-            callbacks=[self._optuna_print_callback],
+            callbacks=[optuna_print_callback],
         )
         # reload best model over course of training
         self.torch_model = TiDEModel.load_from_checkpoint(self.model_name)
