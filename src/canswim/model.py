@@ -63,20 +63,6 @@ class CanswimModel:
         self.targets = Targets(min_samples=self.min_samples)
         self.covariates = Covariates()
 
-        # load from .env file or OS vars if available
-        load_dotenv(override=True)
-
-        self.n_stocks = int(
-            os.getenv("n_stocks", 50)
-        )  # -1 for all, otherwise a number like 300
-        print("n_stocks: ", self.n_stocks)
-        self.n_epochs = int(os.getenv("n_epochs", 5))  # model training epochs
-        print("n_epochs: ", self.n_epochs)
-
-        # pick the earlies date after which market data is available for all covariate series
-        self.train_date_start = pd.Timestamp(
-            os.getenv("train_date_start", "1991-01-01")
-        )
         # use GPU if available
         if torch.cuda.is_available():
             print("Configuring CUDA GPU")
@@ -84,8 +70,20 @@ class CanswimModel:
             # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
             torch.set_float32_matmul_precision("high")  #  | 'medium'
 
-    def align_targets_and_covariates(self):
-        # focus on tickers that we have full data sets for training and validation
+    def __align_targets_and_covariates(self):
+        # remove tickers that don't have sufficient training data
+        target_series_ok = {}
+        for t, target in self.targets.target_series.items():
+            # only include tickers with sufficient data for training
+            if len(target) >= self.min_samples:
+                target_series_ok[t] = target
+            else:
+                del self.covariates.past_covariates[t]
+                del self.covariates.future_covariates[t]
+                # print(f'preparing train, val split for {t}')
+                print(f"Removing {t} from training loop. Not enough samples")
+        self.targets.target_series = target_series_ok
+        # drop tickers that do not have full data sets for training targets, past and future covariates
         target_set = set(self.targets.target_series.keys())
         future_set = set(self.covariates.future_covariates.keys())
         past_set = set(self.covariates.past_covariates.keys())
@@ -153,13 +151,26 @@ class CanswimModel:
             ):
                 try:
                     print(f"preparing train, val split for {t}")
-                    print(f"{t} test_start: {self.test_start[t]}")
-                    print(f"{t} val_start: {self.val_start[t]}")
                     print(
-                        f"{t} start time, end time: {target.start_time()}, {target.end_time()}"
+                        f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
                     )
                     train, val = target.split_before(self.val_start[t])
                     val, test = val.split_before(self.test_start[t])
+                    print(
+                        f"{t} train start time, end time: {train.start_time()}, {train.end_time()}"
+                    )
+                    print(
+                        f"{t} val start time, end time: {val.start_time()}, {val.end_time()}"
+                    )
+                    print(
+                        f"{t} test start time, end time: {test.start_time()}, {test.end_time()}"
+                    )
+                    print(
+                        f"{t} past covs start time, end time: {self.covariates.past_covariates[t].start_time()}, {self.covariates.past_covariates[t].end_time()}"
+                    )
+                    print(
+                        f"{t} future covs start time, end time: {self.covariates.future_covariates[t].start_time()}, {self.covariates.future_covariates[t].end_time()}"
+                    )
                     # there should be no gaps in the training data
                     assert len(train.gaps().index) == 0
                     assert (
@@ -195,37 +206,61 @@ class CanswimModel:
         self.past_cov_list = []
         self.target_test_list = []
         self.future_cov_list = []
+        self.train_tickers = self.train_series.keys()
         for t in sorted(self.train_series.keys()):
             self.target_train_list.append(self.train_series[t])
             self.target_val_list.append(self.val_series[t])
             self.target_test_list.append(self.test_series[t])
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
+        self.__validate_train_data()
+
+    def __validate_train_data(self):
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
             self.target_train_list
         ) == len(
             self.future_cov_list
         ), f"train({len(self.target_train_list)}), past covs({len(self.past_cov_list)} and future covs({len(self.future_cov_list)}) lists must have the same tickers"
-
-    def __drop_incomplete_series(self):
-        # remove tickers that don't have sufficient training data
-        target_series_ok = {}
-        for t, target in self.targets.target_series.items():
-            # only include tickers with sufficient data for training
-            if len(target) >= self.min_samples:
-                target_series_ok[t] = target
-            else:
-                del self.covariates.past_covariates[t]
-                del self.covariates.future_covariates[t]
-                # print(f'preparing train, val split for {t}')
-                print(f"Removing {t} from training loop. Not enough samples")
-        self.targets.target_series = target_series_ok
+        for i, t in enumerate(self.train_tickers):
+            assert (
+                self.target_train_list[i].start_time()
+                >= self.past_cov_list[i].start_time()
+            ), f"{t} validation failed"
+            assert (
+                self.target_test_list[i].end_time() <= self.past_cov_list[i].end_time()
+            ), f"{t} validation failed"
+            assert (
+                self.target_train_list[i].start_time()
+                >= self.future_cov_list[i].start_time()
+            ), f"{t} validation failed"
+            assert (
+                self.target_test_list[i].end_time()
+                <= self.future_cov_list[i].end_time()
+            ), f"{t} validation failed"
 
     @property
     def stock_tickers(self):
         return self.__stock_tickers
 
+    def __load_config(self):
+        """Load/Reload environment configuration parameters"""
+        # load from .env file or OS vars if available
+        load_dotenv(override=True)
+
+        self.n_stocks = int(
+            os.getenv("n_stocks", 50)
+        )  # -1 for all, otherwise a number like 300
+        print("n_stocks: ", self.n_stocks)
+        self.n_epochs = int(os.getenv("n_epochs", 5))  # model training epochs
+        print("n_epochs: ", self.n_epochs)
+
+        # pick the earlies date after which market data is available for all covariate series
+        self.train_date_start = pd.Timestamp(
+            os.getenv("train_date_start", "1991-01-01")
+        )
+
     def prepare_data(self):
+        self.__load_config()
         # reduce ticker set to a workable sample size for one training loop
         self.__stock_tickers = random.sample(
             self.targets.all_stock_tickers, self.n_stocks
@@ -249,7 +284,7 @@ class CanswimModel:
             train_date_start=self.train_date_start,
             min_samples=self.min_samples,
         )
-        self.__drop_incomplete_series()
+        self.__align_targets_and_covariates()
         print(f"Preparing train, val, test splits")
         self.__prepare_data_splits()
 
@@ -726,7 +761,7 @@ class CanswimModel:
         study = optuna.create_study(direction="minimize")
         study.optimize(
             self._optuna_objective,
-            n_trials=1000,
+            n_trials=100,
             callbacks=[optuna_print_callback],
         )
         # reload best model over course of training
