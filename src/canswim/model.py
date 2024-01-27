@@ -38,9 +38,9 @@ class CanswimModel:
         self.train_series = {}
         self.val_series = {}
         self.test_series = {}
-        self.past_covariates_train = {}
-        self.past_covariates_val = {}
-        self.past_covariates_test = {}
+        ##self.past_covariates_train = {}
+        ##self.past_covariates_val = {}
+        ##self.past_covariates_test = {}
         self.val_start = {}
         self.test_start = {}
         self.torch_model: TiDEModel = None
@@ -109,12 +109,23 @@ class CanswimModel:
             new_target_series[t] = ts_sliced
             covs_sliced = covs.slice_intersect(ts_sliced)
             new_past_covariates[t] = covs_sliced
+            assert (
+                new_target_series[t].start_time() == new_past_covariates[t].start_time()
+            )
+            assert new_target_series[t].end_time() == new_past_covariates[t].end_time()
         # align targets with future covs
         for t, covs in new_future_covariates.items():
             ts_sliced = new_target_series[t].slice_intersect(covs)
             new_target_series[t] = ts_sliced
             covs_sliced = covs.slice_intersect(ts_sliced)
             new_future_covariates[t] = covs_sliced
+            assert (
+                new_target_series[t].start_time()
+                == new_future_covariates[t].start_time()
+            )
+            assert (
+                new_target_series[t].end_time() == new_future_covariates[t].end_time()
+            )
         # apply updates to model series
         self.targets.target_series = new_target_series
         self.covariates.past_covariates = new_past_covariates
@@ -129,9 +140,9 @@ class CanswimModel:
         self.train_series = {}
         self.val_series = {}
         self.test_series = {}
-        self.past_covariates_train = {}
-        self.past_covariates_val = {}
-        self.past_covariates_test = {}
+        # self.past_covariates_train = {}
+        # self.past_covariates_val = {}
+        # self.past_covariates_test = {}
         for t, target in self.targets.target_series.items():
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
             self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
@@ -157,17 +168,17 @@ class CanswimModel:
                     assert (
                         len(test) >= self.n_test_range_days
                     ), f"test samples {len(test)} but must be at least {self.n_test_range_days}"
-                    past_cov = self.covariates.past_covariates[t]
-                    past_train, past_val = past_cov.split_before(self.val_start[t])
-                    past_val, past_test = past_val.split_before(self.test_start[t])
+                    ## past_cov = self.covariates.past_covariates[t]
+                    ## past_train, past_val = past_cov.split_before(self.val_start[t])
+                    ## past_val, past_test = past_val.split_before(self.test_start[t])
                     # there should be no gaps in the training data
-                    assert len(past_train.gaps()) == 0
+                    ## assert len(past_train.gaps()) == 0
                     self.train_series[t] = train
                     self.val_series[t] = val
                     self.test_series[t] = test
-                    self.past_covariates_train[t] = past_train
-                    self.past_covariates_val[t] = past_val
-                    self.past_covariates_test[t] = past_test
+                    ## self.past_covariates_train[t] = past_train
+                    ## self.past_covariates_val[t] = past_val
+                    ## self.past_covariates_test[t] = past_test
                 except KeyError as e:
                     print(f"Skipping {t} from data splits due to error: ", e)
                 except ValueError as e:
@@ -192,16 +203,18 @@ class CanswimModel:
         ]
         # print(len(target_test_list))
         self.past_cov_list = [
-            series for ticker, series in sorted(self.past_covariates_train.items())
+            ## series for ticker, series in sorted(self.past_covariates_train.items())
+            series
+            for ticker, series in sorted(self.covariates.past_covariates.items())
         ]
         # print(len(past_cov_list))
-        self.past_cov_val_list = [
-            series for ticker, series in sorted(self.past_covariates_val.items())
-        ]
+        ## self.past_cov_val_list = [
+        ##    series for ticker, series in sorted(self.past_covariates_val.items())
+        ##]
         # print(len(past_cov_val_list))
-        self.past_cov_test_list = [
-            series for ticker, series in sorted(self.past_covariates_test.items())
-        ]
+        ##self.past_cov_test_list = [
+        ##    series for ticker, series in sorted(self.past_covariates_test.items())
+        ##]
         # print(len(past_cov_test_list))
         self.future_cov_list = [
             series
@@ -371,7 +384,8 @@ class CanswimModel:
             past_covariates=self.past_cov_list,
             future_covariates=self.future_cov_list,
             val_series=self.target_val_list,
-            val_past_covariates=self.past_cov_val_list,
+            ##val_past_covariates=self.past_cov_val_list,
+            val_past_covariates=self.past_cov_list,
             val_future_covariates=self.future_cov_list,
             verbose=True,
             num_loader_workers=4,  # num_loader_workers recommended at 4*n_GPUs
@@ -445,11 +459,12 @@ class CanswimModel:
 
     def __get_past_cov_list(self, pred_start=None):
         past_cov_list = []
-        for t, past_cov in sorted(self.past_covariates.items()):
-            past_covs_sliced = past_cov.slice(
-                past_cov.start_time(), pred_start[t] - pd.Timedelta(days=1)
-            )
-            past_cov_list.append(past_covs_sliced)
+        for t, past_cov in sorted(self.covariates.past_covariates.items()):
+            ##past_covs_sliced = past_cov.slice(
+            ##    past_cov.start_time(), pred_start[t] - pd.Timedelta(days=1)
+            ##)
+            ##past_cov_list.append(past_covs_sliced)
+            past_cov_list.append(past_cov)
         return past_cov_list
 
     def __get_pred(self, pred_list=None, past_cov_list=None):
@@ -505,7 +520,7 @@ class CanswimModel:
                     ax = actual[t]["Close"].plot(
                         label="actual Close", linewidth=1, ax=axes[i]
                     )
-                    vol = self.past_covariates[t]["Volume"].slice(
+                    vol = self.covariates.past_covariates[t]["Volume"].slice(
                         self.val_start[t], target.end_time()
                     )
                     vol.plot(label="actual Volume", linewidth=1, ax=axes2[i])
@@ -694,7 +709,8 @@ class CanswimModel:
             future_covariates=self.future_cov_list,
             epochs=self.n_epochs,
             val_series=self.target_val_list,
-            val_past_covariates=self.past_cov_val_list,
+            ##val_past_covariates=self.past_cov_val_list,
+            val_past_covariates=self.past_cov_list,
             val_future_covariates=self.future_cov_list,
             verbose=True,
             num_loader_workers=num_workers,
