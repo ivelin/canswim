@@ -405,9 +405,6 @@ class Covariates:
         return t_est_series
 
     def prepare_analyst_estimates(self, tickers=None):
-        assert self.est_quarter_loaded_df is not None
-        assert self.est_annual_loaded_df is not None
-        q_loaded_df = self.est_quarter_loaded_df
         quarter_est_series = self.prepare_est_series(
             all_est_df=self.est_loaded_df["quarter"],
             n_future_periods=4,
