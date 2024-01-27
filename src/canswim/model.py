@@ -12,8 +12,20 @@ from canswim.covariates import Covariates
 from dotenv import load_dotenv
 import pandas as pd
 import os
-from darts.metrics import rmsle
 from darts import TimeSeries
+import numpy as np
+import optuna
+import torch
+from optuna.integration import PyTorchLightningPruningCallback
+from pytorch_lightning.callbacks import EarlyStopping
+from sklearn.preprocessing import MaxAbsScaler
+
+from darts.dataprocessing.transformers import Scaler
+from darts.metrics import quantile_loss
+
+
+def election_year(idx):
+    return idx.year % 4
 
 
 class CanswimModel:
@@ -29,7 +41,7 @@ class CanswimModel:
         self.val_start = {}
         self.test_start = {}
         self.torch_model: TiDEModel = None
-        self.saved_model_name = "data/canswim_model.pt"
+        self.model_name = "canswim_model.pt"
         self.n_plot_samples: int = 4
         self.train_date_start: pd.Timestamp = None
         # How far back should the model look in order to make a prediction
@@ -110,39 +122,42 @@ class CanswimModel:
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
             self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
             if len(target) > self.min_samples:
-                print(f"preparing train, val split for {t}")
-                print(f"{t} test_start: {self.test_start[t]}")
-                print(f"{t} val_start: {self.val_start[t]}")
-                print(
-                    f"{t} start time, end time: {target.start_time()}, {target.end_time()}"
-                )
-                train, val = target.split_before(self.val_start[t])
-                val, test = val.split_before(self.test_start[t])
-                # there should be no gaps in the training data
-                assert len(train.gaps().index) == 0
-                assert (
-                    len(val) >= self.n_test_range_days
-                ), f"val samples {len(val)} but must be at least {self.n_test_range_days}"
-                assert (
-                    len(test) >= self.n_test_range_days
-                ), f"test samples {len(test)} but must be at least {self.n_test_range_days}"
-                self.train_series[t] = train
-                self.val_series[t] = val
-                self.test_series[t] = test
-                past_cov = self.covariates.past_covariates[t]
-                past_train, past_val = past_cov.split_before(self.val_start[t])
-                past_val, past_test = past_val.split_before(self.test_start[t])
-                # there should be no gaps in the training data
-                assert len(past_train.gaps()) == 0
-                self.past_covariates_train[t] = past_train
-                self.past_covariates_val[t] = past_val
-                self.past_covariates_test[t] = past_test
+                try:
+                    print(f"preparing train, val split for {t}")
+                    print(f"{t} test_start: {self.test_start[t]}")
+                    print(f"{t} val_start: {self.val_start[t]}")
+                    print(
+                        f"{t} start time, end time: {target.start_time()}, {target.end_time()}"
+                    )
+                    train, val = target.split_before(self.val_start[t])
+                    val, test = val.split_before(self.test_start[t])
+                    # there should be no gaps in the training data
+                    assert len(train.gaps().index) == 0
+                    assert (
+                        len(val) >= self.n_test_range_days
+                    ), f"val samples {len(val)} but must be at least {self.n_test_range_days}"
+                    assert (
+                        len(test) >= self.n_test_range_days
+                    ), f"test samples {len(test)} but must be at least {self.n_test_range_days}"
+                    self.train_series[t] = train
+                    self.val_series[t] = val
+                    self.test_series[t] = test
+                    past_cov = self.covariates.past_covariates[t]
+                    past_train, past_val = past_cov.split_before(self.val_start[t])
+                    past_val, past_test = past_val.split_before(self.test_start[t])
+                    # there should be no gaps in the training data
+                    assert len(past_train.gaps()) == 0
+                    self.past_covariates_train[t] = past_train
+                    self.past_covariates_val[t] = past_val
+                    self.past_covariates_test[t] = past_test
+                except KeyError as e:
+                    print(f"Skipping {t} from data splits due to error: ", e)
             else:
                 print(
                     f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
                 )
         self.targets_list = [
-            series for ticker, series in sorted(self.target_series.items())
+            series for ticker, series in sorted(self.targets.target_series.items())
         ]
         self.target_train_list = [
             series for ticker, series in sorted(self.train_series.items())
@@ -227,45 +242,43 @@ class CanswimModel:
             map_location = "cpu"
         try:
             self.torch_model = TiDEModel.load(
-                self.saved_model_name, map_location=map_location
+                self.model_name, map_location=map_location
             )
             return True
         except Exception as e:
             print("Unable to find or load a saved model. Error: \n", e)
         return False
 
-    def __merge_model_params(self):
-        pass
-
-    def build_model(self, hparams=None):
+    def __build_model(self, **kwargs):
         # scaler = Scaler(verbose=True, n_jobs=-1)
         # darts encoder examples: https://unit8co.github.io/darts/generated_api/darts.dataprocessing.encoders.encoders.html#
         # Prepare Encoders that Darts will automatically use for training and inference
+
         encoders = {
             "cyclic": {"future": ["dayofweek", "month", "quarter"]},
             "datetime_attribute": {"future": ["dayofweek", "month", "quarter", "year"]},
             "position": {"past": ["relative"], "future": ["relative"]},
             "custom": {
-                "future": [lambda idx: (idx.year % 4)]
+                "future": [election_year]
             },  # signal proximity to US election years, which is known to have significance to market cycles.
             # "transformer": scaler
         }
         # hyperparamter selection
         # based on Darts template: https://unit8co.github.io/darts/examples/18-TiDE-examples.html#Model-Parameter-Setup
-        optimizer_kwargs = {
-            "lr": 2.24e-4,
-        }
+        ## optimizer_kwargs = {
+        ##     "lr": 2.24e-4,
+        ## }
         # PyTorch Lightning Trainer arguments
-        pl_trainer_kwargs = {
-            "gradient_clip_val": 1,
-            "max_epochs": 200,
-            # "accelerator": "auto",
-            "accelerator": "gpu",
-            "accelerator": "gpu",
-            "devices": [0],
-            # "auto_select_gpus": True,
-            "callbacks": [],
-        }
+        ## pl_trainer_kwargs = {
+        ##     "gradient_clip_val": 1,
+        ##     "max_epochs": 200,
+        ##     # "accelerator": "auto",
+        ##     "accelerator": "gpu",
+        ##     "accelerator": "gpu",
+        ##     "devices": [0],
+        ##     # "auto_select_gpus": True,
+        ##     "callbacks": [],
+        ## }
         # pl_trainer_kwargs = {"accelerator": "gpu", "devices": -1, "auto_select_gpus": True}
         # learning rate scheduler
         lr_scheduler_cls = torch.optim.lr_scheduler.ExponentialLR
@@ -274,18 +287,18 @@ class CanswimModel:
         }
         # early stopping (needs to be reset for each model later on)
         # this setting stops training once the the validation loss has not decreased by more than 1e-3 for 10 epochs
-        early_stopping_args = {
-            "monitor": "val_loss",
-            "patience": 10,
-            "min_delta": 1e-3,
-            "mode": "min",
-        }
+        ## early_stopping_args = {
+        ##    "monitor": "val_loss",
+        ##    "patience": 10,
+        ##    "min_delta": 1e-3,
+        ##    "mode": "min",
+        ##}
         #
         common_model_args = {
             # "input_chunk_length": 12,  # lookback window
             # "output_chunk_length": 12,  # forecast/lookahead window
-            "optimizer_kwargs": optimizer_kwargs,
-            "pl_trainer_kwargs": pl_trainer_kwargs,
+            # "optimizer_kwargs": optimizer_kwargs,
+            # "pl_trainer_kwargs": pl_trainer_kwargs,
             "lr_scheduler_cls": lr_scheduler_cls,
             "lr_scheduler_kwargs": lr_scheduler_kwargs,
             # "likelihood": None,  # use a likelihood for probabilistic forecasts
@@ -294,34 +307,33 @@ class CanswimModel:
             "batch_size": 256,  # 512,
             "random_state": 42,
         }
-        model = None
         print("Creating a new model")
         # using TiDE hyperparameters from Table 8 in section B.3 of the original paper
         # https://arxiv.org/pdf/2304.08424.pdf
-        model_params = self.__merge_model_params(
-            hparams=hparams,
+        model = TiDEModel(
+            **kwargs,
             **common_model_args,
-            input_chunk_length=self.train_history,
-            output_chunk_length=self.pred_horizon,
-            add_encoders=None,  # encoders,
-            hidden_size=256,  # 512,
-            num_encoder_layers=2,
-            num_decoder_layers=2,
-            decoder_output_dim=8,  # 32,
-            temporal_decoder_hidden=16,  # 64, # 128,
-            dropout=0.2,
-            use_layer_norm=True,
-            use_reversible_instance_norm=True,
+            ## **early_stopping_args,
+            # input_chunk_length=self.train_history,
+            # output_chunk_length=self.pred_horizon,
+            add_encoders=encoders,
+            # hidden_size=256,  # 512,
+            # num_encoder_layers=2,
+            # num_decoder_layers=2,
+            # decoder_output_dim=8,  # 32,
+            # temporal_decoder_hidden=16,  # 64, # 128,
+            # dropout=0.2,
+            # use_layer_norm=True,
+            # use_reversible_instance_norm=True,
             n_epochs=self.n_epochs,
             likelihood=QuantileRegression(
                 quantiles=[0.01, 0.05, 0.2, 0.5, 0.8, 0.95, 0.99]
             ),
-            # model_name=self.saved_model_name,
+            model_name=self.model_name,
             log_tensorboard=True,
             nr_epochs_val_period=1,
         )
-        model = TiDEModel(model_params)
-        self.torch_model = model
+        return model
 
     def train(self):
         # load or create a new model instance
@@ -376,43 +388,8 @@ class CanswimModel:
 
         axes[0].set_ylabel("Seasonality")
 
-    def find_model(self):
-        # hparams_grid = {
-        #      **common_model_args,
-        #      'input_chunk_length': train_history,
-        #      'output_chunk_length': pred_horizon,
-        #      'add_encoders': None, # encoders,
-        #      'hidden_size': [256, 512, 1024],
-        #      'num_encoder_layers': [1, 2, 3],
-        #      'num_decoder_layers': [1, 2, 3],
-        #      'decoder_output_dim': [4, 8, 16, 32],
-        #      'temporal_decoder_hidden': [16, 32, 64, 128],
-        #      'dropout': [0.0, 0.1, 0.2, 0.3, 0.5],
-        #      'use_layer_norm': [True, False],
-        #      'lr': [1e-1, 1e-2, 1-3, 1-4, 1e-5],
-        #      'use_reversible_instance_norm': [True, False],
-        #      'n_epochs': n_epochs,
-        #      'likelihood': QuantileRegression(quantiles=[0.01, 0.05, 0.2, 0.5, 0.8, 0.95, 0.99]),
-        #      # model_name: saved_model_name,
-        #      'log_tensorboard': True,
-        #      'nr_epochs_val_period':1
-        # }
-        # best_model, best_hparams, lerror = TiDEModel.gridsearch(parameters=hparams_grid,
-        #                                                        series=target_train_list[0],
-        #                                                        past_covariates=past_cov_list[0],
-        #                                                        future_covariates=future_cov_list[0],
-        #                                                        stride=1,
-        #                                                        start=0.5,
-        #                                                        start_format='value',
-        #                                                        last_points_only=False,
-        #                                                        val_series=target_val_list[0],
-        #                                                        verbose=True,
-        #                                                        n_jobs=-1,
-        #                                                    )
-        self.torch_model = optimal_model
-
     def save_model(self):
-        self.torch_model.save(self.saved_model_name)
+        self.torch_model.save(self.model_name)
 
     def load_data(self):
         self.targets.load_data()
@@ -576,9 +553,8 @@ class CanswimModel:
             num_samples=500,  # probabilistic forecasting
             predict_kwargs={"mc_dropout": True, "num_loader_workers": 4, "n_jobs": -1},
         )
-        # use Log RMSE to remove the big variance in absolute price values between difference stocks
-        test_error = rmsle(self.targets_list[0], backtest[0])
-        # print(f"Backtest RMSLE = {test_error}")
+        test_error = quantile_loss(self.targets_list[0], backtest[0])
+        print(f"Backtest Quantile Loss = {test_error}")
         return backtest, test_error
 
     def plot_backtest_results(
@@ -612,3 +588,123 @@ class CanswimModel:
             )
             # backtest[i]['Volume'].plot(label=f'backtest Volume (forecast_horizon={forecast_horizon})', linewidth=1, ax=axes2[i])
             plt.legend()
+
+    # define objective function
+    def _optuna_objective(self, trial):
+        # Try parameter ranges suggested in the original TiDE paper, Section B.3 Table 7
+        # https://arxiv.org/pdf/2304.08424.pdf
+
+        # select input and output chunk lengths
+        # try historical periods ranging between 1 and 2 years with a step of 1 month (21 busness days)
+        input_chunk_length = trial.suggest_int(
+            "input_chunk_length",
+            low=252,
+            high=self.train_history,
+            step=21,
+        )
+        # try prediction periods ranging between 8 weeks to 12 weeks with a step of 1 week
+        output_chunk_length = trial.suggest_int(
+            name="output_chunk_length", low=42, high=62, step=5
+        )
+
+        # Other hyperparameters
+        hidden_size = trial.suggest_int("hidden_size", low=256, high=1024, step=256)
+        num_encoder_layers = trial.suggest_int("num_encoder_layers", low=1, high=3)
+        num_decoder_layers = trial.suggest_int("num_decoder_layers", low=1, high=3)
+        decoder_output_dim = trial.suggest_int(
+            "decoder_output_dim", low=4, high=32, step=4
+        )
+        temporal_decoder_hidden = trial.suggest_int(
+            "temporal_decoder_hidden", low=16, high=128, step=16
+        )
+        dropout = trial.suggest_float("dropout", low=0.0, high=0.5, step=0.1)
+        use_layer_norm = trial.suggest_categorical("use_layer_norm", [False, True])
+        use_reversible_instance_norm = trial.suggest_categorical(
+            "use_reversible_instance_norm", [False, True]
+        )
+        lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+
+        # throughout training we'll monitor the validation loss for both pruning and early stopping
+        pruner = PyTorchLightningPruningCallback(trial, monitor="val_loss")
+        early_stopper = EarlyStopping(
+            "val_loss", min_delta=0.001, patience=3, verbose=True
+        )
+        callbacks = [pruner, early_stopper]
+
+        # detect if a GPU is available
+        if torch.cuda.is_available():
+            num_workers = 4
+        else:
+            num_workers = 0
+
+        pl_trainer_kwargs = {
+            "accelerator": "auto",
+            "callbacks": callbacks,
+        }
+
+        # reproducibility
+        torch.manual_seed(42)
+
+        # build the model
+        model = self.__build_model(
+            input_chunk_length=input_chunk_length,
+            output_chunk_length=output_chunk_length,
+            hidden_size=hidden_size,
+            num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers,
+            decoder_output_dim=decoder_output_dim,
+            temporal_decoder_hidden=temporal_decoder_hidden,
+            use_layer_norm=use_layer_norm,
+            use_reversible_instance_norm=use_reversible_instance_norm,
+            dropout=dropout,
+            optimizer_kwargs={"lr": lr},
+            pl_trainer_kwargs=pl_trainer_kwargs,
+            force_reset=True,
+            save_checkpoints=True,
+        )
+
+        # when validating during training, we can use a slightly longer validation
+        # set which also contains the first input_chunk_length time steps
+        # model_val_set = scaler.transform(series[-(VAL_LEN + in_len) :])
+
+        # train the model
+        model.fit(
+            series=self.target_train_list,
+            val_series=self.target_val_list,
+            num_loader_workers=num_workers,
+        )
+
+        # reload best model over course of training
+        model = TiDEModel.load_from_checkpoint(self.model_name)
+
+        # Evaluate how good it is on the validation set
+        preds = self.torch_model.predict(
+            n=self.pred_horizon,
+            series=self.target_train_list,
+            mc_dropout=True,
+            num_samples=500,
+            past_covariates=self.past_cov_list,
+            future_covariates=self.future_cov_list,
+            num_loader_workers=4,
+        )
+
+        loss = quantile_loss(self.targets_list, preds, n_jobs=-1, verbose=True)
+        loss_val = np.mean(loss)
+
+        return loss_val if loss_val != np.nan else float("inf")
+
+    # for convenience, print some optimization trials information
+    def _optuna_print_callback(self, study, trial):
+        print(f"Current value: {trial.value}, Current params: {trial.params}")
+        print(f"Best value: {study.best_value}, Best params: {study.best_trial.params}")
+
+    def find_model(self):
+        study = optuna.create_study(direction="minimize")
+        study.optimize(
+            self._optuna_objective,
+            n_trials=100,
+            callbacks=[self._optuna_print_callback],
+        )
+        # reload best model over course of training
+        self.torch_model = TiDEModel.load_from_checkpoint(self.model_name)
+        return True
