@@ -26,7 +26,7 @@ def election_year_offset(idx):
     return idx.year % 4
 
 
-def optuna_print_callback(self, study, trial):
+def optuna_print_callback(study, trial):
     print(f"Current value: {trial.value}, Current params: {trial.params}")
     print(f"Best value: {study.best_value}, Best params: {study.best_trial.params}")
 
@@ -296,6 +296,9 @@ class CanswimModel:
         try:
             self.torch_model = TiDEModel.load(
                 self.model_name, map_location=map_location
+            )
+            print(
+                f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
             )
             return True
         except Exception as e:
@@ -753,7 +756,12 @@ class CanswimModel:
         loss = quantile_loss(self.targets_list, preds, n_jobs=-1, verbose=True)
         loss_val = np.mean(loss)
 
-        return loss_val if loss_val != np.nan else float("inf")
+        if loss_val == np.nan:
+            loss_val = float("inf")
+        print(
+            f"Trial concluded with Loss: {loss_val} of model search. Trial instance: {trial}"
+        )
+        return loss_val
 
     # for convenience, print some optimization trials information
 
@@ -766,4 +774,5 @@ class CanswimModel:
         )
         # reload best model over course of training
         self.torch_model = TiDEModel.load_from_checkpoint(self.model_name)
+        self.save_model()
         return True
