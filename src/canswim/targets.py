@@ -23,7 +23,7 @@ class Targets:
         return stock_tickers
 
     def load_stock_prices(self):
-        stocks_price_file = "data/all_stocks_price_hist.csv.bz2"
+        stocks_price_file = "data/all_stocks_price_hist_1d.csv.bz2"
         # load into a dataframe with valid market calendar days
         stocks_df = pd.read_csv(
             stocks_price_file, header=[0, 1], index_col=0, on_bad_lines="warn"
