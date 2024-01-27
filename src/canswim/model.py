@@ -198,9 +198,6 @@ class CanswimModel:
                 print(
                     f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
                 )
-        self.targets_list = [
-            series for ticker, series in sorted(self.targets.target_series.items())
-        ]
         self.target_train_list = []
         self.target_val_list = []
         self.past_cov_list = []
@@ -211,6 +208,7 @@ class CanswimModel:
             self.target_train_list.append(self.train_series[t])
             self.target_val_list.append(self.val_series[t])
             self.target_test_list.append(self.test_series[t])
+            self.targets_list.append(self.targets.target_series[t])
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
