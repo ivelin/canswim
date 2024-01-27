@@ -18,7 +18,6 @@ import optuna
 import torch
 from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
-
 from darts.metrics import quantile_loss
 
 
@@ -120,12 +119,27 @@ class CanswimModel:
         self.targets.target_series = new_target_series
         self.covariates.past_covariates = new_past_covariates
         self.covariates.future_covariates = new_future_covariates
+        assert set(self.targets.target_series.keys()) == set(
+            self.covariates.past_covariates.keys()
+        ) and set(self.targets.target_series.keys()) == set(
+            self.covariates.future_covariates.keys()
+        )
 
     def __prepare_data_splits(self):
+        self.train_series = {}
+        self.val_series = {}
+        self.test_series = {}
+        self.past_covariates_train = {}
+        self.past_covariates_val = {}
+        self.past_covariates_test = {}
         for t, target in self.targets.target_series.items():
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
             self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
-            if len(target) > self.min_samples:
+            if (
+                len(target) > self.min_samples
+                and t in self.covariates.past_covariates.keys()
+                and t in self.covariates.future_covariates.keys()
+            ):
                 try:
                     print(f"preparing train, val split for {t}")
                     print(f"{t} test_start: {self.test_start[t]}")
@@ -143,14 +157,14 @@ class CanswimModel:
                     assert (
                         len(test) >= self.n_test_range_days
                     ), f"test samples {len(test)} but must be at least {self.n_test_range_days}"
-                    self.train_series[t] = train
-                    self.val_series[t] = val
-                    self.test_series[t] = test
                     past_cov = self.covariates.past_covariates[t]
                     past_train, past_val = past_cov.split_before(self.val_start[t])
                     past_val, past_test = past_val.split_before(self.test_start[t])
                     # there should be no gaps in the training data
                     assert len(past_train.gaps()) == 0
+                    self.train_series[t] = train
+                    self.val_series[t] = val
+                    self.test_series[t] = test
                     self.past_covariates_train[t] = past_train
                     self.past_covariates_val[t] = past_val
                     self.past_covariates_test[t] = past_test
@@ -369,7 +383,7 @@ class CanswimModel:
         axes2 = {}
         for i in range(self.n_plot_samples):
             axes2[i] = axes[i].twinx()
-        for i, t in enumerate(self.targets.target_series.keys()):
+        for i, t in enumerate(self.train_series.keys()):
             if i > self.n_plot_samples - 1:
                 break
             self.train_series[t]["Close"].plot(
@@ -387,7 +401,7 @@ class CanswimModel:
     def plot_seasonality(self):
         # plot sample of target series
         fig, axes = plt.subplots(nrows=1, ncols=self.n_plot_samples, figsize=(12, 4))
-        for i, t in enumerate(self.targets.target_series.keys()):
+        for i, t in enumerate(self.train_series.keys()):
             if i >= self.n_plot_samples:
                 break
             plot_acf(self.train_series[t]["Close"], alpha=0.05, axis=axes[i])
@@ -676,7 +690,13 @@ class CanswimModel:
         # train the model
         model.fit(
             series=self.target_train_list,
+            past_covariates=self.past_cov_list,
+            future_covariates=self.future_cov_list,
+            epochs=self.n_epochs,
             val_series=self.target_val_list,
+            val_past_covariates=self.past_cov_val_list,
+            val_future_covariates=self.future_cov_list,
+            verbose=True,
             num_loader_workers=num_workers,
         )
 
@@ -684,7 +704,7 @@ class CanswimModel:
         model = TiDEModel.load_from_checkpoint(self.model_name)
 
         # Evaluate how good it is on the validation set
-        preds = self.torch_model.predict(
+        preds = model.predict(
             n=self.pred_horizon,
             series=self.target_train_list,
             mc_dropout=True,
@@ -705,7 +725,7 @@ class CanswimModel:
         study = optuna.create_study(direction="minimize")
         study.optimize(
             self._optuna_objective,
-            n_trials=100,
+            n_trials=1000,
             callbacks=[optuna_print_callback],
         )
         # reload best model over course of training

@@ -65,7 +65,7 @@ class Covariates:
     def prepare_earn_series(self, tickers=None):
         # convert date strings to numerical representation
         earn_df = self.earnings_loaded_df.copy()
-        print("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
+        # print("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
         ufd = pd.to_datetime(earn_df["updatedFromDate"])
         ufd_year = ufd.dt.year
         ufd_month = ufd.dt.month
