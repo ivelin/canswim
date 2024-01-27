@@ -190,50 +190,22 @@ class CanswimModel:
         self.targets_list = [
             series for ticker, series in sorted(self.targets.target_series.items())
         ]
-        self.target_train_list = [
-            series for ticker, series in sorted(self.train_series.items())
-        ]
-        # print(len(self.target_train_list))
-        self.target_val_list = [
-            series for ticker, series in sorted(self.val_series.items())
-        ]
-        # print(len(target_val_list))
-        self.target_test_list = [
-            series for ticker, series in sorted(self.test_series.items())
-        ]
-        # print(len(target_test_list))
-        self.past_cov_list = [
-            ## series for ticker, series in sorted(self.past_covariates_train.items())
-            series
-            for ticker, series in sorted(self.covariates.past_covariates.items())
-        ]
-        # print(len(past_cov_list))
-        ## self.past_cov_val_list = [
-        ##    series for ticker, series in sorted(self.past_covariates_val.items())
-        ##]
-        # print(len(past_cov_val_list))
-        ##self.past_cov_test_list = [
-        ##    series for ticker, series in sorted(self.past_covariates_test.items())
-        ##]
-        # print(len(past_cov_test_list))
-        self.future_cov_list = [
-            series
-            for ticker, series in sorted(self.covariates.future_covariates.items())
-        ]
-        # print(len(future_cov_list))
+        self.target_train_list = []
+        self.target_val_list = []
+        self.past_cov_list = []
+        self.target_test_list = []
+        self.future_cov_list = []
+        for t in sorted(self.train_series.keys()):
+            self.target_train_list.append(self.train_series[t])
+            self.target_val_list.append(self.val_series[t])
+            self.target_test_list.append(self.test_series[t])
+            self.past_cov_list.append(self.covariates.past_covariates[t])
+            self.future_cov_list.append(self.covariates.future_covariates[t])
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
-            self.target_train_list == len(self.future_cov_list)
-        )
-        for i, target in enumerate(self.target_train_list):
-            assert target.start_time() >= self.past_cov_list[i].start_time()
-            assert (
-                self.target_test_list[i].end_time() <= self.past_cov_list[i].end_time()
-            )
-            assert target.start_time() >= self.future_cov_list[i].start_time()
-            assert (
-                self.target_test_list[i].end_time()
-                <= self.future_cov_list[i].end_time()
-            )
+            self.target_train_list
+        ) == len(
+            self.future_cov_list
+        ), f"train({len(self.target_train_list)}), past covs({len(self.past_cov_list)} and future covs({len(self.future_cov_list)}) lists must have the same tickers"
 
     def __drop_incomplete_series(self):
         # remove tickers that don't have sufficient training data
