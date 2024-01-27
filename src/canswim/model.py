@@ -198,6 +198,7 @@ class CanswimModel:
                 print(
                     f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
                 )
+        self.targets_list = []
         self.target_train_list = []
         self.target_val_list = []
         self.past_cov_list = []
