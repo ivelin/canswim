@@ -221,6 +221,19 @@ class CanswimModel:
             for ticker, series in sorted(self.covariates.future_covariates.items())
         ]
         # print(len(future_cov_list))
+        assert len(self.target_train_list) == len(self.past_cov_list) and len(
+            self.target_train_list == len(self.future_cov_list)
+        )
+        for i, target in enumerate(self.target_train_list):
+            assert target.start_time() >= self.past_cov_list[i].start_time()
+            assert (
+                self.target_test_list[i].end_time() <= self.past_cov_list[i].end_time()
+            )
+            assert target.start_time() >= self.future_cov_list[i].start_time()
+            assert (
+                self.target_test_list[i].end_time()
+                <= self.future_cov_list[i].end_time()
+            )
 
     def __drop_incomplete_series(self):
         # remove tickers that don't have sufficient training data
