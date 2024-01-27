@@ -771,6 +771,8 @@ class CanswimModel:
             self._optuna_objective,
             n_trials=100,
             callbacks=[optuna_print_callback],
+            gc_after_trial=True,
+            show_progress_bar=True,
         )
         # reload best model over course of training
         self.torch_model = TiDEModel.load_from_checkpoint(self.model_name)
