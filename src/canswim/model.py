@@ -743,7 +743,7 @@ class CanswimModel:
 
         # Evaluate how good it is on the validation set
         preds = model.predict(
-            n=self.pred_horizon,
+            n=model.output_chunk_length,
             series=self.target_train_list,
             mc_dropout=True,
             num_samples=500,
@@ -752,6 +752,9 @@ class CanswimModel:
             num_loader_workers=4,
         )
 
+        print(
+            f"Calculating loss for target_list({len(self.targets_list)}) and preds({len(preds)})"
+        )
         loss = quantile_loss(self.targets_list, preds, n_jobs=-1, verbose=True)
         loss_val = np.mean(loss)
 
