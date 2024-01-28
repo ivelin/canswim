@@ -675,9 +675,9 @@ class CanswimModel:
             "temporal_decoder_hidden", low=16, high=128, step=16
         )
         dropout = trial.suggest_float("dropout", low=0.0, high=0.5, step=0.1)
-        use_layer_norm = trial.suggest_categorical("use_layer_norm", [False, True])
+        use_layer_norm = trial.suggest_categorical("use_layer_norm", [True, False])
         use_reversible_instance_norm = trial.suggest_categorical(
-            "use_reversible_instance_norm", [False, True]
+            "use_reversible_instance_norm", [True, False]
         )
         lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
 
