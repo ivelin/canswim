@@ -19,6 +19,7 @@ import torch
 from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import quantile_loss
+from typing import Optional, Sequence
 
 
 def election_year_offset(idx):
@@ -213,6 +214,11 @@ class CanswimModel:
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
+        # update targets series dict
+        updated_target_series = {}
+        for t in self.train_series.keys():
+            updated_target_series[t] = self.targets.target_series[t]
+        self.targets.target_series = updated_target_series
 
     def __validate_train_data(self):
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
@@ -451,7 +457,7 @@ class CanswimModel:
         self.targets.load_data()
         self.covariates.load_data()
 
-    def __get_val_start_list(self):
+    def get_val_start_list(self):
         val_start_list = []
         for t, target in sorted(self.targets.target_series.items()):
             val_start_list.append(self.val_start[t])
@@ -513,16 +519,17 @@ class CanswimModel:
             pred = self.__get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
             pred_test_outputs.append(pred)
 
-        pred_val_outputs = []
-        # get predictions at several points in time over the validation set
-        for w in range(15):
-            pred_start = self.get_pred_start(start_times=self.val_start, offset=w)
-            pred_list = self.get_pred_list(pred_start)
-            past_cov_list = self.get_past_cov_list(pred_start)
-            # print(f'pred_list: \n{pred_list}')
-            pred = self.get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
-            pred_val_outputs.append(pred)
-        return pred_test_outputs, pred_val_outputs
+        ## pred_val_outputs = []
+        ### get predictions at several points in time over the validation set
+        ##for w in range(15):
+        ##    pred_start = self.get_pred_start(start_times=self.val_start, offset=w)
+        ##    pred_list = self.get_pred_list(pred_start)
+        ##    past_cov_list = self.get_past_cov_list(pred_start)
+        ##    # print(f'pred_list: \n{pred_list}')
+        ##    pred = self.get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
+        ##    pred_val_outputs.append(pred)
+        ##return pred_test_outputs, pred_val_outputs
+        return pred_test_outputs
 
     def plot_test_results(
         self,
@@ -579,10 +586,10 @@ class CanswimModel:
 
     def backtest(
         self,
-        series: TimeSeries = None,
+        series: Optional[Sequence[TimeSeries]] = None,
         start=None,
-        past_covariates=None,
-        future_covariates=None,
+        past_covariates: Optional[Sequence[TimeSeries]] = None,
+        future_covariates: Optional[Sequence[TimeSeries]] = None,
         forecast_horizon=None,
     ):
         """Backtest model on the full range of test data"""
@@ -591,11 +598,21 @@ class CanswimModel:
         # predicting up to the validate date should be near match to actuals
         # whereas predicting on unseen validate data should have room for improvement
         # forecast_start = test_start-BDay(n=30)
-        pred_start_list = self.__get_test_start_list()
-        forecast_start = pred_start_list[0] - BDay(n=30)
-        forecast_horizon = self.pred_horizon  # pred_horizon
+        # pred_start_list = self.__get_test_start_list()
+        # forecast_start = pred_start_list[0] - BDay(n=30)
+        if forecast_horizon is None:
+            forecast_horizon = self.pred_horizon
         # Past and future covariates are optional because they won't always be used in our tests
         # We backtest the model on the val portion of the flow series, with a forecast_horizon:
+        if series is None:
+            series = self.targets_list
+        if start is None:
+            start = self.val_start
+        if past_covariates is None:
+            past_covariates = self.past_cov_list
+        if future_covariates is None:
+            future_covariates = self.future_cov_list
+        print("series:", series)
         backtest = self.torch_model.historical_forecasts(
             series=series,
             past_covariates=past_covariates,
@@ -618,13 +635,14 @@ class CanswimModel:
         self,
         target: TimeSeries = None,
         backtest: [TimeSeries] = None,
+        start: pd.Timestamp = None,
         forecast_horizon: int = None,
     ):
         fig, axes = plt.subplots(figsize=(20, 10))
         # axes2 = axes.twinx()
 
         actual_sliced = self.targets_list[0].slice(
-            self.forecast_start - pd.Timedelta(days=self.train_history),
+            start - pd.Timedelta(days=self.train_history),
             target.end_time(),
         )
         ax = actual_sliced["Close"].plot(label="actual Close", linewidth=2, ax=axes)
@@ -634,7 +652,6 @@ class CanswimModel:
         ax.xaxis.set_major_locator(dates.MonthLocator(bymonth=range(13), interval=1))
         ax.xaxis.set_minor_locator(dates.MonthLocator())
         ax.grid(True)
-        ax.set_ylabel(f"{t}")
 
         for i, b in enumerate(backtest):
             # if i < n_plot_samples:
