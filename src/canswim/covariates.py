@@ -174,9 +174,11 @@ class Covariates:
                 t_iown = ts_tmp.pd_dataframe()
                 t_iown.ffill(inplace=True)
                 ts = TimeSeries.from_dataframe(
-                    t_iown, static_covariates=static_covs_single, fillna_value=-1
+                    t_iown, static_covariates=static_covs_single, fillna_value=0
                 )
-                ts_padded = self.pad_covs(cov_series=ts, price_series=prices)
+                ts_padded = self.pad_covs(
+                    cov_series=ts, price_series=prices, fillna_value=0
+                )
                 # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(ts_padded.gaps()) == 0
@@ -215,7 +217,7 @@ class Covariates:
         df.index = new_index
         return df
 
-    def pad_covs(self, cov_series=None, price_series=None):
+    def pad_covs(self, cov_series=None, price_series=None, fillna_value=-1):
         """
         Pad a ticker's covariate series to align with target price series
         """
@@ -226,7 +228,7 @@ class Covariates:
                 price_series.pd_dataframe().index, method="ffill", copy=True
             )
             new_cov_ser = TimeSeries.from_dataframe(
-                new_cov_df, freq="B", fillna_value=-1
+                new_cov_df, freq="B", fillna_value=fillna_value
             )
             updated_cov_series = new_cov_ser
         else:
@@ -368,7 +370,7 @@ class Covariates:
     def load_earnings(self):
         earnings_csv_file = "data/earnings_calendar.csv.bz2"
         earnings_loaded_df = pd.read_csv(earnings_csv_file)
-        print("earnings_loaded_df.columns", earnings_loaded_df.columns)
+        # print("earnings_loaded_df.columns", earnings_loaded_df.columns)
         earnings_loaded_df["date"] = pd.to_datetime(earnings_loaded_df["date"])
         earnings_unique = earnings_loaded_df.drop_duplicates(subset=["symbol", "date"])
         assert not earnings_unique.duplicated().any()
