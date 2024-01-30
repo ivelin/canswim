@@ -674,29 +674,45 @@ class CanswimModel:
             "input_chunk_length",
             low=252,
             high=self.train_history,
-            step=21,
+            step=42,
+            # low=252,
+            # high=self.train_history,
+            # step=21,
         )
         # try prediction periods ranging between 8 weeks to 12 weeks with a step of 1 week
         output_chunk_length = trial.suggest_int(
-            name="output_chunk_length", low=42, high=62, step=5
+            name="output_chunk_length", low=42, high=42, step=1  # high=62, step=5
         )
 
         # Other hyperparameters
-        hidden_size = trial.suggest_int("hidden_size", low=256, high=1024, step=256)
-        num_encoder_layers = trial.suggest_int("num_encoder_layers", low=1, high=3)
-        num_decoder_layers = trial.suggest_int("num_decoder_layers", low=1, high=3)
+        hidden_size = trial.suggest_int(
+            "hidden_size", low=512, high=2048, step=512
+        )  # low=256, high=1024, step=256)
+        num_encoder_layers = trial.suggest_int(
+            "num_encoder_layers", low=3, high=3
+        )  # low=1, high=3)
+        num_decoder_layers = trial.suggest_int(
+            "num_decoder_layers", low=3, high=3
+        )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
-            "decoder_output_dim", low=4, high=32, step=4
+            "decoder_output_dim", low=8, high=32, step=8  # low=4, high=32, step=4
         )
         temporal_decoder_hidden = trial.suggest_int(
-            "temporal_decoder_hidden", low=16, high=128, step=16
+            "temporal_decoder_hidden",
+            low=32,
+            high=128,
+            step=16,  # low=16, high=128, step=16
         )
-        dropout = trial.suggest_float("dropout", low=0.0, high=0.5, step=0.1)
-        use_layer_norm = trial.suggest_categorical("use_layer_norm", [True, False])
+        dropout = trial.suggest_float(
+            "dropout", low=0.2, high=0.3, step=0.1
+        )  # low=0.0, high=0.5, step=0.1)
+        use_layer_norm = trial.suggest_categorical(
+            "use_layer_norm", [True]
+        )  # , False])
         use_reversible_instance_norm = trial.suggest_categorical(
-            "use_reversible_instance_norm", [True, False]
+            "use_reversible_instance_norm", [True]  # , False]
         )
-        lr = trial.suggest_float("lr", 1e-5, 1e-1, log=True)
+        lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
 
         # throughout training we'll monitor the validation loss for both pruning and early stopping
         pruner = PyTorchLightningPruningCallback(trial, monitor="val_loss")
