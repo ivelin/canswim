@@ -3,6 +3,7 @@ import pandas as pd
 from darts import TimeSeries
 from darts.dataprocessing.transformers import MissingValuesFiller
 from typing import Union
+import numpy as np
 
 fiscal_periods = ["quarter", "annual"]
 fiscal_freq = {"annual": "Y", "quarter": "Q"}
@@ -123,6 +124,62 @@ class Covariates:
 
         return t_earn_series
 
+    def prepare_institutional_symbol_ownership_series(self, stock_price_series=None):
+        inst_ownership_df = self.inst_symbol_ownership_df.copy()
+        # cleanup data with known dirty columns
+        inst_ownership_df["totalCallsChange"] = (
+            pd.to_numeric(inst_ownership_df["totalCallsChange"], errors="coerce")
+            .fillna(0)
+            .astype(pd.Float64Dtype())
+        )
+        inst_ownership_df["totalPutsChange"] = (
+            pd.to_numeric(inst_ownership_df["totalPutsChange"], errors="coerce")
+            .fillna(0)
+            .astype(pd.Float64Dtype())
+        )
+        # convert earnings dataframe to series
+        t_inst_ownership_series = {}
+        tickers = list(list(inst_ownership_df.index.get_level_values(0).unique()))
+        for t in tickers[:2]:
+            try:
+                print(f"ticker: {t}")
+                t_iown = inst_ownership_df.loc[[t]]
+                t_iown = t_iown.droplevel("symbol")
+                t_iown.index = pd.to_datetime(t_iown.index)
+                print(f"t_iown index: {t_iown.index}")
+                assert not t_iown.index.duplicated().any()
+                print(f"t_iown no index duplicates")
+                assert not t_iown.index.isnull().any()
+                print(f"t_iown no index NaNs")
+                t_iown = self.df_index_to_biz_days(t_iown)
+                print(f"t_iown index to biz days")
+                # print(f't_earn freq: {t_earn.index}')
+                # save cik as a static covariate
+                cik = t_iown["cik"][0]
+                t_iown = t_iown.drop(columns=["cik"])
+                static_covs_single = pd.DataFrame(data={"cik": [0]})
+                print(f"Company with ticker {t} has cik: {cik}")
+                ts_tmp = TimeSeries.from_dataframe(
+                    t_iown, freq="B", fill_missing_dates=True
+                )
+                t_iown = ts_tmp.pd_dataframe()
+                t_iown.ffill(inplace=True)
+                ts = TimeSeries.from_dataframe(
+                    t_iown, static_covariates=static_covs_single, fillna_value=-1
+                )
+                ts_padded = self.pad_covs(series=ts, price_series=stock_price_series)
+                # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
+                assert (
+                    len(ts_padded.gaps()) == 0
+                ), f"found gaps in series: \n{ts_padded.gaps()}"
+                t_inst_ownership_series[t] = ts_padded
+                assert len(ts_padded.gaps()) == 0
+                t_inst_ownership_series[t] = ts_padded
+            except KeyError as e:
+                print(f"Skipping {t} due to error: ", e)
+
+        return t_inst_ownership_series
+
     def stack_covariates(self, old_covs=None, new_covs=None, min_samples=1):
         # stack sales and earnigns to past covariates
         stacked_covs = {}
@@ -149,29 +206,23 @@ class Covariates:
         df.index = new_index
         return df
 
-    def pad_kms(self, kms_series=None, price_series=None):
+    def pad_covs(self, cov_series=None, price_series=None):
         """
-        Pad a ticker's key metrics to align with price data
+        Pad a ticker's covariate series to align with target price series
         """
-        updated_kms_series = None
-        if kms_series.end_time() < price_series.end_time():
-            # print(f'ticker {t} kms end time is before ticker price series end time: {kms_series.end_time()} < {price_series.end_time()}')
-            tkms_df = kms_series.pd_dataframe()
-            new_kms_df = tkms_df.reindex(
+        updated_cov_series = None
+        if cov_series.end_time() < price_series.end_time():
+            tkms_df = cov_series.pd_dataframe()
+            new_cov_df = tkms_df.reindex(
                 price_series.pd_dataframe().index, method="ffill", copy=True
             )
-            new_kms_ser = TimeSeries.from_dataframe(
-                new_kms_df, freq="B", fillna_value=-1
+            new_cov_ser = TimeSeries.from_dataframe(
+                new_cov_df, freq="B", fillna_value=-1
             )
-            # print(f'ticker {t} kms end time after reindex: {new_kms_ser.end_time()}')
-            updated_kms_series = new_kms_ser
+            updated_cov_series = new_cov_ser
         else:
-            updated_kms_series = kms_series
-        # if kms_series.start_time() > price_series.start_time():
-        #    print(
-        #        f"ticker {t} kms start time is after ticker price series start time: {kms_series.start_time()} > {price_series.start_time()}"
-        #    )
-        return updated_kms_series
+            updated_cov_series = cov_series
+        return updated_cov_series
 
     def prepare_key_metrics(self, stock_price_series=None):
         kms_loaded_df = self.kms_loaded_df.copy()
@@ -212,7 +263,7 @@ class Covariates:
                 kms_df_ext = tkms_series_tmp.pd_dataframe()
                 kms_df_ext.ffill(inplace=True)
                 kms_ser = TimeSeries.from_dataframe(kms_df, freq="B", fillna_value=-1)
-                kms_ser_padded = self.pad_kms(kms_series=kms_ser, price_series=prices)
+                kms_ser_padded = self.pad_covs(cov_series=kms_ser, price_series=prices)
                 # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(kms_ser_padded.gaps()) == 0
@@ -266,6 +317,18 @@ class Covariates:
         self.load_earnings()
         self.load_key_metrics()
         self.load_broad_market()
+        self.load_institutional_symbol_ownership()
+
+    def load_institutional_symbol_ownership(self):
+        inst_ownership_file = "data/institutional_symbol_ownership.csv.bz2"
+        df = pd.read_csv(inst_ownership_file, low_memory=False)
+        print("inst_symbol_ownership_df.columns", df.columns)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.drop_duplicates(subset=["symbol", "date"])
+        assert not df.duplicated().any()
+        df = df.set_index(keys=["symbol", "date"])
+        assert df.index.has_duplicates == False
+        self.inst_symbol_ownership_df = df
 
     def load_broad_market(self):
         csv_file = "data/broad_market.csv.bz2"
