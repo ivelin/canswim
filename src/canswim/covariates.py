@@ -127,6 +127,11 @@ class Covariates:
     def prepare_institutional_symbol_ownership_series(self, stock_price_series=None):
         inst_ownership_df = self.inst_symbol_ownership_df.copy()
         # cleanup data with known dirty columns
+        inst_ownership_df["cik"] = (
+            pd.to_numeric(inst_ownership_df["cik"], errors="coerce")
+            .fillna(0)
+            .astype(pd.Int64Dtype())
+        )
         inst_ownership_df["totalCallsChange"] = (
             pd.to_numeric(inst_ownership_df["totalCallsChange"], errors="coerce")
             .fillna(0)
@@ -139,23 +144,27 @@ class Covariates:
         )
         # convert earnings dataframe to series
         t_inst_ownership_series = {}
-        tickers = list(list(inst_ownership_df.index.get_level_values(0).unique()))
-        for t in tickers[:2]:
+        for t, prices in stock_price_series.items():
             try:
                 print(f"ticker: {t}")
                 t_iown = inst_ownership_df.loc[[t]]
                 t_iown = t_iown.droplevel("symbol")
                 t_iown.index = pd.to_datetime(t_iown.index)
-                print(f"t_iown index: {t_iown.index}")
+                # print(f"t_iown index: {t_iown.index}")
+                print(f"t_iown index to biz days")
                 assert not t_iown.index.duplicated().any()
                 print(f"t_iown no index duplicates")
                 assert not t_iown.index.isnull().any()
                 print(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
                 print(f"t_iown index to biz days")
+                assert not t_iown.index.duplicated().any()
+                print(f"t_iown no index duplicates")
+                assert not t_iown.index.isnull().any()
+                print(f"t_iown no index NaNs")
                 # print(f't_earn freq: {t_earn.index}')
                 # save cik as a static covariate
-                cik = t_iown["cik"][0]
+                cik = t_iown["cik"].iloc[0].astype(pd.Int64Dtype)
                 t_iown = t_iown.drop(columns=["cik"])
                 static_covs_single = pd.DataFrame(data={"cik": [0]})
                 print(f"Company with ticker {t} has cik: {cik}")
@@ -167,7 +176,7 @@ class Covariates:
                 ts = TimeSeries.from_dataframe(
                     t_iown, static_covariates=static_covs_single, fillna_value=-1
                 )
-                ts_padded = self.pad_covs(series=ts, price_series=stock_price_series)
+                ts_padded = self.pad_covs(cov_series=ts, price_series=prices)
                 # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(ts_padded.gaps()) == 0
@@ -176,7 +185,7 @@ class Covariates:
                 assert len(ts_padded.gaps()) == 0
                 t_inst_ownership_series[t] = ts_padded
             except KeyError as e:
-                print(f"Skipping {t} due to error: ", e)
+                print(f"Skipping {t} due to error: ", e, t_iown.index)
 
         return t_inst_ownership_series
 
