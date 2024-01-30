@@ -33,6 +33,7 @@ class Covariates:
         self.future_covariates = {}
 
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
+        print(f"preparing past covariates: price and volume")
         # drop columns used in target series
         past_price_covariates = {
             t: stock_price_series[t].drop_columns(col_names=target_columns)
@@ -51,7 +52,7 @@ class Covariates:
         t_earn["fiscalDateEnding_year"].bfill(inplace=True)
         return t_earn
 
-    def align_to_business_days(self, t_earn=None):
+    def align_earn_to_business_days(self, t_earn=None):
         assert not t_earn.index.isnull().any()
         new_index = t_earn.index.map(
             lambda x: to_biz_day(date=x, report_time=t_earn.at[x, "time"])
@@ -64,6 +65,7 @@ class Covariates:
         return t_earn
 
     def prepare_earn_series(self, tickers=None):
+        print(f"preparing past covariates: earnings estimates ")
         # convert date strings to numerical representation
         earn_df = self.earnings_loaded_df.copy()
         # print("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
@@ -110,7 +112,7 @@ class Covariates:
                 # print(f'index type for {t}: {type(t_earn.index)}')
                 assert not t_earn.index.duplicated().any()
                 assert not t_earn.index.isnull().any()
-                t_earn = self.align_to_business_days(t_earn)
+                t_earn = self.align_earn_to_business_days(t_earn)
                 # print(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
@@ -125,6 +127,7 @@ class Covariates:
         return t_earn_series
 
     def prepare_institutional_symbol_ownership_series(self, stock_price_series=None):
+        print(f"preparing past covariates: institutional ownership of symbol")
         inst_ownership_df = self.inst_symbol_ownership_df.copy()
         # cleanup data with known dirty columns
         inst_ownership_df["cik"] = (
@@ -146,39 +149,45 @@ class Covariates:
         t_inst_ownership_series = {}
         for t, prices in stock_price_series.items():
             try:
-                print(f"ticker: {t}")
+                # print(f"ticker: {t}")
                 t_iown = inst_ownership_df.loc[[t]]
                 t_iown = t_iown.droplevel("symbol")
                 t_iown.index = pd.to_datetime(t_iown.index)
                 # print(f"t_iown index: {t_iown.index}")
-                print(f"t_iown index to biz days")
-                assert not t_iown.index.duplicated().any()
-                print(f"t_iown no index duplicates")
-                assert not t_iown.index.isnull().any()
-                print(f"t_iown no index NaNs")
+                # print(f"t_iown index to biz days")
+                # assert not t_iown.index.duplicated().any(), "date index has duplicates"
+                # print(f"t_iown no index duplicates")
+                # assert not t_iown.index.isnull().any(), "date index has missing values"
+                # print(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
-                print(f"t_iown index to biz days")
-                assert not t_iown.index.duplicated().any()
-                print(f"t_iown no index duplicates")
-                assert not t_iown.index.isnull().any()
-                print(f"t_iown no index NaNs")
+                # print(f"t_iown index to biz days")
+                t_iown = (
+                    t_iown.reset_index()
+                    .drop_duplicates(subset="date", keep="last")
+                    .set_index("date")
+                )
+                assert not t_iown.index.duplicated().any(), "date index has duplicates"
+                # print(f"t_iown no index duplicates")
+                assert not t_iown.index.isnull().any(), "date index has missing values"
+                # print(f"t_iown no index NaNs")
                 # print(f't_earn freq: {t_earn.index}')
                 # save cik as a static covariate
-                cik = t_iown["cik"].iloc[0].astype(pd.Int64Dtype)
-                t_iown = t_iown.drop(columns=["cik"])
-                static_covs_single = pd.DataFrame(data={"cik": [0]})
-                print(f"Company with ticker {t} has cik: {cik}")
+                ##cik = t_iown["cik"].iloc[0].astype(pd.Int64Dtype)
+                ##t_iown = t_iown.drop(columns=["cik"])
+                ##static_covs_single = pd.DataFrame(data={"cik": [cik]})
+                # print(f"Company with ticker {t} has cik: {cik}")
                 ts_tmp = TimeSeries.from_dataframe(
                     t_iown, freq="B", fill_missing_dates=True
                 )
                 t_iown = ts_tmp.pd_dataframe()
                 t_iown.ffill(inplace=True)
-                ts = TimeSeries.from_dataframe(
-                    t_iown, static_covariates=static_covs_single, fillna_value=0
-                )
+                ts = TimeSeries.from_dataframe(t_iown, fillna_value=0)
                 ts_padded = self.pad_covs(
                     cov_series=ts, price_series=prices, fillna_value=0
                 )
+                ##ts_padded = ts_padded.with_static_covariates(
+                ##    covariates=static_covs_single
+                ##)
                 # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(ts_padded.gaps()) == 0
@@ -186,12 +195,22 @@ class Covariates:
                 t_inst_ownership_series[t] = ts_padded
                 assert len(ts_padded.gaps()) == 0
                 t_inst_ownership_series[t] = ts_padded
-            except KeyError as e:
-                print(f"Skipping {t} due to error: ", e, t_iown.index)
+            except Exception as e:
+                # df1 = (
+                #    t_iown.groupby(t_iown.columns.tolist())
+                #    .apply(lambda x: tuple(x.index))
+                #   .reset_index(name="date")
+                # )
+                print(f"Skipping {t} due to error: \n{e}")
+                # print(
+                #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
+                #
+                # return t_iown
 
         return t_inst_ownership_series
 
     def stack_covariates(self, old_covs=None, new_covs=None, min_samples=1):
+        print(f"stacking covariates")
         # stack sales and earnigns to past covariates
         stacked_covs = {}
         for t, covs in list(old_covs.items()):
@@ -236,6 +255,7 @@ class Covariates:
         return updated_cov_series
 
     def prepare_key_metrics(self, stock_price_series=None):
+        print(f"preparing past covariates: key metrics")
         kms_loaded_df = self.kms_loaded_df.copy()
         # print(kms_loaded_df)
         assert kms_loaded_df.index.is_unique
@@ -286,6 +306,7 @@ class Covariates:
         return t_kms_series
 
     def prepare_broad_market_series(self, csv_file: str = None, train_date_start=None):
+        print(f"preparing past covariates: broad market indecies")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
@@ -312,12 +333,12 @@ class Covariates:
         broad_market_series = series_filled
         return broad_market_series
 
-    def prepare_holidays(ticker_series=None):
-        future_covariates = {
-            t: ticker_series[t].univariate_component("holidays")
-            for t in ticker_series.keys()
-        }
-        return future_covariates
+    ## def prepare_holidays(ticker_series=None):
+    ##    future_covariates = {
+    ##        t: ticker_series[t].univariate_component("holidays")
+    ##        for t in ticker_series.keys()
+    ##    }
+    ##    return future_covariates
 
     def load_data(self):
         self.load_past_covariates()
@@ -355,6 +376,7 @@ class Covariates:
         train_date_start: pd.Timestamp = None,
         min_samples: int = None,
     ):
+        print(f"preparing model data")
         assert (
             self.data_loaded is True
         ), "Data needs to be loaded before it can be prepared. Make sure to first call load_data()"
@@ -446,6 +468,7 @@ class Covariates:
         :param period: quarter or annual
         :return: estimate series expanded with forward periods at each series date indexed row
         """
+        print(f"preparing future covariates: analyst estimates[{period}]")
         assert period in fiscal_periods
         t_est_series = {}
         for t in list(tickers):
@@ -479,6 +502,7 @@ class Covariates:
         return t_est_series
 
     def prepare_analyst_estimates(self, tickers=None):
+        print(f"preparing future covariates: analyst estimates")
         quarter_est_series = self.prepare_est_series(
             all_est_df=self.est_loaded_df["quarter"],
             n_future_periods=4,
@@ -499,6 +523,7 @@ class Covariates:
         target_columns: Union[str, list] = None,
         train_date_start: pd.Timestamp = None,
     ):
+        print(f"preparing past covariates")
         # start with price-volume covariates
         price_covariates = self.get_price_covariates(
             stock_price_series=stock_price_series, target_columns=target_columns
@@ -515,6 +540,12 @@ class Covariates:
         past_covariates = self.stack_covariates(
             old_covs=self.past_covariates, new_covs=kms_series
         )
+        inst_ownership_series = self.prepare_institutional_symbol_ownership_series(
+            stock_price_series=stock_price_series
+        )
+        past_covariates = self.stack_covariates(
+            old_covs=past_covariates, new_covs=inst_ownership_series
+        )
         # Add broad market indicators to past covariates
         broad_market_series = self.prepare_broad_market_series(
             train_date_start=train_date_start
@@ -527,17 +558,18 @@ class Covariates:
         self.past_covariates = past_covariates
 
     def __add_holidays(self, series_dict: dict = None):
+        print(f"preparing future covariates: holidays")
         new_series = {}
         for t, series in series_dict.items():
             series_with_holidays = series.add_holidays(country_code="US")
             new_series[t] = series_with_holidays
             # print(f'ticker: {t} , {ticker_series[t]}')
-        print("Added holidays to ticker series.")
         return new_series
 
     def prepare_future_covariates(
         self, stock_price_series: {} = None, min_samples=None
     ):
+        print(f"preparing future covariates")
         # add analyst estimates
         quarter_est_series, annual_est_series = self.prepare_analyst_estimates(
             tickers=stock_price_series.keys(),
