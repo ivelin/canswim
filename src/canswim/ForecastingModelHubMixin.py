@@ -1,11 +1,11 @@
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Type, TypeVar, Union
-from huggingface_hub import ModelHubMixin, snapshot_download
+from huggingface_hub import ModelHubMixin, snapshot_download, upload_folder
 from darts.models.forecasting.forecasting_model import ForecastingModel
 
 
-class ForecastingModelHubMixin(ForecastingModel, ModelHubMixin):
+class ForecastingModelHubMixin(ModelHubMixin):
     """
     Implementation of [`ModelHubMixin`] to provide model Hub upload/download capabilities to Darts Forecasting models.
     This mixin is based on the Hugging Face supported PyTorchModelHubMixin.
@@ -33,6 +33,9 @@ class ForecastingModelHubMixin(ForecastingModel, ModelHubMixin):
     >>> model = MyModel.from_pretrained("username/my-awesome-model")
     ```
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def _save_pretrained(self, save_directory: Path) -> None:
         """Save weights from a Pytorch model to a local directory."""
@@ -70,5 +73,5 @@ class ForecastingModelHubMixin(ForecastingModel, ModelHubMixin):
                 local_files_only=local_files_only,
                 local_dir=True,
             )
-        model = ForecastingModel.load(path=local_dir)
+        model = __class__.load(path=local_dir)
         return model

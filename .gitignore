@@ -1,6 +1,6 @@
 darts_logs/**
 data/**
-.env.*
+.env*
 tmp/**
 **/__pycache__/**
 **/canswim.egg-info/**
