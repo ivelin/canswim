@@ -353,8 +353,9 @@ class Covariates:
 
     def load_institutional_symbol_ownership(self):
         inst_ownership_file = "data/institutional_symbol_ownership.csv.bz2"
+        print(f"Loading data from: {inst_ownership_file}")
         df = pd.read_csv(inst_ownership_file, low_memory=False)
-        print("inst_symbol_ownership_df.columns", df.columns)
+        # print("inst_symbol_ownership_df.columns", df.columns)
         df["date"] = pd.to_datetime(df["date"])
         df = df.drop_duplicates(subset=["symbol", "date"])
         assert not df.duplicated().any()
@@ -391,6 +392,7 @@ class Covariates:
 
     def load_earnings(self):
         earnings_csv_file = "data/earnings_calendar.csv.bz2"
+        print(f"Loading data from: {earnings_csv_file}")
         earnings_loaded_df = pd.read_csv(earnings_csv_file)
         # print("earnings_loaded_df.columns", earnings_loaded_df.columns)
         earnings_loaded_df["date"] = pd.to_datetime(earnings_loaded_df["date"])
@@ -402,6 +404,7 @@ class Covariates:
 
     def load_key_metrics(self):
         kms_file = "data/keymetrics_history.csv.bz2"
+        print(f"Loading data from: {kms_file}")
         kms_loaded_df = pd.read_csv(kms_file)
         self.kms_loaded_df = kms_loaded_df
 
@@ -410,6 +413,7 @@ class Covariates:
         for period in fiscal_periods:
             assert period in fiscal_periods
             est_file = f"data/analyst_estimates_{period}.csv.bz2"
+            print(f"Loading data from: {est_file}")
             est_loaded_df = pd.read_csv(est_file)
             assert est_loaded_df.index.is_unique
             # print(f'{period} estimates loaded: \n{est_loaded_df}')
@@ -546,7 +550,6 @@ class Covariates:
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=inst_ownership_series
         )
-        # Add broad market indicators to past covariates
         broad_market_series = self.prepare_broad_market_series(
             train_date_start=train_date_start
         )

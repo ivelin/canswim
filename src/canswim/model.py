@@ -152,26 +152,26 @@ class CanswimModel:
             ):
                 try:
                     print(f"preparing train, val split for {t}")
-                    print(
-                        f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
-                    )
+                    # print(
+                    #    f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
+                    # )
                     train, val = target.split_before(self.val_start[t])
                     val, test = val.split_before(self.test_start[t])
-                    print(
-                        f"{t} train start time, end time: {train.start_time()}, {train.end_time()}"
-                    )
-                    print(
-                        f"{t} val start time, end time: {val.start_time()}, {val.end_time()}"
-                    )
-                    print(
-                        f"{t} test start time, end time: {test.start_time()}, {test.end_time()}"
-                    )
-                    print(
-                        f"{t} past covs start time, end time: {self.covariates.past_covariates[t].start_time()}, {self.covariates.past_covariates[t].end_time()}"
-                    )
-                    print(
-                        f"{t} future covs start time, end time: {self.covariates.future_covariates[t].start_time()}, {self.covariates.future_covariates[t].end_time()}"
-                    )
+                    # print(
+                    #    f"{t} train start time, end time: {train.start_time()}, {train.end_time()}"
+                    # )
+                    # print(
+                    #    f"{t} val start time, end time: {val.start_time()}, {val.end_time()}"
+                    # )
+                    # print(
+                    #    f"{t} test start time, end time: {test.start_time()}, {test.end_time()}"
+                    # )
+                    # print(
+                    #    f"{t} past covs start time, end time: {self.covariates.past_covariates[t].start_time()}, {self.covariates.past_covariates[t].end_time()}"
+                    # )
+                    # print(
+                    #    f"{t} future covs start time, end time: {self.covariates.future_covariates[t].start_time()}, {self.covariates.future_covariates[t].end_time()}"
+                    # )
                     # there should be no gaps in the training data
                     assert len(train.gaps().index) == 0
                     assert (
@@ -310,6 +310,30 @@ class CanswimModel:
             print("Unable to find or load a saved model. Error: \n", e)
         return False
 
+    def build(self, **kwargs):
+        # early stopping (needs to be reset for each model later on)
+        # this setting stops training once the the validation loss has not decreased by more than 1e-3 for 10 epochs
+        early_stopper = EarlyStopping(
+            monitor="val_loss", min_delta=0.001, patience=3, verbose=True, mode="min"
+        )
+        callbacks = [early_stopper]
+        pl_trainer_kwargs = {
+            "accelerator": "auto",
+            "callbacks": callbacks,
+        }
+
+        pl_trainer_kwargs = {
+            "accelerator": "auto",
+        }
+        self.train_history = kwargs["input_chunk_length"]
+        self.pred_horizon = kwargs["output_chunk_length"]
+        model = self.__build_model(
+            **kwargs,
+            pl_trainer_kwargs=pl_trainer_kwargs,
+        )
+        self.torch_model = model
+        print("New model built.")
+
     def __build_model(self, **kwargs):
         # scaler = Scaler(verbose=True, n_jobs=-1)
         # darts encoder examples: https://unit8co.github.io/darts/generated_api/darts.dataprocessing.encoders.encoders.html#
@@ -368,7 +392,7 @@ class CanswimModel:
             "batch_size": 256,  # 512,
             "random_state": 42,
         }
-        print("Creating a new model")
+        print("Building a new model...")
         # using TiDE hyperparameters from Table 8 in section B.3 of the original paper
         # https://arxiv.org/pdf/2304.08424.pdf
         model = TiDEModel(
@@ -397,8 +421,9 @@ class CanswimModel:
         return model
 
     def train(self):
-        # load or create a new model instance
-        self.torch_model = self.__load_model()
+        assert (
+            self.torch_model is not None
+        ), "Call build() or load_model() before calling train()."
         # when True, multiple time series are supported
         supports_multi_ts = issubclass(
             self.torch_model.__class__, GlobalForecastingModel
@@ -406,6 +431,7 @@ class CanswimModel:
         assert supports_multi_ts is True
         # train model
         # for i in range(100):
+        print("Starting model training...")
         self.torch_model.fit(
             self.target_train_list,
             epochs=self.n_epochs,
@@ -418,6 +444,11 @@ class CanswimModel:
             verbose=True,
             num_loader_workers=4,  # num_loader_workers recommended at 4*n_GPUs
         )
+        print("Model training finished.")
+        # backtest and plot results
+        # save model checkpoint
+        self.save()
+        print("Model saved.")
 
     def plot_splits(self):
         # plot sample of target series
@@ -450,7 +481,7 @@ class CanswimModel:
 
         axes[0].set_ylabel("Seasonality")
 
-    def save_model(self):
+    def save(self):
         self.torch_model.save(self.model_name)
 
     def load_data(self):
@@ -531,20 +562,15 @@ class CanswimModel:
         ##return pred_test_outputs, pred_val_outputs
         return pred_test_outputs
 
-    def plot_test_results(
-        self,
-        target: TimeSeries = None,
-        pred_val_outputs: {str: TimeSeries} = None,
-        pred_test_outputs: {str: TimeSeries} = None,
-    ):
+    def plot_test_results(self, preds: [] = None):
         # select a reasonable range of train and val data points for convenient visualization of results
         actual = {}
 
         def plot_actual():
             for i, t in enumerate(sorted(self.train_series.keys())):
                 if i < self.n_plot_samples:
-                    tsliced = self.targets.target_series[t]
-                    actual[t] = tsliced.slice(self.val_start[t], target.end_time())
+                    target = self.targets.target_series[t]
+                    actual[t] = target.slice(self.val_start[t], target.end_time())
                     # ax = actual[t]['Open'].plot(label='actual Open', linewidth=1, ax=axes[i])
                     ax = actual[t]["Close"].plot(
                         label="actual Close", linewidth=1, ax=axes[i]
@@ -578,15 +604,15 @@ class CanswimModel:
 
         # plot predictions at several points in time over the validation set
         # plot_pred(pred_outputs=pred_outputs, past_cov_list=past_cov_list)
-        for pred_out in pred_val_outputs:
+        for pred_out in preds:
             plot_pred(pred_out=pred_out, past_cov_list=self.past_cov_list)
 
-        for pred_out in pred_test_outputs:
-            plot_pred(pred_out=pred_out, past_cov_list=self.past_cov_list)
+        # for pred_out in pred_test_outputs:
+        #     plot_pred(pred_out=pred_out, past_cov_list=self.past_cov_list)
 
     def backtest(
         self,
-        series: Optional[Sequence[TimeSeries]] = None,
+        target: Optional[Sequence[TimeSeries]] = None,
         start=None,
         past_covariates: Optional[Sequence[TimeSeries]] = None,
         future_covariates: Optional[Sequence[TimeSeries]] = None,
@@ -604,17 +630,17 @@ class CanswimModel:
             forecast_horizon = self.pred_horizon
         # Past and future covariates are optional because they won't always be used in our tests
         # We backtest the model on the val portion of the flow series, with a forecast_horizon:
-        if series is None:
-            series = self.targets_list
+        if target is None:
+            target = self.targets_list
         if start is None:
             start = self.val_start
         if past_covariates is None:
             past_covariates = self.past_cov_list
         if future_covariates is None:
             future_covariates = self.future_cov_list
-        print("series:", series)
+        # print("series:", target)
         backtest = self.torch_model.historical_forecasts(
-            series=series,
+            series=target,
             past_covariates=past_covariates,
             future_covariates=future_covariates,
             start=start,
@@ -627,9 +653,11 @@ class CanswimModel:
             num_samples=500,  # probabilistic forecasting
             predict_kwargs={"mc_dropout": True, "num_loader_workers": 4, "n_jobs": -1},
         )
-        test_error = quantile_loss(self.targets_list[0], backtest[0])
-        print(f"Backtest Quantile Loss = {test_error}")
-        return backtest, test_error
+        print(f"{len(target)} target series, {len(backtest)} backtest series")
+        # print(f"target series: \n{target}")
+        # print(f"backtest series: \n{backtest}")
+        # loss = quantile_loss(target, backtest, n_jobs=-1, verbose=True)
+        return backtest  # , loss
 
     def plot_backtest_results(
         self,
@@ -638,10 +666,10 @@ class CanswimModel:
         start: pd.Timestamp = None,
         forecast_horizon: int = None,
     ):
-        fig, axes = plt.subplots(figsize=(20, 10))
+        fig, axes = plt.subplots(figsize=(20, 12))
         # axes2 = axes.twinx()
 
-        actual_sliced = self.targets_list[0].slice(
+        actual_sliced = target.slice(
             start - pd.Timedelta(days=self.train_history),
             target.end_time(),
         )
@@ -809,7 +837,4 @@ class CanswimModel:
             gc_after_trial=True,
             show_progress_bar=True,
         )
-        # reload best model over course of training
-        self.torch_model = TiDEModel.load_from_checkpoint(self.model_name)
-        self.save_model()
-        return True
+        return study
