@@ -113,6 +113,11 @@ class Covariates:
                 assert not t_earn.index.duplicated().any()
                 assert not t_earn.index.isnull().any()
                 t_earn = self.align_earn_to_business_days(t_earn)
+                t_earn = (
+                    t_earn.reset_index()
+                    .drop_duplicates(subset="date", keep="last")
+                    .set_index("date")
+                )
                 # print(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
