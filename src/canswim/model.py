@@ -20,6 +20,7 @@ from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import quantile_loss
 from typing import Optional, Sequence
+from canswim.hfhub import HFHub
 
 
 def election_year_offset(idx):
@@ -63,6 +64,8 @@ class CanswimModel:
 
         self.targets = Targets(min_samples=self.min_samples)
         self.covariates = Covariates()
+
+        self.hfhub = HFHub()
 
         # use GPU if available
         if torch.cuda.is_available():
@@ -136,6 +139,7 @@ class CanswimModel:
         )
 
     def __prepare_data_splits(self):
+        print(f"preparing train, val and test splits")
         self.train_series = {}
         self.val_series = {}
         self.test_series = {}
@@ -151,7 +155,7 @@ class CanswimModel:
                 and t in self.covariates.future_covariates.keys()
             ):
                 try:
-                    print(f"preparing train, val split for {t}")
+                    # print(f"preparing train, val split for {t}")
                     # print(
                     #    f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
                     # )
@@ -310,6 +314,16 @@ class CanswimModel:
             print("Unable to find or load a saved model. Error: \n", e)
         return False
 
+    def download_model(self, repo_id: str = None):
+        if torch.cuda.is_available():
+            map_location = "cuda"
+        else:
+            map_location = "cpu"
+        torch_model = self.hfhub.download_model(
+            repo_id=repo_id, model_name=self.model_name, model_class=TiDEModel
+        )
+        self.torch_model = torch_model
+
     def build(self, **kwargs):
         # early stopping (needs to be reset for each model later on)
         # this setting stops training once the the validation loss has not decreased by more than 1e-3 for 10 epochs
@@ -447,7 +461,7 @@ class CanswimModel:
         print("Model training finished.")
         # backtest and plot results
         # save model checkpoint
-        self.save()
+        self.save_model()
         print("Model saved.")
 
     def plot_splits(self):
@@ -481,8 +495,12 @@ class CanswimModel:
 
         axes[0].set_ylabel("Seasonality")
 
-    def save(self):
+    def save_model(self):
         self.torch_model.save(self.model_name)
+
+    def upload_model(self, repo_id: str = None):
+        assert repo_id is not None
+        self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
     def load_data(self):
         self.targets.load_data()
