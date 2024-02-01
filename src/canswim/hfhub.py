@@ -26,8 +26,8 @@ class HFHub:
 
     def upload_model(
         self,
-        model: ForecastingModel = None,
         repo_id: str = None,
+        model: ForecastingModel = None,
         private: Optional[bool] = True,
     ):
         # Create repo if not existing yet and get the associated repo_id
@@ -53,21 +53,41 @@ class HFHub:
 
     def upload_timeseries(
         self,
-        series: TimeSeries = None,
         repo_id: str = None,
+        series: TimeSeries = None,
+        series_name: str = None,
         private: Optional[bool] = True,
     ):
         # Create repo if not existing yet and get the associated repo_id
-        create_repo(
-            repo_id=repo_id, repo_type="datasets", private=private, exist_ok=True
+        repo_info = create_repo(
+            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True
         )
-
-        pass
+        # print(f"repo_info: ", repo_info)
+        df = series.pd_dataframe()
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            df.to_parquet(path=f"{tmpdirname}/{series_name}.parquet")
+            upload_folder(
+                repo_id=repo_id,
+                repo_type="dataset",
+                folder_path=tmpdirname,
+                token=self.HF_TOKEN,
+            )
 
     def download_timeseries(
         self,
-        series_name: str = None,
         repo_id: str = None,
-        private: Optional[bool] = True,
+        series_name: str = None,
     ) -> TimeSeries:
-        pass
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            snapshot_download(
+                repo_id=repo_id,
+                repo_type="dataset",
+                local_dir=tmpdirname,
+                token=self.HF_TOKEN,
+            )
+            print(os.listdir(tmpdirname))
+            df = pd.read_parquet(
+                f"{tmpdirname}/{series_name}.parquet", engine="pyarrow"
+            )
+            ts = TimeSeries.from_dataframe(df)
+            return ts

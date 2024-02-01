@@ -15,3 +15,15 @@ conda is a convenient package manager for python based data science projects. Fo
 pip install darts
 ```
 
+## Install canswim package in dev mode
+
+```
+pip install -e ./
+```
+
+## Explore jupyter notebooks
+
+  * [prepare_data.ipynb](prepare_data.ipynb) - Download raw data from third party sources and save to local storage.
+
+  * [model_sandbox.ipynb](model_sandbox.ipynb) - Prepare timeseries, find optimal model hyper parameters, train and backtest model
+
