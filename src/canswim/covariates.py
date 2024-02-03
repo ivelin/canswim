@@ -32,6 +32,15 @@ class Covariates:
         self.past_covariates = {}
         self.future_covariates = {}
 
+    @property
+    def stock_tickers(self):  # , stocks_df=None):
+        # stock_tickers = stocks_df.columns.levels[0]
+        return self.__stock_tickers
+
+    @property
+    def pyarrow_filters(self):
+        return [("Symbol", "in", self.stock_tickers)]
+
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
         print(f"preparing past covariates: price and volume")
         # drop columns used in target series
@@ -310,7 +319,7 @@ class Covariates:
         # print("t_kms_series:", t_kms_series)
         return t_kms_series
 
-    def prepare_broad_market_series(self, csv_file: str = None, train_date_start=None):
+    def prepare_broad_market_series(self, train_date_start=None):
         print(f"preparing past covariates: broad market indecies")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
@@ -345,7 +354,8 @@ class Covariates:
     ##    }
     ##    return future_covariates
 
-    def load_data(self):
+    def load_data(self, stock_tickers: set = None):
+        self.__stock_tickers = stock_tickers
         self.load_past_covariates()
         self.load_future_covariates()
         self.data_loaded = True
@@ -357,20 +367,25 @@ class Covariates:
         self.load_institutional_symbol_ownership()
 
     def load_institutional_symbol_ownership(self):
-        inst_ownership_file = "data/institutional_symbol_ownership.csv.bz2"
+        inst_ownership_file = (
+            "data/data-3rd-party/institutional_symbol_ownership.parquet"
+        )
         print(f"Loading data from: {inst_ownership_file}")
-        df = pd.read_csv(inst_ownership_file, low_memory=False)
+        # df = pd.read_csv(inst_ownership_file, low_memory=False)
+        df = pd.read_parquet(inst_ownership_file, filters=self.pyarrow_filters)
         # print("inst_symbol_ownership_df.columns", df.columns)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.drop_duplicates(subset=["symbol", "date"])
+        # df["date"] = pd.to_datetime(df["date"])
+
+        df = df.drop_duplicates()  # subset=["symbol", "date"])
         assert not df.duplicated().any()
-        df = df.set_index(keys=["symbol", "date"])
+        # df = df.set_index(keys=["symbol", "date"])
         assert df.index.has_duplicates == False
         self.inst_symbol_ownership_df = df
 
     def load_broad_market(self):
-        csv_file = "data/broad_market.csv.bz2"
-        self.broad_market_df = pd.read_csv(csv_file, header=[0, 1], index_col=0)
+        file = "data/data-3rd-party/broad_market.parquet"
+        # self.broad_market_df = pd.read_csv(csv_file, header=[0, 1], index_col=0)
+        self.broad_market_df = pd.read_parquet(file)
 
     def load_future_covariates(self):
         self.load_estimates()
@@ -396,40 +411,52 @@ class Covariates:
         )
 
     def load_earnings(self):
-        earnings_csv_file = "data/earnings_calendar.csv.bz2"
-        print(f"Loading data from: {earnings_csv_file}")
-        earnings_loaded_df = pd.read_csv(earnings_csv_file)
+        earnings_file = "data/data-3rd-party/earnings_calendar.parquet"
+        print(f"Loading data from: {earnings_file}")
+        # earnings_loaded_df = pd.read_csv(earnings_csv_file)
+        print(f"pyarrow_filters: {self.pyarrow_filters}")
+        earnings_loaded_df = pd.read_parquet(
+            earnings_file, filters=self.pyarrow_filters
+        )
         # print("earnings_loaded_df.columns", earnings_loaded_df.columns)
-        earnings_loaded_df["date"] = pd.to_datetime(earnings_loaded_df["date"])
-        earnings_unique = earnings_loaded_df.drop_duplicates(subset=["symbol", "date"])
+        # earnings_loaded_df["date"] = pd.to_datetime(earnings_loaded_df["date"])
+        earnings_unique = (
+            earnings_loaded_df.drop_duplicates()
+        )  # subset=["Symbol", "Date"])
         assert not earnings_unique.duplicated().any()
-        earnings_unique = earnings_unique.set_index(keys=["symbol", "date"])
+        # earnings_unique = earnings_unique.set_index(keys=["symbol", "date"])
+        earnings_unique = earnings_unique[
+            ~earnings_unique.index.duplicated(keep="first")
+        ]
         assert earnings_unique.index.has_duplicates == False
+        print(f"Loading a total of {len(earnings_unique)} unique earnings records")
         self.earnings_loaded_df = earnings_unique
 
     def load_key_metrics(self):
-        kms_file = "data/keymetrics_history.csv.bz2"
+        kms_file = "data/data-3rd-party/keymetrics_history.parquet"
         print(f"Loading data from: {kms_file}")
-        kms_loaded_df = pd.read_csv(kms_file)
+        # kms_loaded_df = pd.read_csv(kms_file)
+        kms_loaded_df = pd.read_parquet(kms_file, filters=self.pyarrow_filters)
         self.kms_loaded_df = kms_loaded_df
 
     def load_estimates(self):
         self.est_loaded_df = {}
         for period in fiscal_periods:
             assert period in fiscal_periods
-            est_file = f"data/analyst_estimates_{period}.csv.bz2"
+            est_file = f"data/data-3rd-party/analyst_estimates_{period}.parquet"
             print(f"Loading data from: {est_file}")
-            est_loaded_df = pd.read_csv(est_file)
+            # est_loaded_df = pd.read_csv(est_file)
+            est_loaded_df = pd.read_parquet(est_file, filters=self.pyarrow_filters)
             assert est_loaded_df.index.is_unique
             # print(f'{period} estimates loaded: \n{est_loaded_df}')
-            est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
-            est_unique = est_loaded_df.drop_duplicates(subset=["symbol", "date"])
-            assert not est_unique.duplicated().any()
-            est_unique = est_unique.set_index(keys=["symbol", "date"])
-            assert est_unique.index.has_duplicates == False
-            assert est_unique.index.is_unique == True
+            # est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
+            # est_unique = est_loaded_df.drop_duplicates(subset=["symbol", "date"])
+            assert not est_loaded_df.duplicated().any()
+            # est_unique = est_unique.set_index(keys=["symbol", "date"])
+            assert est_loaded_df.index.has_duplicates == False
+            assert est_loaded_df.index.is_unique == True
             # print(f'{period} estimates prepared: \n{est_unique}')
-            self.est_loaded_df[period] = est_unique
+            self.est_loaded_df[period] = est_loaded_df
 
     def est_add_future_periods(self, est_df=None, n_future_periods=None, period=None):
         """

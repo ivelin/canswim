@@ -21,6 +21,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import quantile_loss
 from typing import Optional, Sequence
 from canswim.hfhub import HFHub
+import gc
 
 
 def election_year_offset(idx):
@@ -49,30 +50,41 @@ class CanswimModel:
         self.model_name = "canswim_model.pt"
         self.n_plot_samples: int = 4
         self.train_date_start: pd.Timestamp = None
-        # How far back should the model look in order to make a prediction
-        self.train_history: int = 252 * 2  # 252 days in a year with market data
-        # How far into the future should the model forecast
-        self.pred_horizon: int = 21 * 2  # 21 days in a month with market data
-
-        self.n_test_range_days: int = self.train_history + 3 * self.pred_horizon
-        print(f"n_test_range_days: {self.n_test_range_days}")
-
-        # minimum amount of historical data required to train on a stock series
-        # stocks that are too new off IPOs, are not a good fit for training this model
-        self.min_samples = self.n_test_range_days * 3
-        print(f"min_samples: {self.min_samples}")
-
-        self.targets = Targets(min_samples=self.min_samples)
+        self.targets = Targets()
         self.covariates = Covariates()
-
         self.hfhub = HFHub()
-
         # use GPU if available
         if torch.cuda.is_available():
             print("Configuring CUDA GPU")
             # utilize CUDA tensor cores with bfloat16
             # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
             torch.set_float32_matmul_precision("high")  #  | 'medium'
+
+        self.__load_config()
+
+    @property
+    def n_test_range_days(self):
+        n = self.train_history + 3 * self.pred_horizon
+        return n
+
+    @property
+    def min_samples(self):
+        # minimum amount of historical data required to train on a stock series
+        # stocks that are too new off IPOs, are not a good fit for training this model
+        m = self.n_test_range_days * 3
+        return m
+
+    @property
+    def train_history(self):
+        """How far back should the model look in order to make a prediction"""
+        assert self.torch_model is not None
+        return self.torch_model.input_chunk_length
+
+    @property
+    def pred_horizon(self):
+        # How far into the future should the model forecast
+        assert self.torch_model is not None
+        return self.torch_model.output_chunk_length
 
     def __align_targets_and_covariates(self):
         # remove tickers that don't have sufficient training data
@@ -269,13 +281,6 @@ class CanswimModel:
         )
 
     def prepare_data(self):
-        self.__load_config()
-        # reduce ticker set to a workable sample size for one training loop
-        self.__stock_tickers = random.sample(
-            self.targets.all_stock_tickers, self.n_stocks
-        )
-        print("Training loop stock subset:", self.stock_tickers)
-
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
         self.stock_price_series = self.targets.prepare_stock_price_series(
@@ -401,8 +406,8 @@ class CanswimModel:
             "lr_scheduler_cls": lr_scheduler_cls,
             "lr_scheduler_kwargs": lr_scheduler_kwargs,
             # "likelihood": None,  # use a likelihood for probabilistic forecasts
-            # "save_checkpoints": True,  # checkpoint to retrieve the best performing model state,
-            # "force_reset": True,
+            "save_checkpoints": True,  # checkpoint to retrieve the best performing model state,
+            "force_reset": True,
             "batch_size": 256,  # 512,
             "random_state": 42,
         }
@@ -459,8 +464,10 @@ class CanswimModel:
             num_loader_workers=4,  # num_loader_workers recommended at 4*n_GPUs
         )
         print("Model training finished.")
-        # backtest and plot results
-        # save model checkpoint
+        # load best checkpoint
+        best_model = TiDEModel.load_from_checkpoint(self.model_name)
+        self.torch_model = best_model
+        # save model as a standalone snapshot
         self.save_model()
         print("Model saved.")
 
@@ -503,8 +510,27 @@ class CanswimModel:
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
     def load_data(self):
-        self.targets.load_data()
-        self.covariates.load_data()
+        # update data prep params from current model hyper params
+        assert (
+            self.torch_model is not None
+        ), "Data loading needs model hyperparameters. Instantiate model before loading data. "
+        # force garbage collection
+        gc.collect()
+        # load data
+        self.__load_config()
+        all_stock_tickers = pd.read_csv("data/data-3rd-party/all_stocks.csv")
+        print(f"Loaded {len(all_stock_tickers)} symbols in total")
+        stock_set = list(set(all_stock_tickers["Symbol"]))
+        # reduce ticker set to a workable sample size for one training loop
+        self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+        print(
+            f"Training loop stock subset has {len(self.stock_tickers)} tickers: \n",
+            self.stock_tickers,
+        )
+        self.targets.load_data(
+            stock_tickers=self.stock_tickers, min_samples=self.min_samples
+        )
+        self.covariates.load_data(stock_tickers=self.stock_tickers)
 
     def get_val_start_list(self):
         val_start_list = []
