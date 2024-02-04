@@ -31,7 +31,13 @@ class HFHub:
         private: Optional[bool] = True,
     ):
         # Create repo if not existing yet and get the associated repo_id
-        create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
+        create_repo(
+            repo_id=repo_id,
+            repo_type="model",
+            private=private,
+            exist_ok=True,
+            token=self.HF_TOKEN,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdirname:
             # print("created temporary directory for model", tmpdirname)
@@ -58,9 +64,13 @@ class HFHub:
         series_name: str = None,
         private: Optional[bool] = True,
     ):
-        # Create repo if not existing yet and get the associated repo_id
+        # Create repo if not existing
         repo_info = create_repo(
-            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True
+            repo_id=repo_id,
+            repo_type="dataset",
+            private=private,
+            exist_ok=True,
+            token=self.HF_TOKEN,
         )
         # print(f"repo_info: ", repo_info)
         df = series.pd_dataframe()

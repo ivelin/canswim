@@ -6,40 +6,51 @@ import pandas as pd
 
 
 class Targets:
-    def __init__(self, min_samples: int = -1) -> None:
+    def __init__(self) -> None:
         self.target_series = {}
-        self.min_samples = min_samples
 
-    def load_data(self):
+    def load_data(self, stock_tickers: set = None, min_samples: int = -1):
+        self.__load_tickers = stock_tickers
+        self.min_samples = min_samples
         self.load_stock_prices()
 
     @property
-    def all_stock_tickers(self):
-        stock_tickers = list(set(self.stock_price_dict.keys()))
-        return stock_tickers
-
-    def __get_stock_tickers(self, stocks_df=None):
-        stock_tickers = stocks_df.columns.levels[0]
-        return stock_tickers
+    def pyarrow_filters(self):
+        return [("Symbol", "in", self.__load_tickers)]
 
     def load_stock_prices(self):
-        stocks_price_file = "data/all_stocks_price_hist_1d.csv.bz2"
+        stocks_price_file = "data/data-3rd-party/all_stocks_price_hist_1d.parquet"
         print(f"Loading data from: {stocks_price_file}")
         # load into a dataframe with valid market calendar days
-        stocks_df = pd.read_csv(
-            stocks_price_file, header=[0, 1], index_col=0, on_bad_lines="warn"
+        # stocks_df = pd.read_csv(
+        #     stocks_price_file, header=[0, 1], index_col=0, on_bad_lines="warn"
+        # )
+        stocks_df = pd.read_parquet(
+            stocks_price_file,
+            filters=self.pyarrow_filters,
         )
-        stocks_df.index = pd.to_datetime(stocks_df.index)
+        print(f"filtered data loaded")
+        stocks_df = stocks_df.dropna()
+        # stocks_df.index = pd.to_datetime(stocks_df.index)
         stock_price_dict = {}
-        stock_tickers = self.__get_stock_tickers(stocks_df)
-        for t in stock_tickers:
-            stock_full_hist = stocks_df[t].dropna()
+        # stock_tickers = self.__get_stock_tickers(stocks_df)
+        tickers = list(stocks_df.index.levels[0])
+        print(f"price history loaded for {len(tickers)} stocks: \n{tickers}")
+        for t in tickers:
+            # print(f"validating price data for {t}")
+            stock_full_hist = stocks_df.loc[[t]]
             if len(stock_full_hist.index) >= self.min_samples:
                 # UPDATE: Do not drop Close as it carries unique information about the relationships between OHLC and Adj Close
                 # We also keep Adj Close which takes into account dividends and splits
+                stock_full_hist = stock_full_hist.droplevel("Symbol")
+                stock_full_hist.index = pd.to_datetime(stock_full_hist.index)
                 stock_price_dict[t] = stock_full_hist  # .drop(columns=['Close'])
                 # print(f'ticker: {t}')
                 # print(f'ticker historic data: {ticker_dict[t]}')
+            else:
+                print(
+                    f"Skipping {t} from price series. Not enough samples for model training."
+                )
         self.stock_price_dict = stock_price_dict
 
     def prepare_data(
@@ -71,13 +82,12 @@ class Targets:
             print(f"Preparing multivariate target series: {target_columns}")
         self.target_series = target_series
 
-    def prepare_stock_price_series(
-        self, tickers: set = None, train_date_start: pd.Timestamp = None
-    ):
-        print(f"Preparing ticker series for {len(tickers)} stocks.")
+    def prepare_stock_price_series(self, train_date_start: pd.Timestamp = None):
+        loaded_tickers = self.stock_price_dict.keys()
+        print(f"Preparing ticker series for {len(loaded_tickers)} stocks.")
         stock_price_series = {
             t: TimeSeries.from_dataframe(self.stock_price_dict[t], freq="B")
-            for t in tickers
+            for t in loaded_tickers
         }
         print("Ticker series dict created.")
         filler = MissingValuesFiller()
