@@ -284,7 +284,7 @@ class CanswimModel:
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
         self.stock_price_series = self.targets.prepare_stock_price_series(
-            tickers=self.stock_tickers, train_date_start=self.train_date_start
+            train_date_start=self.train_date_start
         )
         # prepare target time series
         target_columns = ["Close"]

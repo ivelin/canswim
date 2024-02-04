@@ -10,18 +10,13 @@ class Targets:
         self.target_series = {}
 
     def load_data(self, stock_tickers: set = None, min_samples: int = -1):
-        self.__stock_tickers = stock_tickers
+        self.__load_tickers = stock_tickers
         self.min_samples = min_samples
         self.load_stock_prices()
 
     @property
-    def stock_tickers(self):  # , stocks_df=None):
-        # stock_tickers = stocks_df.columns.levels[0]
-        return self.__stock_tickers
-
-    @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.stock_tickers)]
+        return [("Symbol", "in", self.__load_tickers)]
 
     def load_stock_prices(self):
         stocks_price_file = "data/data-3rd-party/all_stocks_price_hist_1d.parquet"
@@ -52,6 +47,10 @@ class Targets:
                 stock_price_dict[t] = stock_full_hist  # .drop(columns=['Close'])
                 # print(f'ticker: {t}')
                 # print(f'ticker historic data: {ticker_dict[t]}')
+            else:
+                print(
+                    f"Skipping {t} from price series. Not enough samples for model training."
+                )
         self.stock_price_dict = stock_price_dict
 
     def prepare_data(
@@ -83,13 +82,12 @@ class Targets:
             print(f"Preparing multivariate target series: {target_columns}")
         self.target_series = target_series
 
-    def prepare_stock_price_series(
-        self, tickers: set = None, train_date_start: pd.Timestamp = None
-    ):
-        print(f"Preparing ticker series for {len(tickers)} stocks.")
+    def prepare_stock_price_series(self, train_date_start: pd.Timestamp = None):
+        loaded_tickers = self.stock_price_dict.keys()
+        print(f"Preparing ticker series for {len(loaded_tickers)} stocks.")
         stock_price_series = {
             t: TimeSeries.from_dataframe(self.stock_price_dict[t], freq="B")
-            for t in tickers
+            for t in loaded_tickers
         }
         print("Ticker series dict created.")
         filler = MissingValuesFiller()
