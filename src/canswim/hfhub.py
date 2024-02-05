@@ -6,6 +6,7 @@ from typing import Optional
 from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import ForecastingModel
 from huggingface_hub import snapshot_download, upload_folder, create_repo
+import torch
 
 
 class HFHub:
@@ -50,11 +51,22 @@ class HFHub:
         model_name: str = None,
         model_class: object = None,
     ) -> ForecastingModel:
+        if torch.cuda.is_available():
+            map_location = "cuda"
+        else:
+            map_location = "cpu"
         with tempfile.TemporaryDirectory() as tmpdirname:
             snapshot_download(
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
             )
-            model = model_class.load(path=f"{tmpdirname}/{model_name}")
+            print("dir file list:\n", os.listdir(tmpdirname))
+            model = model_class.load(
+                path=f"{tmpdirname}/{model_name}", map_location=map_location
+            )
+            print("Downloaded model from:", repo_id)
+            print("Model name:", model.model_name)
+            print("Model params:", model.model_params)
+            print("Model created:", model.model_created)
             return model
 
     def upload_timeseries(
