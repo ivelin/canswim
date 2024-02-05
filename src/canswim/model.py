@@ -344,8 +344,6 @@ class CanswimModel:
         pl_trainer_kwargs = {
             "accelerator": "auto",
         }
-        self.train_history = kwargs["input_chunk_length"]
-        self.pred_horizon = kwargs["output_chunk_length"]
         model = self.__build_model(
             **kwargs,
             pl_trainer_kwargs=pl_trainer_kwargs,
