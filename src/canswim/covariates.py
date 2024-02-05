@@ -449,8 +449,8 @@ class Covariates:
             assert est_loaded_df.index.is_unique
             # print(f'{period} estimates loaded: \n{est_loaded_df}')
             # est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
-            # est_unique = est_loaded_df.drop_duplicates(subset=["symbol", "date"])
-            assert not est_loaded_df.duplicated().any()
+            est_unique = est_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
+            assert not est_unique.duplicated().any()
             # est_unique = est_unique.set_index(keys=["symbol", "date"])
             assert est_loaded_df.index.has_duplicates == False
             assert est_loaded_df.index.is_unique == True
