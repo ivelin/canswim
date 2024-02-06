@@ -187,6 +187,9 @@ class CanswimModel:
                     # v2. train, val, test have partial overlap. See v2 description above.
                     test = target.drop_before(self.test_start[t])
                     val = target.drop_before(self.val_start[t])
+                    val = val.drop_after(
+                        target.end_time() - BDay(n=self.pred_horizon - 1)
+                    )
                     train = target.drop_after(
                         target.end_time() - BDay(n=self.pred_horizon) * 2
                     )
@@ -224,9 +227,7 @@ class CanswimModel:
                     ## self.past_covariates_train[t] = past_train
                     ## self.past_covariates_val[t] = past_val
                     ## self.past_covariates_test[t] = past_test
-                except KeyError as e:
-                    print(f"Skipping {t} from data splits due to error: ", e)
-                except ValueError as e:
+                except (KeyError, ValueError, AssertionError) as e:
                     print(f"Skipping {t} from data splits due to error: ", e)
             else:
                 print(
@@ -247,14 +248,15 @@ class CanswimModel:
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
+        print(f"Total # stocks in train list: {len(self.target_train_list)}")
         print(
-            f"sample train series start time: {self.target_train_list[0].start_time()}, length: {len(self.target_train_list)}"
+            f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
         )
         print(
-            f"sample val series start time: {self.target_val_list[0].start_time()}, length: {len(self.target_val_list)}"
+            f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
         )
         print(
-            f"sample test series start time: {self.target_test_list[0].start_time()}, length: {len(self.target_test_list)}"
+            f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
         )
         # update targets series dict
         updated_target_series = {}
@@ -366,13 +368,11 @@ class CanswimModel:
             "callbacks": callbacks,
         }
 
-        pl_trainer_kwargs = {
-            "accelerator": "auto",
-        }
         model = self.__build_model(
             **kwargs,
             pl_trainer_kwargs=pl_trainer_kwargs,
         )
+
         self.torch_model = model
         print("New model built.")
 
