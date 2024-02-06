@@ -63,11 +63,11 @@ class Targets:
             # print(f'dropped non-target columns: {non_target_columns}')
             return new_series
 
-        if type(target_columns) is list and len(target_columns) == 1:
+        if isinstance(target_columns, list) and len(target_columns) == 1:
             target_columns = target_columns[0]
             print(f"Single target column selected: {target_columns}")
 
-        if type(target_columns) is str:
+        if isinstance(target_columns, str):
             # prepare target univariate series for Close price
             target_series = {
                 t: stock_price_series[t].univariate_component(target_columns)
