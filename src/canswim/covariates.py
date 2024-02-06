@@ -298,6 +298,7 @@ class Covariates:
                 kms_df = kms_df.dropna()
                 # print("kms_df\n", kms_df[kms_df.isnull()])
                 assert not kms_df.isnull().values.any()
+                assert len(kms_df) > 0, f"No key metrics available for {t}"
                 # print(f'{t} earnings: \n{t_kms.columns}')
                 kms_df = self.df_index_to_biz_days(kms_df)
                 tkms_series_tmp = TimeSeries.from_dataframe(
@@ -314,6 +315,8 @@ class Covariates:
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
             except KeyError as e:
+                print(f"Skipping {t} due to error: ", e)
+            except AssertionError as e:
                 print(f"Skipping {t} due to error: ", e)
         # print("t_kms_series:", t_kms_series)
         return t_kms_series
@@ -449,8 +452,8 @@ class Covariates:
             assert est_loaded_df.index.is_unique
             # print(f'{period} estimates loaded: \n{est_loaded_df}')
             # est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
-            # est_unique = est_loaded_df.drop_duplicates(subset=["symbol", "date"])
-            assert not est_loaded_df.duplicated().any()
+            est_unique = est_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
+            assert not est_unique.duplicated().any()
             # est_unique = est_unique.set_index(keys=["symbol", "date"])
             assert est_loaded_df.index.has_duplicates == False
             assert est_loaded_df.index.is_unique == True
