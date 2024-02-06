@@ -298,6 +298,7 @@ class Covariates:
                 kms_df = kms_df.dropna()
                 # print("kms_df\n", kms_df[kms_df.isnull()])
                 assert not kms_df.isnull().values.any()
+                assert len(kms_df) > 0, f"No key metrics available for {t}"
                 # print(f'{t} earnings: \n{t_kms.columns}')
                 kms_df = self.df_index_to_biz_days(kms_df)
                 tkms_series_tmp = TimeSeries.from_dataframe(
@@ -314,6 +315,8 @@ class Covariates:
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
             except KeyError as e:
+                print(f"Skipping {t} due to error: ", e)
+            except AssertionError as e:
                 print(f"Skipping {t} due to error: ", e)
         # print("t_kms_series:", t_kms_series)
         return t_kms_series
