@@ -64,7 +64,7 @@ class CanswimModel:
 
     @property
     def n_test_range_days(self):
-        n = self.train_history + 3 * self.pred_horizon
+        n = self.train_history + self.pred_horizon
         return n
 
     @property
@@ -159,8 +159,18 @@ class CanswimModel:
         # self.past_covariates_val = {}
         # self.past_covariates_test = {}
         for t, target in self.targets.target_series.items():
+            # v1. model does not see any training data during validation forecast and
+            #     model does not see any validation data during test forecast
+            #     Note: after tens of epochs of training the model has not been able to converge
+            #     on validation loss under 10x train loss. Too big of a loss.
+            ## self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
+            ## self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
+            # v2. Allow model to see val data up to pred_horizon/output_chunk_size days before train end date.
+            #     Allow model to see test data up to pred_horizon + len(val) days before val end date.
+            #     Note: Seems like val loss drops much closer to train loss in this case after 10 epochs.
+            #           Experiment in progress... as of Feb 4, 2024
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
-            self.val_start[t] = self.test_start[t] - BDay(n=self.n_test_range_days)
+            self.val_start[t] = self.test_start[t] - BDay(n=self.pred_horizon)
             if (
                 len(target) > self.min_samples
                 and t in self.covariates.past_covariates.keys()
@@ -171,8 +181,18 @@ class CanswimModel:
                     # print(
                     #    f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
                     # )
-                    train, val = target.split_before(self.val_start[t])
-                    val, test = val.split_before(self.test_start[t])
+                    # v1. train, val, test have no overlap
+                    ## train, val = target.split_before(self.val_start[t])
+                    ## val, test = val.split_before(self.test_start[t])
+                    # v2. train, val, test have partial overlap. See v2 description above.
+                    test = target.drop_before(self.test_start[t])
+                    val = target.drop_before(self.val_start[t])
+                    val = val.drop_after(
+                        target.end_time() - BDay(n=self.pred_horizon - 1)
+                    )
+                    train = target.drop_after(
+                        target.end_time() - BDay(n=self.pred_horizon) * 2
+                    )
                     # print(
                     #    f"{t} train start time, end time: {train.start_time()}, {train.end_time()}"
                     # )
@@ -207,9 +227,7 @@ class CanswimModel:
                     ## self.past_covariates_train[t] = past_train
                     ## self.past_covariates_val[t] = past_val
                     ## self.past_covariates_test[t] = past_test
-                except KeyError as e:
-                    print(f"Skipping {t} from data splits due to error: ", e)
-                except ValueError as e:
+                except (KeyError, ValueError, AssertionError) as e:
                     print(f"Skipping {t} from data splits due to error: ", e)
             else:
                 print(
@@ -230,6 +248,16 @@ class CanswimModel:
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
+        print(f"Total # stocks in train list: {len(self.target_train_list)}")
+        print(
+            f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
+        )
+        print(
+            f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
+        )
+        print(
+            f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
+        )
         # update targets series dict
         updated_target_series = {}
         for t in self.train_series.keys():
@@ -280,6 +308,9 @@ class CanswimModel:
             os.getenv("train_date_start", "1991-01-01")
         )
 
+        self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
+        print("Stocks train list: ", self.stock_train_list)
+
     def prepare_data(self):
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
@@ -320,10 +351,6 @@ class CanswimModel:
         return False
 
     def download_model(self, repo_id: str = None):
-        if torch.cuda.is_available():
-            map_location = "cuda"
-        else:
-            map_location = "cpu"
         torch_model = self.hfhub.download_model(
             repo_id=repo_id, model_name=self.model_name, model_class=TiDEModel
         )
@@ -341,15 +368,11 @@ class CanswimModel:
             "callbacks": callbacks,
         }
 
-        pl_trainer_kwargs = {
-            "accelerator": "auto",
-        }
-        self.train_history = kwargs["input_chunk_length"]
-        self.pred_horizon = kwargs["output_chunk_length"]
         model = self.__build_model(
             **kwargs,
             pl_trainer_kwargs=pl_trainer_kwargs,
         )
+
         self.torch_model = model
         print("New model built.")
 
@@ -406,8 +429,8 @@ class CanswimModel:
             "lr_scheduler_cls": lr_scheduler_cls,
             "lr_scheduler_kwargs": lr_scheduler_kwargs,
             # "likelihood": None,  # use a likelihood for probabilistic forecasts
-            "save_checkpoints": True,  # checkpoint to retrieve the best performing model state,
-            "force_reset": True,
+            # "save_checkpoints": False,  # checkpoint to retrieve the best performing model state,
+            # "force_reset": False,
             "batch_size": 256,  # 512,
             "random_state": 42,
         }
@@ -465,8 +488,14 @@ class CanswimModel:
         )
         print("Model training finished.")
         # load best checkpoint
-        best_model = TiDEModel.load_from_checkpoint(self.model_name)
-        self.torch_model = best_model
+        if torch.cuda.is_available():
+            map_location = "cuda"
+        else:
+            map_location = "cpu"
+        ## best_model = TiDEModel.load_from_checkpoint(
+        ##     self.model_name, map_location=map_location
+        ## )
+        ## self.torch_model = best_model
         # save model as a standalone snapshot
         self.save_model()
         print("Model saved.")
@@ -518,7 +547,7 @@ class CanswimModel:
         gc.collect()
         # load data
         self.__load_config()
-        all_stock_tickers = pd.read_csv("data/data-3rd-party/all_stocks.csv")
+        all_stock_tickers = pd.read_csv(f"data/data-3rd-party/{self.stock_train_list}")
         print(f"Loaded {len(all_stock_tickers)} symbols in total")
         stock_set = list(set(all_stock_tickers["Symbol"]))
         # reduce ticker set to a workable sample size for one training loop
@@ -849,7 +878,7 @@ class CanswimModel:
         # Evaluate how good it is on the validation set
         preds = model.predict(
             n=model.output_chunk_length,
-            series=self.target_train_list,
+            series=self.target_val_list,  # self.target_train_list,
             mc_dropout=True,
             num_samples=500,
             past_covariates=self.past_cov_list,
