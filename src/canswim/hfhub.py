@@ -50,6 +50,7 @@ class HFHub:
         repo_id: str = None,
         model_name: str = None,
         model_class: object = None,
+        **kwargs,
     ) -> ForecastingModel:
         if torch.cuda.is_available():
             map_location = "cuda"
@@ -61,7 +62,8 @@ class HFHub:
             )
             print("dir file list:\n", os.listdir(tmpdirname))
             model = model_class.load(
-                path=f"{tmpdirname}/{model_name}", map_location=map_location
+                path=f"{tmpdirname}/{model_name}", map_location=map_location,
+                **kwargs
             )
             print("Downloaded model from:", repo_id)
             print("Model name:", model.model_name)
