@@ -9,14 +9,15 @@ class Targets:
     def __init__(self) -> None:
         self.target_series = {}
 
-    def load_data(self, stock_tickers: set = None, min_samples: int = -1):
+    def load_data(self, stock_tickers: set = None, min_samples: int = -1, start_date: pd.Timestamp = None):
+        self.__start_date = start_date
         self.__load_tickers = stock_tickers
         self.min_samples = min_samples
         self.load_stock_prices()
 
     @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.__load_tickers)]
+        return [("Symbol", "in", self.__load_tickers), ("Date", ">=", self.__start_date)]
 
     def load_stock_prices(self):
         stocks_price_file = "data/data-3rd-party/all_stocks_price_hist_1d.parquet"
@@ -28,8 +29,9 @@ class Targets:
         stocks_df = pd.read_parquet(
             stocks_price_file,
             filters=self.pyarrow_filters,
+            dtype_backend='numpy_nullable'
         )
-        print(f"filtered data loaded")
+        print("filtered data loaded")
         stocks_df = stocks_df.dropna()
         # stocks_df.index = pd.to_datetime(stocks_df.index)
         stock_price_dict = {}

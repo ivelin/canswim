@@ -34,10 +34,10 @@ class Covariates:
 
     @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.__load_tickers)]
+        return [("Symbol", "in", self.__load_tickers), ("Date", ">=", self.__start_date)]
 
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
-        print(f"preparing past covariates: price and volume")
+        print("preparing past covariates: price and volume")
         # drop columns used in target series
         past_price_covariates = {
             t: stock_price_series[t].drop_columns(col_names=target_columns)
@@ -356,7 +356,8 @@ class Covariates:
     ##    }
     ##    return future_covariates
 
-    def load_data(self, stock_tickers: set = None):
+    def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
+        self.__start_date = start_date
         self.__load_tickers = stock_tickers
         self.load_past_covariates()
         self.load_future_covariates()
@@ -404,6 +405,7 @@ class Covariates:
         assert (
             self.data_loaded is True
         ), "Data needs to be loaded before it can be prepared. Make sure to first call load_data()"
+        self.__train_date_start = train_date_start
         self.prepare_past_covariates(
             stock_price_series=stock_price_series,
             target_columns=target_columns,

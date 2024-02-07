@@ -1,10 +1,10 @@
 from canswim.model import CanswimModel
-from darts import TimeSeries
 import pandas as pd
 import gradio as gr
 from darts.models import ExponentialSmoothing
 from canswim.hfhub import HFHub
 from matplotlib import pyplot
+import random
 
 # pd.options.plotting.backend = "plotly"
 # pd.options.plotting.backend = "matplotlib"
@@ -15,6 +15,7 @@ repo_id = "ivelin/canswim"
 canswim_model = CanswimModel()
 
 
+global tickers
 global target
 global past_covariates
 global future_covariates
@@ -40,14 +41,17 @@ def download_model():
     print("trainer params", canswim_model.torch_model.trainer_params)
     canswim_model.torch_model.trainer_params["logger"] = False
 
-
-def download_data(ticker: str = None):
+def download_data():
     """Prepare time series for model forecast"""
     hfhub.download_data(repo_id=repo_id)
     # load raw data from hf hub
-    canswim_model.load_data(stock_tickers=[ticker])
+    start_date = pd.Timestamp("2019-10-21")
+    canswim_model.load_data(start_date=start_date)
     # prepare timeseries for forecast
-    canswim_model.prepare_forecast_data(start_date=pd.Timestamp("2015-10-21"))
+    canswim_model.prepare_forecast_data(start_date=start_date)
+    global tickers
+    tickers = list(canswim_model.targets.target_series.keys())
+
 
 def plot_forecast(ticker: str = None, lowq: int = 0.2):
     lq = lowq/100
@@ -95,17 +99,18 @@ with gr.Blocks() as demo:
     """)
 
     download_model()
+    download_data()
 
     plotComponent = gr.Plot()
 
     with gr.Row():
-        ticker = gr.Dropdown(["AAON", "MSFT", "NVDA"], label="Stock Symbol", value="AAON")
+        ticker = gr.Dropdown(tickers, label="Stock Symbol", value=random.sample(tickers, 1)[0])
         # time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
         lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
-    ticker.change(fn=pick_ticker, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
+    ticker.change(fn=get_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
     lowq.change(fn=plot_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
     # time.change(get_forecast, [lib, time], plt, queue=False)
-    demo.load(pick_ticker, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
+    demo.load(fn=get_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
 
 demo.launch()

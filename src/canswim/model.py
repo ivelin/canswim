@@ -544,7 +544,8 @@ class CanswimModel:
         assert repo_id is not None
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
-    def load_data(self, stock_tickers: [] = None):
+    def load_data(self, stock_tickers: [] = None, start_date: pd.Timestamp = None):
+        print(f"Loading data after start date: {start_date}")
         # update data prep params from current model hyper params
         assert (
             self.torch_model is not None
@@ -566,9 +567,9 @@ class CanswimModel:
             self.stock_tickers,
         )
         self.targets.load_data(
-            stock_tickers=self.stock_tickers, min_samples=self.min_samples
+            stock_tickers=self.stock_tickers, min_samples=self.min_samples, start_date=start_date
         )
-        self.covariates.load_data(stock_tickers=self.stock_tickers)
+        self.covariates.load_data(stock_tickers=self.stock_tickers, start_date=start_date)
 
     def get_val_start_list(self):
         val_start_list = []
