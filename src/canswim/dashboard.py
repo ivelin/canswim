@@ -14,6 +14,13 @@ hfhub = HFHub()
 repo_id = "ivelin/canswim"
 canswim_model = CanswimModel()
 
+
+global target
+global past_covariates
+global future_covariates
+global baseline_prediction
+global canswim_prediction
+
 # st.set_page_config(page_title="CANSWIM dashboard", page_icon=":dart:", layout="wide")
 
 # """
@@ -42,10 +49,25 @@ def download_data(ticker: str = None):
     # prepare timeseries for forecast
     canswim_model.prepare_forecast_data(start_date=pd.Timestamp("2015-10-21"))
 
+def plot_forecast(ticker: str = None, lowq: int = 0.2):
+    lq = lowq/100
+    fig, axes = pyplot.subplots(figsize=(20, 12))
+    global target
+    target.plot(label=f"{ticker} Close actual")
+    global baseline_prediction
+    baseline_prediction.plot(label=f"{ticker} Close baseline forecast")
+    global canswim_prediction
+    canswim_prediction.plot(label=f"{ticker} Close CANSWIM forecast", low_quantile=lq, high_quantile=0.95)
+    pyplot.legend()
+    return fig
 
-def get_forecast(ticker: str = None):
-    target: TimeSeries = canswim_model.targets.target_series[ticker]
+
+def get_forecast(ticker: str = None, lowq: int = 20):
+    global target
+    target = canswim_model.targets.target_series[ticker]
+    global past_covariates
     past_covariates = canswim_model.covariates.past_covariates[ticker]
+    global future_covariates
     future_covariates = canswim_model.covariates.future_covariates[ticker]
 
     print('target start, end: ', target.start_time(), target.end_time())
@@ -53,18 +75,16 @@ def get_forecast(ticker: str = None):
 
     baseline_model = ExponentialSmoothing()
     baseline_model.fit(target)
+    global baseline_prediction
     baseline_prediction = baseline_model.predict(canswim_model.pred_horizon, num_samples=500)
 
+    global canswim_prediction
     canswim_prediction = canswim_model.predict(target=[target], past_covariates=[past_covariates], future_covariates=[future_covariates])[0]
 
-    fig, axes = pyplot.subplots(figsize=(20, 12))
-    target.plot(label=f"{ticker} Close actual")
-    baseline_prediction.plot(label=f"{ticker} Close baseline forecast")
-    canswim_prediction.plot(label=f"{ticker} Close CANSWIM forecast")
-    pyplot.legend()
+    fig = plot_forecast(lowq=lowq)
     return fig
 
-def pick_ticker(ticker: str = None):
+def pick_ticker(ticker: str = None, lowq: int = 20):
     download_data(ticker)
     return get_forecast(ticker)
 
@@ -81,9 +101,11 @@ with gr.Blocks() as demo:
     with gr.Row():
         ticker = gr.Dropdown(["AAON", "MSFT", "NVDA"], label="Stock Symbol", value="AAON")
         # time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
+        lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
-    ticker.change(pick_ticker, inputs=[ticker], outputs=[plotComponent], queue=False)
+    ticker.change(fn=pick_ticker, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
+    lowq.change(fn=plot_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
     # time.change(get_forecast, [lib, time], plt, queue=False)
-    demo.load(pick_ticker, inputs=[ticker], outputs=[plotComponent], queue=False)
+    demo.load(pick_ticker, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
 
 demo.launch()
