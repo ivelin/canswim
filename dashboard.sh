@@ -1,3 +1,3 @@
 #!/bin/bash
 
-streamlit run src/canswim/dashboard/streamlit-app.py
+gradio src/canswim/dashboard.py
