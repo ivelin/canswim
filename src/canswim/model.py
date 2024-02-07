@@ -320,7 +320,6 @@ class CanswimModel:
         self.targets.prepare_data(
             stock_price_series=self.stock_price_series, target_columns=target_columns
         )
-
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
             target_columns=target_columns,
@@ -328,6 +327,7 @@ class CanswimModel:
             min_samples=self.min_samples,
         )
         self.__align_targets_and_covariates()
+        print("Forecasting data prepared")
 
 
     def prepare_data(self):

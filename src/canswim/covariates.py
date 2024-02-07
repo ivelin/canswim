@@ -264,7 +264,7 @@ class Covariates:
         return updated_cov_series
 
     def prepare_key_metrics(self, stock_price_series=None):
-        print(f"preparing past covariates: key metrics")
+        print("preparing past covariates: key metrics")
         kms_loaded_df = self.kms_loaded_df.copy()
         # print(kms_loaded_df)
         kms_loaded_df = kms_loaded_df[~kms_loaded_df.index.duplicated(keep="first")]
