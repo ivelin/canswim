@@ -2,9 +2,11 @@ from canswim.model import CanswimModel
 import pandas as pd
 import gradio as gr
 from darts.models import ExponentialSmoothing
+from darts import TimeSeries
 from canswim.hfhub import HFHub
 from matplotlib import pyplot
 import random
+from pandas.tseries.offsets import BDay
 
 # pd.options.plotting.backend = "plotly"
 # pd.options.plotting.backend = "matplotlib"
@@ -19,6 +21,7 @@ class CanswimPlayground():
         self.hfhub = HFHub()
         # cache backtest and forecast predictions per ticker
         self.forecast_cache = {}
+        self.backtest_cache = {}
 
     def download_model(self):
         """Load model from HF Hub"""
@@ -35,8 +38,7 @@ class CanswimPlayground():
         self.canswim_model.load_data(start_date=start_date)
         # prepare timeseries for forecast
         self.canswim_model.prepare_forecast_data(start_date=start_date)
-        global tickers
-        tickers = list(self.canswim_model.targets.target_series.keys())
+        self.tickers = list(self.canswim_model.targets.target_series.keys())
 
 
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
@@ -45,11 +47,14 @@ class CanswimPlayground():
         self.target.plot(label=f"{ticker} Close actual")
         self.baseline_forecast.plot(label=f"{ticker} Close baseline forecast")
         self.canswim_forecast.plot(label=f"{ticker} Close CANSWIM forecast", low_quantile=lq, high_quantile=0.95)
+        for b in self.backtest_forecasts:
+            b.plot(label=f"{ticker} Close CANSWIM backtest", low_quantile=lq, high_quantile=0.95)
         pyplot.legend()
         return fig
 
 
     def get_forecast(self, ticker: str = None, lowq: int = 20):
+        self.ticker = ticker
         self.target = self.canswim_model.targets.target_series[ticker]
         self.past_covariates = self.canswim_model.covariates.past_covariates[ticker]
         self.future_covariates = self.canswim_model.covariates.future_covariates[ticker]
@@ -66,12 +71,32 @@ class CanswimPlayground():
             print(f"{ticker} forecast not in cache. Running model predict().")
             self.canswim_forecast = self.canswim_model.predict(target=[self.target], past_covariates=[self.past_covariates], future_covariates=[self.future_covariates])[0]
             self.forecast_cache[ticker] = self.canswim_forecast
+        self.backtest()
         fig = self.plot_forecast(lowq=lowq)
+        print(f"{ticker} get_forecast() finished.")
         return fig
 
-    def pick_ticker(self, ticker: str = None, lowq: int = 20):
-        self.download_data(ticker)
-        return self.get_forecast(ticker)
+    def backtest(self):
+        cached_backtest = self.backtest_cache.get(ticker)
+        if cached_backtest is not None:
+            print(f"{self.ticker} backtest found in cache.")
+            self.backtest_forecasts = cached_backtest
+        else:
+            print(f"{ticker} backtest not in cache. Running model predict().")
+            end_date = self.target.end_time()
+            earnings_df = self.canswim_model.covariates.earnings_loaded_df
+            print("earnings_df.columns", earnings_df.columns)
+            mask = (earnings_df.index.get_level_values('Symbol') == self.ticker) & (earnings_df.index.get_level_values('Date') < end_date - BDay(n=10))
+            earnings_dates = earnings_df.loc[mask]
+            print(f"{self.ticker} earnings dates: {earnings_dates}")
+            earnings_dates_unique = earnings_dates.index.get_level_values('Date').unique()
+            assert len(earnings_dates_unique) >= 2
+            target1 = self.target.drop_after(earnings_dates_unique[-1])
+            target2 = self.target.drop_after(earnings_dates_unique[-2])
+            bt = self.canswim_model.predict(target=[target1, target2], past_covariates=[self.past_covariates, self.past_covariates], future_covariates=[self.future_covariates, self.future_covariates])
+            print(f"{self.ticker} backtest finished.\n", bt)
+            self.backtest_forecasts = bt
+
 
 with gr.Blocks() as demo:
     gr.Markdown(
@@ -88,7 +113,7 @@ with gr.Blocks() as demo:
     plotComponent = gr.Plot()
 
     with gr.Row():
-        ticker = gr.Dropdown(sorted(tickers), label="Stock Symbol", value=random.sample(tickers, 1)[0])
+        ticker = gr.Dropdown(sorted(canswim_playground.tickers), label="Stock Symbol", value=random.sample(canswim_playground.tickers, 1)[0])
         ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
         lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
