@@ -34,10 +34,10 @@ class Covariates:
 
     @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.__load_tickers)]
+        return [("Symbol", "in", self.__load_tickers), ("Date", ">=", self.__start_date)]
 
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
-        print(f"preparing past covariates: price and volume")
+        print("preparing past covariates: price and volume")
         # drop columns used in target series
         past_price_covariates = {
             t: stock_price_series[t].drop_columns(col_names=target_columns)
@@ -251,8 +251,8 @@ class Covariates:
         """
         updated_cov_series = None
         if cov_series.end_time() < price_series.end_time():
-            tkms_df = cov_series.pd_dataframe()
-            new_cov_df = tkms_df.reindex(
+            df = cov_series.pd_dataframe()
+            new_cov_df = df.reindex(
                 price_series.pd_dataframe().index, method="ffill", copy=True
             )
             new_cov_ser = TimeSeries.from_dataframe(
@@ -264,7 +264,7 @@ class Covariates:
         return updated_cov_series
 
     def prepare_key_metrics(self, stock_price_series=None):
-        print(f"preparing past covariates: key metrics")
+        print("preparing past covariates: key metrics")
         kms_loaded_df = self.kms_loaded_df.copy()
         # print(kms_loaded_df)
         kms_loaded_df = kms_loaded_df[~kms_loaded_df.index.duplicated(keep="first")]
@@ -275,7 +275,7 @@ class Covariates:
         kms_unique = kms_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
         assert not kms_unique.duplicated().any()
         # kms_unique = kms_unique.set_index(keys=["symbol", "date"])
-        assert kms_unique.index.has_duplicates == False
+        assert not kms_unique.index.has_duplicates
         kms_loaded_df = kms_unique.copy()
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
         kms_loaded_df["period"] = (
@@ -322,7 +322,7 @@ class Covariates:
         return t_kms_series
 
     def prepare_broad_market_series(self, train_date_start=None):
-        print(f"preparing past covariates: broad market indecies")
+        print("preparing past covariates: broad market indecies")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
@@ -356,7 +356,8 @@ class Covariates:
     ##    }
     ##    return future_covariates
 
-    def load_data(self, stock_tickers: set = None):
+    def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
+        self.__start_date = start_date
         self.__load_tickers = stock_tickers
         self.load_past_covariates()
         self.load_future_covariates()
@@ -398,18 +399,20 @@ class Covariates:
         target_columns: Union[str, list] = None,
         train_date_start: pd.Timestamp = None,
         min_samples: int = None,
+        pred_horizon: int = None,
     ):
-        print(f"preparing model data")
+        print("preparing model data")
         assert (
             self.data_loaded is True
         ), "Data needs to be loaded before it can be prepared. Make sure to first call load_data()"
+        self.__train_date_start = train_date_start
         self.prepare_past_covariates(
             stock_price_series=stock_price_series,
             target_columns=target_columns,
             train_date_start=train_date_start,
         )
         self.prepare_future_covariates(
-            stock_price_series=stock_price_series, min_samples=min_samples
+            stock_price_series=stock_price_series, min_samples=min_samples, pred_horizon=pred_horizon
         )
 
     def load_earnings(self):
@@ -497,7 +500,10 @@ class Covariates:
         return new_df
 
     def prepare_est_series(
-        self, all_est_df=None, n_future_periods=None, period=None, tickers=None
+        self, all_est_df=None,
+        n_future_periods=None,
+        period=None,
+        stock_price_series=None,
     ):
         """
         Prepare future covariate series with analyst estimates for a given period (annual or quarter).
@@ -509,7 +515,7 @@ class Covariates:
         print(f"preparing future covariates: analyst estimates[{period}]")
         assert period in fiscal_periods
         t_est_series = {}
-        for t in list(tickers):
+        for t, prices in stock_price_series.items():
             # print(f'ticker {t}')
             try:
                 est_df = all_est_df.loc[[t]].copy()
@@ -529,29 +535,36 @@ class Covariates:
                 )
                 # print(f'est_series_tmp start time, end time: {est_series_tmp.start_time()}, {est_series_tmp.end_time()}')
                 est_df = est_series_tmp.pd_dataframe()
+                # Make current annual/quarter period estimates available on all business days through end of the period
                 est_df.ffill(inplace=True)
                 est_ser = TimeSeries.from_dataframe(est_df, freq="B", fillna_value=-1)
+                est_padded = self.pad_covs(
+                    cov_series=est_ser, price_series=prices, fillna_value=-1
+                )
                 assert (
-                    len(est_ser.gaps()) == 0
-                ), f"found gaps in tmks series: \n{est_ser.gaps()}"
-                t_est_series[t] = est_ser
+                    len(est_padded.gaps()) == 0
+                ), f"found gaps in series: \n{est_padded.gaps()}"
+                t_est_series[t] = est_padded
+
+
+
             except KeyError as e:
-                print(f"No analyst estimates available for {t}")
+                print(f"No analyst estimates available for {t}, error", e)
         return t_est_series
 
-    def prepare_analyst_estimates(self, tickers=None):
-        print(f"preparing future covariates: analyst estimates")
+    def prepare_analyst_estimates(self, stock_price_series=None):
+        print("preparing future covariates: analyst estimates")
         quarter_est_series = self.prepare_est_series(
             all_est_df=self.est_loaded_df["quarter"],
             n_future_periods=4,
             period="quarter",
-            tickers=tickers,
+            stock_price_series=stock_price_series,
         )
         annual_est_series = self.prepare_est_series(
             all_est_df=self.est_loaded_df["annual"],
             n_future_periods=2,
             period="annual",
-            tickers=tickers,
+            stock_price_series=stock_price_series,
         )
         return quarter_est_series, annual_est_series
 
@@ -561,7 +574,7 @@ class Covariates:
         target_columns: Union[str, list] = None,
         train_date_start: pd.Timestamp = None,
     ):
-        print(f"preparing past covariates")
+        print("preparing past covariates")
         # start with price-volume covariates
         price_covariates = self.get_price_covariates(
             stock_price_series=stock_price_series, target_columns=target_columns
@@ -595,7 +608,7 @@ class Covariates:
         self.past_covariates = past_covariates
 
     def __add_holidays(self, series_dict: dict = None):
-        print(f"preparing future covariates: holidays")
+        print("preparing future covariates: holidays")
         new_series = {}
         for t, series in series_dict.items():
             series_with_holidays = series.add_holidays(country_code="US")
@@ -603,13 +616,28 @@ class Covariates:
             # print(f'ticker: {t} , {ticker_series[t]}')
         return new_series
 
+    def __extend_series(self, n: int = -1, series: TimeSeries = None):
+        new_series = {}
+        for t, s in series.items():
+            print(f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}")
+            start = s.start_time()
+            end = s.end_time() + BDay(n=n)
+            df = s.pd_dataframe()
+            idx = pd.date_range(start=start, end=end, freq='B')
+            df = df.reindex(idx).ffill()
+            s_ext = TimeSeries.from_dataframe(df, freq='B', fill_missing_dates=True)
+            new_series[t] = s_ext
+            print(f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}")
+        return new_series
+
+
     def prepare_future_covariates(
-        self, stock_price_series: {} = None, min_samples=None
+        self, stock_price_series: {} = None, min_samples=None, pred_horizon: int = None
     ):
-        print(f"preparing future covariates")
+        print("Preparing future covariates")
         # add analyst estimates
         quarter_est_series, annual_est_series = self.prepare_analyst_estimates(
-            tickers=stock_price_series.keys(),
+            stock_price_series=stock_price_series
         )
         ## Stack analyst estimates to future covariates
         stacked_future_covariates = self.stack_covariates(
@@ -618,5 +646,8 @@ class Covariates:
             min_samples=min_samples,
         )
         future_covariates = stacked_future_covariates
+
+        # future_covariates = self.__extend_series(n=pred_horizon, series=future_covariates)
+
         future_covariates = self.__add_holidays(future_covariates)
         self.future_covariates = future_covariates
