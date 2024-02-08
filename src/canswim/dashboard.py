@@ -77,12 +77,12 @@ class CanswimPlayground():
         return fig
 
     def backtest(self):
-        cached_backtest = self.backtest_cache.get(ticker)
+        cached_backtest = self.backtest_cache.get(self.ticker)
         if cached_backtest is not None:
             print(f"{self.ticker} backtest found in cache.")
             self.backtest_forecasts = cached_backtest
         else:
-            print(f"{ticker} backtest not in cache. Running model predict().")
+            print(f"{self.ticker} backtest not in cache. Running model predict().")
             end_date = self.target.end_time()
             earnings_df = self.canswim_model.covariates.earnings_loaded_df
             print("earnings_df.columns", earnings_df.columns)
@@ -96,6 +96,7 @@ class CanswimPlayground():
             bt = self.canswim_model.predict(target=[target1, target2], past_covariates=[self.past_covariates, self.past_covariates], future_covariates=[self.future_covariates, self.future_covariates])
             print(f"{self.ticker} backtest finished.\n", bt)
             self.backtest_forecasts = bt
+            self.backtest_cache[self.ticker] = bt
 
 
 with gr.Blocks() as demo:
@@ -113,13 +114,15 @@ with gr.Blocks() as demo:
     plotComponent = gr.Plot()
 
     with gr.Row():
-        ticker = gr.Dropdown(sorted(canswim_playground.tickers), label="Stock Symbol", value=random.sample(canswim_playground.tickers, 1)[0])
+        sorted_tickers = sorted(canswim_playground.tickers)
+        print("Dropdown tickers: ", sorted_tickers)
+        tickerDropdown = gr.Dropdown(choices=sorted_tickers, label="Stock Symbol", value=random.sample(sorted_tickers, 1)[0])
         ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
         lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
-    ticker.change(fn=canswim_playground.get_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
-    lowq.change(fn=canswim_playground.plot_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
+    tickerDropdown.change(fn=canswim_playground.get_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
+    lowq.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
     ## time.change(get_forecast, [lib, time], plt, queue=False)
-    demo.load(fn=canswim_playground.get_forecast, inputs=[ticker, lowq], outputs=[plotComponent], queue=False)
+    demo.load(fn=canswim_playground.get_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
 
 demo.launch()
