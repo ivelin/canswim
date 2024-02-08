@@ -42,14 +42,14 @@ class CanswimPlayground():
         self.tickers = list(self.canswim_model.targets.target_series.keys())
 
 
-    def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
+    def plot_forecast(self, lowq: int = 0.2):
         lq = lowq/100
         fig, axes = pyplot.subplots(figsize=(20, 12))
-        self.target.plot(label=f"{ticker} Close actual")
-        self.baseline_forecast.plot(label=f"{ticker} Close baseline forecast")
-        self.canswim_forecast.plot(label=f"{ticker} Close CANSWIM forecast", low_quantile=lq, high_quantile=0.95)
+        self.target.plot(label=f"{self.ticker} Close actual")
+        self.baseline_forecast.plot(label=f"{self.ticker} Close baseline forecast")
+        self.canswim_forecast.plot(label=f"{self.ticker} Close CANSWIM forecast", low_quantile=lq, high_quantile=0.95)
         for b in self.backtest_forecasts:
-            b.plot(label=f"{ticker} Close CANSWIM backtest", low_quantile=lq, high_quantile=0.95)
+            b.plot(label=f"{self.ticker} Close CANSWIM backtest", low_quantile=lq, high_quantile=0.95)
         pyplot.legend()
         return fig
 
@@ -122,7 +122,7 @@ with gr.Blocks() as demo:
         lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
     tickerDropdown.change(fn=canswim_playground.get_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
-    lowq.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
+    lowq.change(fn=canswim_playground.plot_forecast, inputs=[lowq], outputs=[plotComponent], queue=False)
     ## time.change(get_forecast, [lib, time], plt, queue=False)
     demo.load(fn=canswim_playground.get_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
 
