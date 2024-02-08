@@ -1,3 +1,4 @@
+"""CANSWIM Playground. A gradio app intended to be deployed on HF Hub."""
 from canswim.model import CanswimModel
 import pandas as pd
 import gradio as gr
