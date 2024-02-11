@@ -620,22 +620,25 @@ class Covariates:
             # print(f'ticker: {t} , {ticker_series[t]}')
         return new_series
 
-    def __extend_series(self, n: int = -1, series: TimeSeries = None):
+    def __extend_series(self, n: int = -1, series: {} = None, target: {} = None):
         new_series = {}
         for t, s in series.items():
             print(
                 f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
             )
+            print(f"target {t} end time: {target[t].end_time()}")
             start = s.start_time()
-            end = s.end_time() + BDay(n=n)
-            df = s.pd_dataframe()
-            idx = pd.date_range(start=start, end=end, freq="B")
-            df = df.reindex(idx).ffill()
-            s_ext = TimeSeries.from_dataframe(df, freq="B", fill_missing_dates=True)
-            new_series[t] = s_ext
-            print(
-                f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
-            )
+            if s.end_time() > target[t].end_time() + BDay(n=n):
+                new_series[t] = s
+                print(f"No need to extend {t} series. End greater than target end.")
+            else:
+                end = s.end_time() + BDay(n=n)
+                df = s.pd_dataframe()
+                idx = pd.date_range(start=start, end=end, freq='B')
+                df = df.reindex(idx).ffill()
+                s_ext = TimeSeries.from_dataframe(df, freq='B', fill_missing_dates=True)
+                new_series[t] = s_ext
+                print(f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}")
         return new_series
 
     def prepare_future_covariates(
@@ -654,7 +657,7 @@ class Covariates:
         )
         future_covariates = stacked_future_covariates
 
-        # future_covariates = self.__extend_series(n=pred_horizon, series=future_covariates)
+        future_covariates = self.__extend_series(n=pred_horizon, series=future_covariates, target=stock_price_series)
 
         future_covariates = self.__add_holidays(future_covariates)
         self.future_covariates = future_covariates
