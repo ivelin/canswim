@@ -300,8 +300,14 @@ class CanswimModel:
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
         print("n_stocks: ", self.n_stocks)
-        self.n_epochs = int(os.getenv("n_epochs", 5))  # model training epochs
+
+        # model training epochs
+        self.n_epochs = int(os.getenv("n_epochs", 5))
         print("n_epochs: ", self.n_epochs)
+
+        # patience for number of epochs without validation loss progress
+        self.n_epochs_patience = int(os.getenv("n_epochs_patience", 5))
+        print("n_epochs_patience: ", self.n_epochs_patience)
 
         # pick the earlies date after which market data is available for all covariate series
         self.train_date_start = pd.Timestamp(
@@ -358,9 +364,13 @@ class CanswimModel:
 
     def build(self, **kwargs):
         # early stopping (needs to be reset for each model later on)
-        # this setting stops training once the the validation loss has not decreased by more than 1e-3 for 10 epochs
+        # this setting stops training once the the validation loss has not decreased by more than 1e-3 for `patience` epochs
         early_stopper = EarlyStopping(
-            monitor="val_loss", min_delta=0.001, patience=3, verbose=True, mode="min"
+            monitor="val_loss",
+            min_delta=0.001,
+            patience=self.n_epochs_patience,
+            verbose=True,
+            mode="min",
         )
         callbacks = [early_stopper]
         pl_trainer_kwargs = {
