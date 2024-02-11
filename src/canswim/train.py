@@ -5,6 +5,8 @@ from darts.metrics import quantile_loss
 import numpy as np
 import os
 from dotenv import load_dotenv
+import pandas as pd
+from pandas.tseries.offsets import Day, Week
 
 
 canswim_model = CanswimModel()
@@ -84,8 +86,14 @@ def main():
     print("n_outer_train_loop:", n_outer_train_loop, type(n_outer_train_loop))
 
     # build a new model or download existing model
-    ## canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
-    build_new_model()
+    canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+    # build_new_model()
+
+    wall_time = pd.Timestamp.now
+    # set to yesterday
+    yesterday = wall_time.yesterday
+    # set to previous Saturday
+    previous_weekend = wall_time.floor() - wall_time.day_of_week() - 1
 
     # train loop
     i = 0
@@ -98,9 +106,35 @@ def main():
         # train model
         canswim_model.train()
         # push to hf hub
-        canswim_model.upload_model(repo_id=repo_id)
-        # load back latest model weights from hf hub
-        canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+        # Daily routine
+        if wall_time() > yesterday + Day(n=1):
+            print(
+                f"Starting daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
+            )
+            # update yesterday marker to today
+            yesterday = wall_time().floor()
+            canswim_model.upload_model(repo_id=repo_id)
+            # load back latest model weights from hf hub
+            canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+        else:
+            print(
+                f"Skipping daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
+            )
+        # Weekend routine
+        if wall_time() > previous_weekend + Week(n=1):
+            print(
+                f"Starting weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
+            )
+            # update weekend marker to this week's Satuday
+            previous_weekend = wall_time().floor("W") + Day(n=5)
+            # gather_market_data()
+            # upload_data()
+            # run_forecasts()
+            # upload_forecasts()
+        else:
+            print(
+                f"Skipping weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
+            )
         # refresh any config changes in the OS environment
         i += 1
         get_env()
