@@ -85,52 +85,65 @@ def main():
 
     print("n_outer_train_loop:", n_outer_train_loop, type(n_outer_train_loop))
 
-    # build a new model or download existing model
-    canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+    # build a new model or download existing model from hf hub or local dir
+    # canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
     # build_new_model()
+
+    # download market data from hf hub if it hasn't been downloaded already
+    # canswim_model.download_data()
 
     wall_time = pd.Timestamp.now
     # set to yesterday
-    yesterday = wall_time().floor - Day(n=1)
+    yesterday = wall_time().floor(freq="D") - Day(n=1)
     # set to previous Saturday
-    previous_weekend = wall_time().floor() - Day(n=wall_time().day_of_week + 2)
+    previous_weekend = wall_time().floor(freq="D") - Day(n=wall_time().day_of_week + 2)
 
     # train loop
     i = 0
     while i < n_outer_train_loop:
         print(f"Outer train loop: {i}")
-        # load a new data sample from external source
+        # load latest model from local storage
+        canswim_model.load_model()
+        # load a new data sample from local storage
         canswim_model.load_data()
         # prepare timeseries for training
         canswim_model.prepare_data()
         # train model
         canswim_model.train()
-        # push to hf hub
         # Daily routine
         if wall_time() > yesterday + Day(n=1):
-            print(
-                f"Starting daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
-            )
-            # update yesterday marker to today
-            yesterday = wall_time().floor()
-            canswim_model.upload_model(repo_id=repo_id)
-            # load back latest model weights from hf hub
-            canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+            try:
+                print(
+                    f"Starting daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
+                )
+                # update yesterday marker to today
+                yesterday = wall_time().floor()
+                # push to hf hub
+                canswim_model.upload_model(repo_id=repo_id)
+                # load back latest model weights from hf hub
+                canswim_model.download_model(
+                    repo_id=repo_id
+                )  # prepare next sample subset
+            except Exception as e:
+                print("ERROR during daily routine: ", e)
         else:
             print(
                 f"Skipping daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
             )
         # Weekend routine
         if wall_time() > previous_weekend + Week(n=1):
-            print(
-                f"Starting weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
-            )
-            # update weekend marker to this week's Satuday
-            previous_weekend = wall_time().floor("W") + Day(n=5)
-            # gather_market_data() - in range from last gather until now
-            # upload_data() - upload changed parquet files
-            # run_forecasts() - run model forecast on all stocks which are far enough from previous and next earnings report, save parquet files
-            # upload_forecasts() - upload changed parquet files
+            try:
+                print(
+                    f"Starting weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
+                )
+                # update weekend marker to this week's Satuday
+                previous_weekend = wall_time().floor("W") + Day(n=5)
+                # gather_market_data() - in range from last gather until now
+                # upload_data() - upload changed parquet files
+                # run_forecasts() - run model forecast on all stocks which are far enough from previous and next earnings report, save parquet files
+                # upload_forecasts() - upload changed parquet files
+            except Exception as e:
+                print("ERROR during weekend routine: ", e)
         else:
             print(
                 f"Skipping weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
