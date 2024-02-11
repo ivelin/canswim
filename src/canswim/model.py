@@ -18,9 +18,10 @@ import optuna
 from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import quantile_loss
-from typing import Optional, Sequence
+from typing import Optional, Sequence, List
 from canswim.hfhub import HFHub
 import gc
+
 
 def election_year_offset(idx):
     """Calculate offset in number of years from most recent election year."""
@@ -117,29 +118,44 @@ class CanswimModel:
             new_past_covariates[t] = self.covariates.past_covariates[t]
         # align targets with past covs
         for t, covs in new_past_covariates.items():
-            ts_sliced = new_target_series[t].slice_intersect(covs)
-            new_target_series[t] = ts_sliced
-            covs_sliced = covs.slice_intersect(ts_sliced)
-            new_past_covariates[t] = covs_sliced
-            assert (
-                new_target_series[t].start_time() == new_past_covariates[t].start_time()
-            )
-            assert new_target_series[t].end_time() == new_past_covariates[t].end_time()
+            try:
+                ts_sliced = new_target_series[t].slice_intersect(covs)
+                new_target_series[t] = ts_sliced
+                covs_sliced = covs.slice_intersect(ts_sliced)
+                new_past_covariates[t] = covs_sliced
+                assert (
+                    new_target_series[t].start_time()
+                    == new_past_covariates[t].start_time()
+                )
+                assert (
+                    new_target_series[t].end_time() == new_past_covariates[t].end_time()
+                )
+            except (KeyError, ValueError, AssertionError) as e:
+                print(f"Skipping {t} from data splits due to error: ", e)
         # align targets with future covs
         for t, covs in new_future_covariates.items():
-            ts_sliced = new_target_series[t].slice_intersect(covs)
-            new_target_series[t] = ts_sliced
-            # Do not trim future covariates.
-            # By definition future covs need to extend pred_horizon past target end time.
-            # covs_sliced = covs.slice_intersect(ts_sliced)
-            # new_future_covariates[t] = covs_sliced
-            assert (
-                new_target_series[t].start_time()
-                >= new_future_covariates[t].start_time()
-            )
-            assert (
-                new_target_series[t].end_time() < new_future_covariates[t].end_time()
-            )
+            try:
+                ts_sliced = new_target_series[t].slice_intersect(covs)
+                # Do not trim future covariates.
+                # By definition future covs need to extend pred_horizon past target end time.
+                # covs_sliced = covs.slice_intersect(ts_sliced)
+                # new_future_covariates[t] = covs_sliced
+                new_target_series[t] = ts_sliced
+                assert (
+                    new_target_series[t].start_time()
+                    >= new_future_covariates[t].start_time(),
+                    f"target start time {new_target_series[t].end_time()} <"
+                    f"future covariate start time {new_future_covariates[t].start_time()}",
+                )
+                assert (
+                    new_target_series[t].end_time()
+                    <= new_future_covariates[t].end_time() + BDay(n=self.pred_horizon),
+                    f"target end time {new_target_series[t].end_time()} > "
+                    f"future covariate end time + pred_horizon {new_future_covariates[t].end_time() + BDay(n=self.pred_horizon)}",
+                )
+            except (KeyError, ValueError, AssertionError) as e:
+                print(f"Skipping {t} from data splits due to error: ", e)
+
         # apply updates to model series
         self.targets.target_series = new_target_series
         self.covariates.past_covariates = new_past_covariates
@@ -300,8 +316,14 @@ class CanswimModel:
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
         print("n_stocks: ", self.n_stocks)
-        self.n_epochs = int(os.getenv("n_epochs", 5))  # model training epochs
+
+        # model training epochs
+        self.n_epochs = int(os.getenv("n_epochs", 5))
         print("n_epochs: ", self.n_epochs)
+
+        # patience for number of epochs without validation loss progress
+        self.n_epochs_patience = int(os.getenv("n_epochs_patience", 5))
+        print("n_epochs_patience: ", self.n_epochs_patience)
 
         # pick the earlies date after which market data is available for all covariate series
         self.train_date_start = pd.Timestamp(
@@ -327,11 +349,10 @@ class CanswimModel:
             target_columns=target_columns,
             train_date_start=start_date,
             min_samples=self.min_samples,
-            pred_horizon=self.pred_horizon
+            pred_horizon=self.pred_horizon,
         )
         self.__align_targets_and_covariates()
         print("Forecasting data prepared")
-
 
     def prepare_data(self):
         self.prepare_forecast_data(self.train_date_start)
@@ -357,16 +378,22 @@ class CanswimModel:
 
     def download_model(self, repo_id: str = None, **kwargs):
         torch_model = self.hfhub.download_model(
-            repo_id=repo_id, model_name=self.model_name, model_class=TiDEModel, **kwargs,
+            repo_id=repo_id,
+            model_name=self.model_name,
+            model_class=TiDEModel,
+            **kwargs,
         )
         self.torch_model = torch_model
 
-
     def build(self, **kwargs):
         # early stopping (needs to be reset for each model later on)
-        # this setting stops training once the the validation loss has not decreased by more than 1e-3 for 10 epochs
+        # this setting stops training once the the validation loss has not decreased by more than 1e-3 for `patience` epochs
         early_stopper = EarlyStopping(
-            monitor="val_loss", min_delta=0.001, patience=3, verbose=True, mode="min"
+            monitor="val_loss",
+            min_delta=0.001,
+            patience=self.n_epochs_patience,
+            verbose=True,
+            mode="min",
         )
         callbacks = [early_stopper]
         pl_trainer_kwargs = {
@@ -544,20 +571,25 @@ class CanswimModel:
         assert repo_id is not None
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
-    def load_data(self, stock_tickers: [] = None, start_date: pd.Timestamp = None):
-        print(f"Loading data after start date: {start_date}")
-        # update data prep params from current model hyper params
+    def load_data(
+        self, stock_tickers: List[str] = None, start_date: pd.Timestamp = None
+    ):
         assert (
             self.torch_model is not None
         ), "Data loading needs model hyperparameters. Instantiate model before loading data. "
-        # force garbage collection
+        # force garbage collection to free up memory for the next training loop
         gc.collect()
-        # load data
+        # re/load latest environment settings
         self.__load_config()
+        if start_date is None:
+            start_date = self.train_date_start
+        print(f"Loading data after start date: {start_date}")
         if stock_tickers:
             self.__stock_tickers = stock_tickers
         else:
-            all_stock_tickers = pd.read_csv(f"data/data-3rd-party/{self.stock_train_list}")
+            all_stock_tickers = pd.read_csv(
+                f"data/data-3rd-party/{self.stock_train_list}"
+            )
             print(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop
@@ -567,9 +599,13 @@ class CanswimModel:
             self.stock_tickers,
         )
         self.targets.load_data(
-            stock_tickers=self.stock_tickers, min_samples=self.min_samples, start_date=start_date
+            stock_tickers=self.stock_tickers,
+            min_samples=self.min_samples,
+            start_date=start_date,
         )
-        self.covariates.load_data(stock_tickers=self.stock_tickers, start_date=start_date)
+        self.covariates.load_data(
+            stock_tickers=self.stock_tickers, start_date=start_date
+        )
 
     def get_val_start_list(self):
         val_start_list = []
@@ -609,11 +645,12 @@ class CanswimModel:
             past_cov_list.append(past_cov)
         return past_cov_list
 
-    def predict(self,
+    def predict(
+        self,
         target: Sequence[TimeSeries] = None,
         past_covariates: Optional[Sequence[TimeSeries]] = None,
         future_covariates: Optional[Sequence[TimeSeries]] = None,
-        ):
+    ):
         if future_covariates is None:
             future_covariates = self.future_cov_list
         if past_covariates is None:
