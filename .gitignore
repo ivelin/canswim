@@ -6,3 +6,4 @@ tmp/**
 **/canswim.egg-info/**
 .vscode
 canswim_model.pt*
+build/**

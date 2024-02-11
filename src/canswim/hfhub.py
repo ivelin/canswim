@@ -50,6 +50,7 @@ class HFHub:
         repo_id: str = None,
         model_name: str = None,
         model_class: object = None,
+        **kwargs,
     ) -> ForecastingModel:
         if torch.cuda.is_available():
             map_location = "cuda"
@@ -61,7 +62,8 @@ class HFHub:
             )
             print("dir file list:\n", os.listdir(tmpdirname))
             model = model_class.load(
-                path=f"{tmpdirname}/{model_name}", map_location=map_location
+                path=f"{tmpdirname}/{model_name}", map_location=map_location,
+                **kwargs
             )
             print("Downloaded model from:", repo_id)
             print("Model name:", model.model_name)
@@ -113,3 +115,13 @@ class HFHub:
             )
             ts = TimeSeries.from_dataframe(df)
             return ts
+
+    def download_data(self, repo_id: str = None):
+        data_dir = "data"
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            local_dir="data",
+            token=self.HF_TOKEN,
+        )
+        print(f"Downloaded hf dataset files from {repo_id} to data dir:\n", os.listdir(data_dir))

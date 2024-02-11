@@ -15,14 +15,12 @@ import os
 from darts import TimeSeries
 import numpy as np
 import optuna
-import torch
 from optuna.integration import PyTorchLightningPruningCallback
 from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import quantile_loss
 from typing import Optional, Sequence
 from canswim.hfhub import HFHub
 import gc
-
 
 def election_year_offset(idx):
     """Calculate offset in number of years from most recent election year."""
@@ -131,14 +129,16 @@ class CanswimModel:
         for t, covs in new_future_covariates.items():
             ts_sliced = new_target_series[t].slice_intersect(covs)
             new_target_series[t] = ts_sliced
-            covs_sliced = covs.slice_intersect(ts_sliced)
-            new_future_covariates[t] = covs_sliced
+            # Do not trim future covariates.
+            # By definition future covs need to extend pred_horizon past target end time.
+            # covs_sliced = covs.slice_intersect(ts_sliced)
+            # new_future_covariates[t] = covs_sliced
             assert (
                 new_target_series[t].start_time()
-                == new_future_covariates[t].start_time()
+                >= new_future_covariates[t].start_time()
             )
             assert (
-                new_target_series[t].end_time() == new_future_covariates[t].end_time()
+                new_target_series[t].end_time() < new_future_covariates[t].end_time()
             )
         # apply updates to model series
         self.targets.target_series = new_target_series
@@ -151,7 +151,7 @@ class CanswimModel:
         )
 
     def __prepare_data_splits(self):
-        print(f"preparing train, val and test splits")
+        print("preparing train, val and test splits")
         self.train_series = {}
         self.val_series = {}
         self.test_series = {}
@@ -317,26 +317,31 @@ class CanswimModel:
         self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
         print("Stocks train list: ", self.stock_train_list)
 
-    def prepare_data(self):
+    def prepare_forecast_data(self, start_date: pd.Timestamp = None):
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
         self.stock_price_series = self.targets.prepare_stock_price_series(
-            train_date_start=self.train_date_start
+            train_date_start=start_date
         )
         # prepare target time series
         target_columns = ["Close"]
         self.targets.prepare_data(
             stock_price_series=self.stock_price_series, target_columns=target_columns
         )
-
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
             target_columns=target_columns,
-            train_date_start=self.train_date_start,
+            train_date_start=start_date,
             min_samples=self.min_samples,
+            pred_horizon=self.pred_horizon
         )
         self.__align_targets_and_covariates()
-        print(f"Preparing train, val, test splits")
+        print("Forecasting data prepared")
+
+
+    def prepare_data(self):
+        self.prepare_forecast_data(self.train_date_start)
+        print("Preparing train, val, test splits")
         self.__prepare_data_splits()
 
     def load_model(self):
@@ -356,11 +361,12 @@ class CanswimModel:
             print("Unable to find or load a saved model. Error: \n", e)
         return False
 
-    def download_model(self, repo_id: str = None):
+    def download_model(self, repo_id: str = None, **kwargs):
         torch_model = self.hfhub.download_model(
-            repo_id=repo_id, model_name=self.model_name, model_class=TiDEModel
+            repo_id=repo_id, model_name=self.model_name, model_class=TiDEModel, **kwargs,
         )
         self.torch_model = torch_model
+
 
     def build(self, **kwargs):
         # early stopping (needs to be reset for each model later on)
@@ -498,10 +504,10 @@ class CanswimModel:
         )
         print("Model training finished.")
         # load best checkpoint
-        if torch.cuda.is_available():
-            map_location = "cuda"
-        else:
-            map_location = "cpu"
+        # if torch.cuda.is_available():
+        #     map_location = "cuda"
+        # else:
+        #     map_location = "cpu"
         ## best_model = TiDEModel.load_from_checkpoint(
         ##     self.model_name, map_location=map_location
         ## )
@@ -548,7 +554,8 @@ class CanswimModel:
         assert repo_id is not None
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
-    def load_data(self):
+    def load_data(self, stock_tickers: [] = None, start_date: pd.Timestamp = None):
+        print(f"Loading data after start date: {start_date}")
         # update data prep params from current model hyper params
         assert (
             self.torch_model is not None
@@ -557,19 +564,22 @@ class CanswimModel:
         gc.collect()
         # load data
         self.__load_config()
-        all_stock_tickers = pd.read_csv(f"data/data-3rd-party/{self.stock_train_list}")
-        print(f"Loaded {len(all_stock_tickers)} symbols in total")
-        stock_set = list(set(all_stock_tickers["Symbol"]))
-        # reduce ticker set to a workable sample size for one training loop
-        self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+        if stock_tickers:
+            self.__stock_tickers = stock_tickers
+        else:
+            all_stock_tickers = pd.read_csv(f"data/data-3rd-party/{self.stock_train_list}")
+            print(f"Loaded {len(all_stock_tickers)} symbols in total")
+            stock_set = list(set(all_stock_tickers["Symbol"]))
+            # reduce ticker set to a workable sample size for one training loop
+            self.__stock_tickers = random.sample(stock_set, self.n_stocks)
         print(
-            f"Training loop stock subset has {len(self.stock_tickers)} tickers: \n",
+            f"Training loop stock subset has {len(self.stock_tickers)} tickers: ",
             self.stock_tickers,
         )
         self.targets.load_data(
-            stock_tickers=self.stock_tickers, min_samples=self.min_samples
+            stock_tickers=self.stock_tickers, min_samples=self.min_samples, start_date=start_date
         )
-        self.covariates.load_data(stock_tickers=self.stock_tickers)
+        self.covariates.load_data(stock_tickers=self.stock_tickers, start_date=start_date)
 
     def get_val_start_list(self):
         val_start_list = []
@@ -609,15 +619,22 @@ class CanswimModel:
             past_cov_list.append(past_cov)
         return past_cov_list
 
-    def __get_pred(self, pred_list=None, past_cov_list=None):
-        # pred2 = model.predict(pred_horizon, series=pred2_series, past_covariates=past_covariates, future_covariates=future_covariates, mc_dropout=True, num_samples=500) #   len(val))
+    def predict(self,
+        target: Sequence[TimeSeries] = None,
+        past_covariates: Optional[Sequence[TimeSeries]] = None,
+        future_covariates: Optional[Sequence[TimeSeries]] = None,
+        ):
+        if future_covariates is None:
+            future_covariates = self.future_cov_list
+        if past_covariates is None:
+            past_covariates = self.past_cov_list
         pred = self.torch_model.predict(
             self.pred_horizon,
-            series=pred_list,
+            series=target,
             mc_dropout=True,
             num_samples=500,
-            past_covariates=past_cov_list,
-            future_covariates=self.future_cov_list,
+            past_covariates=past_covariates,
+            future_covariates=future_covariates,
             num_loader_workers=4,
         )
         return pred
@@ -630,7 +647,7 @@ class CanswimModel:
             pred_list = self.__get_pred_list(pred_start)
             past_cov_list = self.__get_past_cov_list(pred_start)
             # print(f'pred_list: \n{pred_list}')
-            pred = self.__get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
+            pred = self.predict(target=pred_list, past_covariates=past_cov_list)
             pred_test_outputs.append(pred)
 
         ## pred_val_outputs = []
@@ -669,7 +686,7 @@ class CanswimModel:
                 if i < self.n_plot_samples:
                     # ax = pred_out[i]['Open'].plot(label=f'forecast Open', linewidth=2, ax=axes[i])
                     ax = pred_out[i]["Close"].plot(
-                        label=f"forecast Close", linewidth=2, ax=axes[i]
+                        label="forecast Close", linewidth=2, ax=axes[i]
                     )
                     plt.legend()
                     # Major ticks every half year, minor ticks every month,
@@ -695,7 +712,7 @@ class CanswimModel:
 
     def backtest(
         self,
-        target: Optional[Sequence[TimeSeries]] = None,
+        target: Sequence[TimeSeries] = None,
         start=None,
         past_covariates: Optional[Sequence[TimeSeries]] = None,
         future_covariates: Optional[Sequence[TimeSeries]] = None,
