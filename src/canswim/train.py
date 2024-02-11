@@ -91,9 +91,9 @@ def main():
 
     wall_time = pd.Timestamp.now
     # set to yesterday
-    yesterday = wall_time.yesterday
+    yesterday = wall_time().floor - Day(n=1)
     # set to previous Saturday
-    previous_weekend = wall_time.floor() - wall_time.day_of_week() - 1
+    previous_weekend = wall_time().floor() - Day(n=wall_time().day_of_week + 2)
 
     # train loop
     i = 0
@@ -127,10 +127,10 @@ def main():
             )
             # update weekend marker to this week's Satuday
             previous_weekend = wall_time().floor("W") + Day(n=5)
-            # gather_market_data()
-            # upload_data()
-            # run_forecasts()
-            # upload_forecasts()
+            # gather_market_data() - in range from last gather until now
+            # upload_data() - upload changed parquet files
+            # run_forecasts() - run model forecast on all stocks which are far enough from previous and next earnings report, save parquet files
+            # upload_forecasts() - upload changed parquet files
         else:
             print(
                 f"Skipping weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
