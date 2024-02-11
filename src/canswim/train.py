@@ -7,7 +7,7 @@ import os
 from dotenv import load_dotenv
 import pandas as pd
 from pandas.tseries.offsets import Day, Week
-
+from loguru import logger
 
 canswim_model = CanswimModel()
 
@@ -47,17 +47,19 @@ def plot_backtest_results():
             future_covariates=canswim_model.future_cov_list[i],
             forecast_horizon=canswim_model.pred_horizon,
         )
-        # print(f"target series: \n{target}")
-        # print(f"backtest series: \n{backtest}")
+        # logger.info(f"target series: \n{target}")
+        # logger.info(f"backtest series: \n{backtest}")
         loss_vals = []
         for p, b in enumerate(backtest):
             loss = quantile_loss(
                 canswim_model.targets_list[i], b, n_jobs=-1, verbose=True
             )
-            print(f"quantile loss: {loss} at prediction step {p}")
+            logger.info(f"quantile loss: {loss} at prediction step {p}")
             loss_vals.append(loss)
         mean_loss = np.mean(loss_vals)
-        print(f"Mean Backtest Quantile Loss across all prediction periods: {mean_loss}")
+        logger.info(
+            f"Mean Backtest Quantile Loss across all prediction periods: {mean_loss}"
+        )
         canswim_model.plot_backtest_results(
             target=canswim_model.targets_list[i],
             backtest=backtest,
@@ -83,7 +85,7 @@ def main():
 
     get_env()
 
-    print("n_outer_train_loop:", n_outer_train_loop, type(n_outer_train_loop))
+    logger.info("n_outer_train_loop:", n_outer_train_loop, type(n_outer_train_loop))
 
     # build a new model or download existing model from hf hub or local dir
     # canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
@@ -101,7 +103,7 @@ def main():
     # train loop
     i = 0
     while i < n_outer_train_loop:
-        print(f"Outer train loop: {i}")
+        logger.info(f"Outer train loop: {i}")
         # load latest model from local storage
         canswim_model.load_model()
         # load a new data sample from local storage
@@ -113,7 +115,7 @@ def main():
         # Daily routine
         if wall_time() > yesterday + Day(n=1):
             try:
-                print(
+                logger.info(
                     f"Starting daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
                 )
                 # update yesterday marker to today
@@ -125,15 +127,15 @@ def main():
                     repo_id=repo_id
                 )  # prepare next sample subset
             except Exception as e:
-                print("ERROR during daily routine: ", e)
+                logger.exception("ERROR during daily routine: ", e)
         else:
-            print(
+            logger.info(
                 f"Skipping daily routine. Yesterday: {yesterday}, wall_time: {wall_time()}"
             )
         # Weekend routine
         if wall_time() > previous_weekend + Week(n=1):
             try:
-                print(
+                logger.info(
                     f"Starting weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
                 )
                 # update weekend marker to this week's Satuday
@@ -143,9 +145,9 @@ def main():
                 # run_forecasts() - run model forecast on all stocks which are far enough from previous and next earnings report, save parquet files
                 # upload_forecasts() - upload changed parquet files
             except Exception as e:
-                print("ERROR during weekend routine: ", e)
+                logger.exception("ERROR during weekend routine: ", e)
         else:
-            print(
+            logger.info(
                 f"Skipping weekend routine. Previous weekend: {previous_weekend}, wall_time: {wall_time()}"
             )
         # refresh any config changes in the OS environment

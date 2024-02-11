@@ -1,4 +1,5 @@
 import pandas as pd
+from loguru import logger
 from dotenv import load_dotenv
 import os
 import tempfile
@@ -41,7 +42,7 @@ class HFHub:
         )
 
         with tempfile.TemporaryDirectory() as tmpdirname:
-            # print("created temporary directory for model", tmpdirname)
+            # logger.info("created temporary directory for model", tmpdirname)
             model.save(path=f"{tmpdirname}/{model.model_name}")
             upload_folder(repo_id=repo_id, folder_path=tmpdirname, token=self.HF_TOKEN)
 
@@ -60,15 +61,14 @@ class HFHub:
             snapshot_download(
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
             )
-            print("dir file list:\n", os.listdir(tmpdirname))
+            logger.info("dir file list:\n", os.listdir(tmpdirname))
             model = model_class.load(
-                path=f"{tmpdirname}/{model_name}", map_location=map_location,
-                **kwargs
+                path=f"{tmpdirname}/{model_name}", map_location=map_location, **kwargs
             )
-            print("Downloaded model from:", repo_id)
-            print("Model name:", model.model_name)
-            print("Model params:", model.model_params)
-            print("Model created:", model.model_created)
+            logger.info("Downloaded model from:", repo_id)
+            logger.info("Model name:", model.model_name)
+            logger.info("Model params:", model.model_params)
+            logger.info("Model created:", model.model_created)
             return model
 
     def upload_timeseries(
@@ -86,7 +86,7 @@ class HFHub:
             exist_ok=True,
             token=self.HF_TOKEN,
         )
-        # print(f"repo_info: ", repo_info)
+        # logger.info(f"repo_info: ", repo_info)
         df = series.pd_dataframe()
         with tempfile.TemporaryDirectory() as tmpdirname:
             df.to_parquet(path=f"{tmpdirname}/{series_name}.parquet")
@@ -109,7 +109,7 @@ class HFHub:
                 local_dir=tmpdirname,
                 token=self.HF_TOKEN,
             )
-            print(os.listdir(tmpdirname))
+            logger.info(os.listdir(tmpdirname))
             df = pd.read_parquet(
                 f"{tmpdirname}/{series_name}.parquet", engine="pyarrow"
             )
@@ -124,4 +124,7 @@ class HFHub:
             local_dir="data",
             token=self.HF_TOKEN,
         )
-        print(f"Downloaded hf dataset files from {repo_id} to data dir:\n", os.listdir(data_dir))
+        logger.info(
+            f"Downloaded hf dataset files from {repo_id} to data dir:\n",
+            os.listdir(data_dir),
+        )
