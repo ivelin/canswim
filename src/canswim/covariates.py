@@ -4,6 +4,7 @@ from darts import TimeSeries
 from darts.dataprocessing.transformers import MissingValuesFiller
 from typing import Union
 import numpy as np
+from loguru import logger
 
 fiscal_periods = ["quarter", "annual"]
 fiscal_freq = {"annual": "Y", "quarter": "Q"}
@@ -40,7 +41,7 @@ class Covariates:
         ]
 
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
-        print("preparing past covariates: price and volume")
+        logger.info("preparing past covariates: price and volume")
         # drop columns used in target series
         past_price_covariates = {
             t: stock_price_series[t].drop_columns(col_names=target_columns)
@@ -66,16 +67,16 @@ class Covariates:
         )
         t_earn.index = new_index
         if t_earn.index.isnull().any():
-            print(t_earn[t_earn.index.isnull()])
+            logger.info(t_earn[t_earn.index.isnull()])
         for i in t_earn.index:
             assert is_business_day(i)
         return t_earn
 
     def prepare_earn_series(self, tickers=None):
-        print(f"preparing past covariates: earnings estimates ")
+        logger.info(f"preparing past covariates: earnings estimates ")
         # convert date strings to numerical representation
         earn_df = self.earnings_loaded_df.copy()
-        # print("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
+        # logger.info("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
         ufd = pd.to_datetime(earn_df["updatedFromDate"])
         ufd_year = ufd.dt.year
         ufd_month = ufd.dt.month
@@ -112,11 +113,11 @@ class Covariates:
         t_earn_series = {}
         for t in list(tickers):
             try:
-                # print(f'ticker: {t}')
+                # logger.info(f'ticker: {t}')
                 t_earn = earn_df.loc[[t]].copy()
                 t_earn = t_earn.droplevel("Symbol")
                 t_earn.index = pd.to_datetime(t_earn.index)
-                # print(f'index type for {t}: {type(t_earn.index)}')
+                # logger.info(f'index type for {t}: {type(t_earn.index)}')
                 assert not t_earn.index.duplicated().any()
                 assert not t_earn.index.isnull().any()
                 t_earn = self.align_earn_to_business_days(t_earn)
@@ -125,7 +126,7 @@ class Covariates:
                     .drop_duplicates(subset="Date", keep="last")
                     .set_index("Date")
                 )
-                # print(f't_earn freq: {t_earn.index}')
+                # logger.info(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
                 )
@@ -134,12 +135,12 @@ class Covariates:
                 assert len(tes.gaps()) == 0
                 t_earn_series[t] = tes
             except KeyError as e:
-                print(f"Skipping {t} due to error: ", e)
+                logger.exception(f"Skipping {t} due to error: ", e)
 
         return t_earn_series
 
     def prepare_institutional_symbol_ownership_series(self, stock_price_series=None):
-        print(f"preparing past covariates: institutional ownership of symbol")
+        logger.info(f"preparing past covariates: institutional ownership of symbol")
         inst_ownership_df = self.inst_symbol_ownership_df.copy()
         # cleanup data with known dirty columns
         inst_ownership_df["cik"] = (
@@ -161,33 +162,33 @@ class Covariates:
         t_inst_ownership_series = {}
         for t, prices in stock_price_series.items():
             try:
-                # print(f"ticker: {t}")
+                # logger.info(f"ticker: {t}")
                 t_iown = inst_ownership_df.loc[[t]]
                 t_iown = t_iown.droplevel("Symbol")
                 t_iown.index = pd.to_datetime(t_iown.index)
-                # print(f"t_iown index: {t_iown.index}")
-                # print(f"t_iown index to biz days")
+                # logger.info(f"t_iown index: {t_iown.index}")
+                # logger.info(f"t_iown index to biz days")
                 # assert not t_iown.index.duplicated().any(), "date index has duplicates"
-                # print(f"t_iown no index duplicates")
+                # logger.info(f"t_iown no index duplicates")
                 # assert not t_iown.index.isnull().any(), "date index has missing values"
-                # print(f"t_iown no index NaNs")
+                # logger.info(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
-                # print(f"t_iown index to biz days")
+                # logger.info(f"t_iown index to biz days")
                 t_iown = (
                     t_iown.reset_index()
                     .drop_duplicates(subset="Date", keep="last")
                     .set_index("Date")
                 )
                 assert not t_iown.index.duplicated().any(), "date index has duplicates"
-                # print(f"t_iown no index duplicates")
+                # logger.info(f"t_iown no index duplicates")
                 assert not t_iown.index.isnull().any(), "date index has missing values"
-                # print(f"t_iown no index NaNs")
-                # print(f't_earn freq: {t_earn.index}')
+                # logger.info(f"t_iown no index NaNs")
+                # logger.info(f't_earn freq: {t_earn.index}')
                 # save cik as a static covariate
                 ##cik = t_iown["cik"].iloc[0].astype(pd.Int64Dtype)
                 ##t_iown = t_iown.drop(columns=["cik"])
                 ##static_covs_single = pd.DataFrame(data={"cik": [cik]})
-                # print(f"Company with ticker {t} has cik: {cik}")
+                # logger.info(f"Company with ticker {t} has cik: {cik}")
                 ts_tmp = TimeSeries.from_dataframe(
                     t_iown, freq="B", fill_missing_dates=True
                 )
@@ -200,7 +201,7 @@ class Covariates:
                 ##ts_padded = ts_padded.with_static_covariates(
                 ##    covariates=static_covs_single
                 ##)
-                # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
+                # logger.info(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(ts_padded.gaps()) == 0
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
@@ -213,8 +214,8 @@ class Covariates:
                 #    .apply(lambda x: tuple(x.index))
                 #   .reset_index(name="date")
                 # )
-                print(f"Skipping {t} due to error: \n{e}")
-                # print(
+                logger.exception(f"Skipping {t} due to error: \n{e}")
+                # logger.info(
                 #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
                 #
                 # return t_iown
@@ -222,7 +223,7 @@ class Covariates:
         return t_inst_ownership_series
 
     def stack_covariates(self, old_covs=None, new_covs=None, min_samples=1):
-        print(f"stacking covariates")
+        logger.info(f"stacking covariates")
         # stack sales and earnigns to past covariates
         stacked_covs = {}
         for t, covs in list(old_covs.items()):
@@ -230,17 +231,17 @@ class Covariates:
                 assert (
                     type(new_covs[t]) == TimeSeries
                 ), f"type of {t} is not TimeSeries, but {type(new_covs[t])}"
-                # print(f'stacking future covs for {t}')
+                # logger.info(f'stacking future covs for {t}')
                 old_sliced = covs.slice_intersect(new_covs[t])
                 new_sliced = new_covs[t].slice_intersect(old_sliced)
                 stacked = old_sliced.stack(new_sliced)
-                # print(f'past covariates for {t} including earnings calendar: {len(new_past_covs[t].components)}')
-                # print(f'past covariates for {t} start time: {new_past_covs[t].start_time()}, end time: {new_past_covs[t].end_time()}')
-                # print(f'past covariates for {t} sample: \n{new_past_covs[t][0].pd_dataframe()}')
+                # logger.info(f'past covariates for {t} including earnings calendar: {len(new_past_covs[t].components)}')
+                # logger.info(f'past covariates for {t} start time: {new_past_covs[t].start_time()}, end time: {new_past_covs[t].end_time()}')
+                # logger.info(f'past covariates for {t} sample: \n{new_past_covs[t][0].pd_dataframe()}')
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
             except KeyError as e:
-                print(f"Skipping {t} covariates stack due to error: ", e)
+                logger.exception(f"Skipping {t} covariates stack due to error: ", e)
         return stacked_covs
 
     def df_index_to_biz_days(self, df=None):
@@ -267,9 +268,9 @@ class Covariates:
         return updated_cov_series
 
     def prepare_key_metrics(self, stock_price_series=None):
-        print("preparing past covariates: key metrics")
+        logger.info("preparing past covariates: key metrics")
         kms_loaded_df = self.kms_loaded_df.copy()
-        # print(kms_loaded_df)
+        # logger.info(kms_loaded_df)
         kms_loaded_df = kms_loaded_df[~kms_loaded_df.index.duplicated(keep="first")]
         assert kms_loaded_df.index.is_unique
         kms_loaded_df.index
@@ -290,42 +291,40 @@ class Covariates:
         t_kms_series = {}
         for t, prices in stock_price_series.items():
             try:
-                # print(f"ticker {t}")
+                # logger.info(f"ticker {t}")
                 kms_df = kms_loaded_df.loc[[t]].copy()
-                # print(f'ticker_series[{t}] start time, end time: {ticker_series[t].start_time()}, {ticker_series[t].end_time()}')
-                # print(f'kms_ser_df start time, end time: {kms_df.index[0]}, {kms_df.index[-1]}')
+                # logger.info(f'ticker_series[{t}] start time, end time: {ticker_series[t].start_time()}, {ticker_series[t].end_time()}')
+                # logger.info(f'kms_ser_df start time, end time: {kms_df.index[0]}, {kms_df.index[-1]}')
                 kms_df = kms_df.droplevel("Symbol")
                 kms_df.index = pd.to_datetime(kms_df.index)
-                # print(f'index type for {t}: {type(t_kms.index)}')
+                # logger.info(f'index type for {t}: {type(t_kms.index)}')
                 assert kms_df.index.is_unique
                 kms_df = kms_df.dropna()
-                # print("kms_df\n", kms_df[kms_df.isnull()])
+                # logger.info("kms_df\n", kms_df[kms_df.isnull()])
                 assert not kms_df.isnull().values.any()
                 assert len(kms_df) > 0, f"No key metrics available for {t}"
-                # print(f'{t} earnings: \n{t_kms.columns}')
+                # logger.info(f'{t} earnings: \n{t_kms.columns}')
                 kms_df = self.df_index_to_biz_days(kms_df)
                 tkms_series_tmp = TimeSeries.from_dataframe(
                     kms_df, freq="B", fill_missing_dates=True
                 )
-                # print(f'kms_series_tmp start time, end time: {tkms_series_tmp.start_time()}, {tkms_series_tmp.end_time()}')
+                # logger.info(f'kms_series_tmp start time, end time: {tkms_series_tmp.start_time()}, {tkms_series_tmp.end_time()}')
                 kms_df_ext = tkms_series_tmp.pd_dataframe()
                 kms_df_ext.ffill(inplace=True)
                 kms_ser = TimeSeries.from_dataframe(kms_df, freq="B", fillna_value=-1)
                 kms_ser_padded = self.pad_covs(cov_series=kms_ser, price_series=prices)
-                # print(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
+                # logger.info(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(kms_ser_padded.gaps()) == 0
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
-            except KeyError as e:
-                print(f"Skipping {t} due to error: ", e)
-            except AssertionError as e:
-                print(f"Skipping {t} due to error: ", e)
-        # print("t_kms_series:", t_kms_series)
+            except (KeyError, AssertionError) as e:
+                logger.exception(f"Skipping {t} due to error: ", e)
+        # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
 
     def prepare_broad_market_series(self, train_date_start=None):
-        print("preparing past covariates: broad market indecies")
+        logger.info("preparing past covariates: broad market indecies")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
@@ -376,10 +375,10 @@ class Covariates:
         inst_ownership_file = (
             "data/data-3rd-party/institutional_symbol_ownership.parquet"
         )
-        print(f"Loading data from: {inst_ownership_file}")
+        logger.info(f"Loading data from: {inst_ownership_file}")
         # df = pd.read_csv(inst_ownership_file, low_memory=False)
         df = pd.read_parquet(inst_ownership_file, filters=self.pyarrow_filters)
-        # print("inst_symbol_ownership_df.columns", df.columns)
+        # logger.info("inst_symbol_ownership_df.columns", df.columns)
         # df["date"] = pd.to_datetime(df["date"])
 
         df = df.drop_duplicates()  # subset=["symbol", "date"])
@@ -404,7 +403,7 @@ class Covariates:
         min_samples: int = None,
         pred_horizon: int = None,
     ):
-        print("preparing model data")
+        logger.info("preparing model data")
         assert (
             self.data_loaded is True
         ), "Data needs to be loaded before it can be prepared. Make sure to first call load_data()"
@@ -422,13 +421,13 @@ class Covariates:
 
     def load_earnings(self):
         earnings_file = "data/data-3rd-party/earnings_calendar.parquet"
-        print(f"Loading data from: {earnings_file}")
+        logger.info(f"Loading data from: {earnings_file}")
         # earnings_loaded_df = pd.read_csv(earnings_csv_file)
-        print(f"pyarrow_filters: {self.pyarrow_filters}")
+        logger.info(f"pyarrow_filters: {self.pyarrow_filters}")
         earnings_loaded_df = pd.read_parquet(
             earnings_file, filters=self.pyarrow_filters
         )
-        # print("earnings_loaded_df.columns", earnings_loaded_df.columns)
+        # logger.info("earnings_loaded_df.columns", earnings_loaded_df.columns)
         # earnings_loaded_df["date"] = pd.to_datetime(earnings_loaded_df["date"])
         earnings_unique = (
             earnings_loaded_df.drop_duplicates()
@@ -439,12 +438,14 @@ class Covariates:
             ~earnings_unique.index.duplicated(keep="first")
         ]
         assert earnings_unique.index.has_duplicates == False
-        print(f"Loading a total of {len(earnings_unique)} unique earnings records")
+        logger.info(
+            f"Loading a total of {len(earnings_unique)} unique earnings records"
+        )
         self.earnings_loaded_df = earnings_unique
 
     def load_key_metrics(self):
         kms_file = "data/data-3rd-party/keymetrics_history.parquet"
-        print(f"Loading data from: {kms_file}")
+        logger.info(f"Loading data from: {kms_file}")
         # kms_loaded_df = pd.read_csv(kms_file)
         kms_loaded_df = pd.read_parquet(kms_file, filters=self.pyarrow_filters)
         self.kms_loaded_df = kms_loaded_df
@@ -454,18 +455,18 @@ class Covariates:
         for period in fiscal_periods:
             assert period in fiscal_periods
             est_file = f"data/data-3rd-party/analyst_estimates_{period}.parquet"
-            print(f"Loading data from: {est_file}")
+            logger.info(f"Loading data from: {est_file}")
             # est_loaded_df = pd.read_csv(est_file)
             est_loaded_df = pd.read_parquet(est_file, filters=self.pyarrow_filters)
             assert est_loaded_df.index.is_unique
-            # print(f'{period} estimates loaded: \n{est_loaded_df}')
+            # logger.info(f'{period} estimates loaded: \n{est_loaded_df}')
             # est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
             est_unique = est_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
             assert not est_unique.duplicated().any()
             # est_unique = est_unique.set_index(keys=["symbol", "date"])
             assert est_loaded_df.index.has_duplicates == False
             assert est_loaded_df.index.is_unique == True
-            # print(f'{period} estimates prepared: \n{est_unique}')
+            # logger.info(f'{period} estimates prepared: \n{est_unique}')
             self.est_loaded_df[period] = est_loaded_df
 
     def est_add_future_periods(self, est_df=None, n_future_periods=None, period=None):
@@ -473,7 +474,7 @@ class Covariates:
         Prepare time series with concatenated estimates for n_future_periods
         """
         # new_df = pd.DataFrame(index=est_df.index)
-        # print('est_df', est_df)
+        # logger.info('est_df', est_df)
         # add fiscalDateEnding columns
         # fde = pd.to_datetime(est_df.index)
         fde_year = est_df.index.year
@@ -497,11 +498,11 @@ class Covariates:
         est_shifted_df = est_shifted_df.shift(
             periods=prange, suffix=f"_p_{period}"
         )  # freq=fiscal_freq[period],
-        # print('est_shifted_df\n', est_shifted_df)
+        # logger.info('est_shifted_df\n', est_shifted_df)
         # est_shifted_df.add_suffix(f'_p{n}')
         # new_df.join(est_shifted_df, how='outer', sort=True, validate='1:1')
         new_df = est_shifted_df
-        # print('new_df', new_df)
+        # logger.info('new_df', new_df)
         return new_df
 
     def prepare_est_series(
@@ -518,11 +519,11 @@ class Covariates:
         :param period: quarter or annual
         :return: estimate series expanded with forward periods at each series date indexed row
         """
-        print(f"preparing future covariates: analyst estimates[{period}]")
+        logger.info(f"preparing future covariates: analyst estimates[{period}]")
         assert period in fiscal_periods
         t_est_series = {}
         for t, prices in stock_price_series.items():
-            # print(f'ticker {t}')
+            # logger.info(f'ticker {t}')
             try:
                 est_df = all_est_df.loc[[t]].copy()
                 est_df = est_df.droplevel("Symbol")
@@ -532,14 +533,14 @@ class Covariates:
                 est_df = self.est_add_future_periods(
                     est_df=est_df, n_future_periods=n_future_periods, period=period
                 )
-                # print(f'{t} estimates columns: \n{est_df.columns}')
+                # logger.info(f'{t} estimates columns: \n{est_df.columns}')
                 # align dates to business days
                 est_df = self.df_index_to_biz_days(est_df)
                 # expand date index to match target price series dates and pad data
                 est_series_tmp = TimeSeries.from_dataframe(
                     est_df, freq="B", fill_missing_dates=True
                 )
-                # print(f'est_series_tmp start time, end time: {est_series_tmp.start_time()}, {est_series_tmp.end_time()}')
+                # logger.info(f'est_series_tmp start time, end time: {est_series_tmp.start_time()}, {est_series_tmp.end_time()}')
                 est_df = est_series_tmp.pd_dataframe()
                 # Make current annual/quarter period estimates available on all business days through end of the period
                 est_df.ffill(inplace=True)
@@ -553,11 +554,11 @@ class Covariates:
                 t_est_series[t] = est_padded
 
             except KeyError as e:
-                print(f"No analyst estimates available for {t}, error", e)
+                logger.exception(f"No analyst estimates available for {t}, error", e)
         return t_est_series
 
     def prepare_analyst_estimates(self, stock_price_series=None):
-        print("preparing future covariates: analyst estimates")
+        logger.info("preparing future covariates: analyst estimates")
         quarter_est_series = self.prepare_est_series(
             all_est_df=self.est_loaded_df["quarter"],
             n_future_periods=4,
@@ -578,7 +579,7 @@ class Covariates:
         target_columns: Union[str, list] = None,
         train_date_start: pd.Timestamp = None,
     ):
-        print("preparing past covariates")
+        logger.info("preparing past covariates")
         # start with price-volume covariates
         price_covariates = self.get_price_covariates(
             stock_price_series=stock_price_series, target_columns=target_columns
@@ -612,39 +613,43 @@ class Covariates:
         self.past_covariates = past_covariates
 
     def __add_holidays(self, series_dict: dict = None):
-        print("preparing future covariates: holidays")
+        logger.info("preparing future covariates: holidays")
         new_series = {}
         for t, series in series_dict.items():
             series_with_holidays = series.add_holidays(country_code="US")
             new_series[t] = series_with_holidays
-            # print(f'ticker: {t} , {ticker_series[t]}')
+            # logger.info(f'ticker: {t} , {ticker_series[t]}')
         return new_series
 
     def __extend_series(self, n: int = -1, series: {} = None, target: {} = None):
         new_series = {}
         for t, s in series.items():
-            print(
+            logger.info(
                 f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
             )
-            print(f"target {t} end time: {target[t].end_time()}")
+            logger.info(f"target {t} end time: {target[t].end_time()}")
             start = s.start_time()
             if s.end_time() > target[t].end_time() + BDay(n=n):
                 new_series[t] = s
-                print(f"No need to extend {t} series. End greater than target end.")
+                logger.info(
+                    f"No need to extend {t} series. End greater than target end."
+                )
             else:
                 end = s.end_time() + BDay(n=n)
                 df = s.pd_dataframe()
-                idx = pd.date_range(start=start, end=end, freq='B')
+                idx = pd.date_range(start=start, end=end, freq="B")
                 df = df.reindex(idx).ffill()
-                s_ext = TimeSeries.from_dataframe(df, freq='B', fill_missing_dates=True)
+                s_ext = TimeSeries.from_dataframe(df, freq="B", fill_missing_dates=True)
                 new_series[t] = s_ext
-                print(f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}")
+                logger.info(
+                    f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
+                )
         return new_series
 
     def prepare_future_covariates(
         self, stock_price_series: {} = None, min_samples=None, pred_horizon: int = None
     ):
-        print("Preparing future covariates")
+        logger.info("Preparing future covariates")
         # add analyst estimates
         quarter_est_series, annual_est_series = self.prepare_analyst_estimates(
             stock_price_series=stock_price_series
@@ -657,7 +662,9 @@ class Covariates:
         )
         future_covariates = stacked_future_covariates
 
-        future_covariates = self.__extend_series(n=pred_horizon, series=future_covariates, target=stock_price_series)
+        future_covariates = self.__extend_series(
+            n=pred_horizon, series=future_covariates, target=stock_price_series
+        )
 
         future_covariates = self.__add_holidays(future_covariates)
         self.future_covariates = future_covariates

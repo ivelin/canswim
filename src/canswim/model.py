@@ -21,6 +21,7 @@ from darts.metrics import quantile_loss
 from typing import Optional, Sequence, List
 from canswim.hfhub import HFHub
 import gc
+from loguru import logger
 
 
 def election_year_offset(idx):
@@ -29,8 +30,10 @@ def election_year_offset(idx):
 
 
 def optuna_print_callback(study, trial):
-    print(f"Current value: {trial.value}, Current params: {trial.params}")
-    print(f"Best value: {study.best_value}, Best params: {study.best_trial.params}")
+    logger.info(f"Current value: {trial.value}, Current params: {trial.params}")
+    logger.info(
+        f"Best value: {study.best_value}, Best params: {study.best_trial.params}"
+    )
 
 
 class CanswimModel:
@@ -54,7 +57,7 @@ class CanswimModel:
         self.hfhub = HFHub()
         # use GPU if available
         if torch.cuda.is_available():
-            print("Configuring CUDA GPU")
+            logger.info("Configuring CUDA GPU")
             # utilize CUDA tensor cores with bfloat16
             # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
             torch.set_float32_matmul_precision("high")  #  | 'medium'
@@ -95,8 +98,8 @@ class CanswimModel:
             else:
                 del self.covariates.past_covariates[t]
                 del self.covariates.future_covariates[t]
-                # print(f'preparing train, val split for {t}')
-                print(f"Removing {t} from training loop. Not enough samples")
+                # logger.info(f'preparing train, val split for {t}')
+                logger.info(f"Removing {t} from training loop. Not enough samples")
         self.targets.target_series = target_series_ok
         # drop tickers that do not have full data sets for training targets, past and future covariates
         target_set = set(self.targets.target_series.keys())
@@ -106,7 +109,7 @@ class CanswimModel:
         tickers_without_complete_data = (
             target_set | future_set | past_set
         ) - tickers_with_complete_data
-        print(
+        logger.info(
             f"Removing time series for tickers with incomplete data sets: {tickers_without_complete_data}. Keeping {tickers_with_complete_data} "
         )
         new_target_series = {}
@@ -131,7 +134,7 @@ class CanswimModel:
                     new_target_series[t].end_time() == new_past_covariates[t].end_time()
                 )
             except (KeyError, ValueError, AssertionError) as e:
-                print(f"Skipping {t} from data splits due to error: ", e)
+                logger.exception(f"Skipping {t} from data splits due to error: ", e)
         # align targets with future covs
         for t, covs in new_future_covariates.items():
             try:
@@ -143,18 +146,17 @@ class CanswimModel:
                 new_target_series[t] = ts_sliced
                 assert (
                     new_target_series[t].start_time()
-                    >= new_future_covariates[t].start_time(),
-                    f"target start time {new_target_series[t].end_time()} <"
-                    f"future covariate start time {new_future_covariates[t].start_time()}",
-                )
-                assert (
-                    new_target_series[t].end_time()
-                    <= new_future_covariates[t].end_time() + BDay(n=self.pred_horizon),
-                    f"target end time {new_target_series[t].end_time()} > "
-                    f"future covariate end time + pred_horizon {new_future_covariates[t].end_time() + BDay(n=self.pred_horizon)}",
-                )
+                    >= new_future_covariates[t].start_time()
+                ), f"""target start time {new_target_series[t].end_time()} <
+                    future covariate start time {new_future_covariates[t].start_time()}"""
+                assert new_target_series[t].end_time() <= new_future_covariates[
+                    t
+                ].end_time() + BDay(
+                    n=self.pred_horizon
+                ), f"""target end time {new_target_series[t].end_time()} > 
+                    future covariate end time + pred_horizon {new_future_covariates[t].end_time() + BDay(n=self.pred_horizon)}"""
             except (KeyError, ValueError, AssertionError) as e:
-                print(f"Skipping {t} from data splits due to error: ", e)
+                logger.exception(f"Skipping {t} from data splits due to error: ", e)
 
         # apply updates to model series
         self.targets.target_series = new_target_series
@@ -167,7 +169,7 @@ class CanswimModel:
         )
 
     def __prepare_data_splits(self):
-        print("preparing train, val and test splits")
+        logger.info("preparing train, val and test splits")
         self.train_series = {}
         self.val_series = {}
         self.test_series = {}
@@ -193,8 +195,8 @@ class CanswimModel:
                 and t in self.covariates.future_covariates.keys()
             ):
                 try:
-                    # print(f"preparing train, val split for {t}")
-                    # print(
+                    # logger.info(f"preparing train, val split for {t}")
+                    # logger.info(
                     #    f"{t} target start time, end time: {target.start_time()}, {target.end_time()}"
                     # )
                     # v1. train, val, test have no overlap
@@ -209,19 +211,19 @@ class CanswimModel:
                     train = target.drop_after(
                         target.end_time() - BDay(n=self.pred_horizon) * 2
                     )
-                    # print(
+                    # logger.info(
                     #    f"{t} train start time, end time: {train.start_time()}, {train.end_time()}"
                     # )
-                    # print(
+                    # logger.info(
                     #    f"{t} val start time, end time: {val.start_time()}, {val.end_time()}"
                     # )
-                    # print(
+                    # logger.info(
                     #    f"{t} test start time, end time: {test.start_time()}, {test.end_time()}"
                     # )
-                    # print(
+                    # logger.info(
                     #    f"{t} past covs start time, end time: {self.covariates.past_covariates[t].start_time()}, {self.covariates.past_covariates[t].end_time()}"
                     # )
-                    # print(
+                    # logger.info(
                     #    f"{t} future covs start time, end time: {self.covariates.future_covariates[t].start_time()}, {self.covariates.future_covariates[t].end_time()}"
                     # )
                     # there should be no gaps in the training data
@@ -244,9 +246,9 @@ class CanswimModel:
                     ## self.past_covariates_val[t] = past_val
                     ## self.past_covariates_test[t] = past_test
                 except (KeyError, ValueError, AssertionError) as e:
-                    print(f"Skipping {t} from data splits due to error: ", e)
+                    logger.exception(f"Skipping {t} from data splits due to error: ", e)
             else:
-                print(
+                logger.info(
                     f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
                 )
         self.targets_list = []
@@ -264,14 +266,14 @@ class CanswimModel:
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
-        print(f"Total # stocks in train list: {len(self.target_train_list)}")
-        print(
+        logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
+        logger.info(
             f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
         )
-        print(
+        logger.info(
             f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
         )
-        print(
+        logger.info(
             f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
         )
         # update targets series dict
@@ -315,15 +317,15 @@ class CanswimModel:
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
-        print("n_stocks: ", self.n_stocks)
+        logger.info("n_stocks: ", self.n_stocks)
 
         # model training epochs
         self.n_epochs = int(os.getenv("n_epochs", 5))
-        print("n_epochs: ", self.n_epochs)
+        logger.info("n_epochs: ", self.n_epochs)
 
         # patience for number of epochs without validation loss progress
         self.n_epochs_patience = int(os.getenv("n_epochs_patience", 5))
-        print("n_epochs_patience: ", self.n_epochs_patience)
+        logger.info("n_epochs_patience: ", self.n_epochs_patience)
 
         # pick the earlies date after which market data is available for all covariate series
         self.train_date_start = pd.Timestamp(
@@ -331,7 +333,7 @@ class CanswimModel:
         )
 
         self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
-        print("Stocks train list: ", self.stock_train_list)
+        logger.info("Stocks train list: ", self.stock_train_list)
 
     def prepare_forecast_data(self, start_date: pd.Timestamp = None):
         # prepare stock price time series
@@ -352,11 +354,11 @@ class CanswimModel:
             pred_horizon=self.pred_horizon,
         )
         self.__align_targets_and_covariates()
-        print("Forecasting data prepared")
+        logger.info("Forecasting data prepared")
 
     def prepare_data(self):
         self.prepare_forecast_data(self.train_date_start)
-        print("Preparing train, val, test splits")
+        logger.info("Preparing train, val, test splits")
         self.__prepare_data_splits()
 
     def load_model(self):
@@ -368,12 +370,12 @@ class CanswimModel:
             self.torch_model = TiDEModel.load(
                 self.model_name, map_location=map_location
             )
-            print(
+            logger.info(
                 f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
             )
             return True
         except Exception as e:
-            print("Unable to find or load a saved model. Error: \n", e)
+            logger.exception("Unable to find or load a saved model. Error: \n", e)
         return False
 
     def download_model(self, repo_id: str = None, **kwargs):
@@ -407,7 +409,7 @@ class CanswimModel:
         )
 
         self.torch_model = model
-        print("New model built.")
+        logger.info("New model built.")
 
     def __build_model(self, **kwargs):
         # scaler = Scaler(verbose=True, n_jobs=-1)
@@ -467,7 +469,7 @@ class CanswimModel:
             "batch_size": 256,  # 512,
             "random_state": 42,
         }
-        print("Building a new model...")
+        logger.info("Building a new model...")
         # using TiDE hyperparameters from Table 8 in section B.3 of the original paper
         # https://arxiv.org/pdf/2304.08424.pdf
         model = TiDEModel(
@@ -506,7 +508,7 @@ class CanswimModel:
         assert supports_multi_ts is True
         # train model
         # for i in range(100):
-        print("Starting model training...")
+        logger.info("Starting model training...")
         self.torch_model.fit(
             self.target_train_list,
             epochs=self.n_epochs,
@@ -519,7 +521,7 @@ class CanswimModel:
             verbose=True,
             num_loader_workers=4,  # num_loader_workers recommended at 4*n_GPUs
         )
-        print("Model training finished.")
+        logger.info("Model training finished.")
         # load best checkpoint
         # if torch.cuda.is_available():
         #     map_location = "cuda"
@@ -531,7 +533,7 @@ class CanswimModel:
         ## self.torch_model = best_model
         # save model as a standalone snapshot
         self.save_model()
-        print("Model saved.")
+        logger.info("Model saved.")
 
     def plot_splits(self):
         # plot sample of target series
@@ -583,18 +585,18 @@ class CanswimModel:
         self.__load_config()
         if start_date is None:
             start_date = self.train_date_start
-        print(f"Loading data after start date: {start_date}")
+        logger.info(f"Loading data after start date: {start_date}")
         if stock_tickers:
             self.__stock_tickers = stock_tickers
         else:
             all_stock_tickers = pd.read_csv(
                 f"data/data-3rd-party/{self.stock_train_list}"
             )
-            print(f"Loaded {len(all_stock_tickers)} symbols in total")
+            logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop
             self.__stock_tickers = random.sample(stock_set, self.n_stocks)
-        print(
+        logger.info(
             f"Training loop stock subset has {len(self.stock_tickers)} tickers: ",
             self.stock_tickers,
         )
@@ -673,7 +675,7 @@ class CanswimModel:
             pred_start = self.__get_pred_start(start_times=self.test_start, offset=w)
             pred_list = self.__get_pred_list(pred_start)
             past_cov_list = self.__get_past_cov_list(pred_start)
-            # print(f'pred_list: \n{pred_list}')
+            # logger.info(f'pred_list: \n{pred_list}')
             pred = self.predict(target=pred_list, past_covariates=past_cov_list)
             pred_test_outputs.append(pred)
 
@@ -683,7 +685,7 @@ class CanswimModel:
         ##    pred_start = self.get_pred_start(start_times=self.val_start, offset=w)
         ##    pred_list = self.get_pred_list(pred_start)
         ##    past_cov_list = self.get_past_cov_list(pred_start)
-        ##    # print(f'pred_list: \n{pred_list}')
+        ##    # logger.info(f'pred_list: \n{pred_list}')
         ##    pred = self.get_pred(pred_list=pred_list, past_cov_list=past_cov_list)
         ##    pred_val_outputs.append(pred)
         ##return pred_test_outputs, pred_val_outputs
@@ -765,7 +767,7 @@ class CanswimModel:
             past_covariates = self.past_cov_list
         if future_covariates is None:
             future_covariates = self.future_cov_list
-        # print("series:", target)
+        # logger.info("series:", target)
         backtest = self.torch_model.historical_forecasts(
             series=target,
             past_covariates=past_covariates,
@@ -780,9 +782,9 @@ class CanswimModel:
             num_samples=500,  # probabilistic forecasting
             predict_kwargs={"mc_dropout": True, "num_loader_workers": 4, "n_jobs": -1},
         )
-        print(f"{len(target)} target series, {len(backtest)} backtest series")
-        # print(f"target series: \n{target}")
-        # print(f"backtest series: \n{backtest}")
+        logger.info(f"{len(target)} target series, {len(backtest)} backtest series")
+        # logger.info(f"target series: \n{target}")
+        # logger.info(f"backtest series: \n{backtest}")
         # loss = quantile_loss(target, backtest, n_jobs=-1, verbose=True)
         return backtest  # , loss
 
@@ -940,7 +942,7 @@ class CanswimModel:
             num_loader_workers=4,
         )
 
-        print(
+        logger.info(
             f"Calculating loss for target_list({len(self.targets_list)}) and preds({len(preds)})"
         )
         loss = quantile_loss(self.targets_list, preds, n_jobs=-1, verbose=True)
@@ -948,7 +950,7 @@ class CanswimModel:
 
         if loss_val == np.nan:
             loss_val = float("inf")
-        print(
+        logger.info(
             f"Trial concluded with Loss: {loss_val} of model search. Trial instance: {trial}"
         )
         return loss_val
