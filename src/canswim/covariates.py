@@ -34,7 +34,10 @@ class Covariates:
 
     @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.__load_tickers), ("Date", ">=", self.__start_date)]
+        return [
+            ("Symbol", "in", self.__load_tickers),
+            ("Date", ">=", self.__start_date),
+        ]
 
     def get_price_covariates(self, stock_price_series=None, target_columns=None):
         print("preparing past covariates: price and volume")
@@ -412,7 +415,9 @@ class Covariates:
             train_date_start=train_date_start,
         )
         self.prepare_future_covariates(
-            stock_price_series=stock_price_series, min_samples=min_samples, pred_horizon=pred_horizon
+            stock_price_series=stock_price_series,
+            min_samples=min_samples,
+            pred_horizon=pred_horizon,
         )
 
     def load_earnings(self):
@@ -500,7 +505,8 @@ class Covariates:
         return new_df
 
     def prepare_est_series(
-        self, all_est_df=None,
+        self,
+        all_est_df=None,
         n_future_periods=None,
         period=None,
         stock_price_series=None,
@@ -545,8 +551,6 @@ class Covariates:
                     len(est_padded.gaps()) == 0
                 ), f"found gaps in series: \n{est_padded.gaps()}"
                 t_est_series[t] = est_padded
-
-
 
             except KeyError as e:
                 print(f"No analyst estimates available for {t}, error", e)
@@ -619,7 +623,9 @@ class Covariates:
     def __extend_series(self, n: int = -1, series: {} = None, target: {} = None):
         new_series = {}
         for t, s in series.items():
-            print(f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}")
+            print(
+                f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
+            )
             print(f"target {t} end time: {target[t].end_time()}")
             start = s.start_time()
             if s.end_time() > target[t].end_time() + BDay(n=n):
@@ -634,7 +640,6 @@ class Covariates:
                 new_series[t] = s_ext
                 print(f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}")
         return new_series
-
 
     def prepare_future_covariates(
         self, stock_price_series: {} = None, min_samples=None, pred_horizon: int = None

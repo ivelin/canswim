@@ -9,7 +9,12 @@ class Targets:
     def __init__(self) -> None:
         self.target_series = {}
 
-    def load_data(self, stock_tickers: set = None, min_samples: int = -1, start_date: pd.Timestamp = None):
+    def load_data(
+        self,
+        stock_tickers: set = None,
+        min_samples: int = -1,
+        start_date: pd.Timestamp = None,
+    ):
         self.__start_date = start_date
         self.__load_tickers = stock_tickers
         self.min_samples = min_samples
@@ -17,11 +22,16 @@ class Targets:
 
     @property
     def pyarrow_filters(self):
-        return [("Symbol", "in", self.__load_tickers), ("Date", ">=", self.__start_date)]
+        return [
+            ("Symbol", "in", self.__load_tickers),
+            ("Date", ">=", self.__start_date),
+        ]
 
     def load_stock_prices(self):
         stocks_price_file = "data/data-3rd-party/all_stocks_price_hist_1d.parquet"
-        print(f"Loading data from: {stocks_price_file}")
+        print(
+            f"Loading data from: {stocks_price_file} with filter: {self.pyarrow_filters}"
+        )
         # load into a dataframe with valid market calendar days
         # stocks_df = pd.read_csv(
         #     stocks_price_file, header=[0, 1], index_col=0, on_bad_lines="warn"
@@ -29,7 +39,7 @@ class Targets:
         stocks_df = pd.read_parquet(
             stocks_price_file,
             filters=self.pyarrow_filters,
-            dtype_backend='numpy_nullable'
+            dtype_backend="numpy_nullable",
         )
         print("filtered data loaded")
         stocks_df = stocks_df.dropna()
