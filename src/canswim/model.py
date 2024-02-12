@@ -317,15 +317,15 @@ class CanswimModel:
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
-        logger.info("n_stocks: ", self.n_stocks)
+        logger.info("n_stocks: {ns}", ns=self.n_stocks)
 
         # model training epochs
         self.n_epochs = int(os.getenv("n_epochs", 5))
-        logger.info("n_epochs: ", self.n_epochs)
+        logger.info("n_epochs: {ne}", ne=self.n_epochs)
 
         # patience for number of epochs without validation loss progress
         self.n_epochs_patience = int(os.getenv("n_epochs_patience", 5))
-        logger.info("n_epochs_patience: ", self.n_epochs_patience)
+        logger.info("n_epochs_patience: {nep}", nep=self.n_epochs_patience)
 
         # pick the earlies date after which market data is available for all covariate series
         self.train_date_start = pd.Timestamp(
@@ -333,7 +333,7 @@ class CanswimModel:
         )
 
         self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
-        logger.info("Stocks train list: ", self.stock_train_list)
+        logger.info("Stocks train list: {stl}", stl=self.stock_train_list)
 
     def prepare_forecast_data(self, start_date: pd.Timestamp = None):
         # prepare stock price time series
@@ -367,8 +367,27 @@ class CanswimModel:
         else:
             map_location = "cpu"
         try:
+            logger.info(f"Loading saved model name: {self.model_name}")
             self.torch_model = TiDEModel.load(
-                self.model_name, map_location=map_location
+                path=self.model_name, map_location=map_location
+            )
+            logger.info(
+                f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
+            )
+            return True
+        except Exception as e:
+            logger.exception("Unable to find or load a saved model. Error: \n", e)
+        return False
+
+    def load_model_weights(self):
+        if torch.cuda.is_available():
+            map_location = "cuda"
+        else:
+            map_location = "cpu"
+        try:
+            logger.info(f"Loading saved model name: {self.model_name}")
+            self.torch_model = self.torch_model.load_weights(
+                path=self.model_name, map_location=map_location
             )
             logger.info(
                 f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"

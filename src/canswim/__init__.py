@@ -20,10 +20,6 @@ import os
 import argparse
 from canswim import train, dashboard
 
-load_dotenv(override=True)
-logging_dir = os.getenv("logging_dir", "tmp")
-logger.add(f"{logging_dir}/canswim.log", rotation="24 hours", retention="30 days")
-
 # Instantiate the parser
 parser = argparse.ArgumentParser(
     prog="canswim",
@@ -34,36 +30,43 @@ parser = argparse.ArgumentParser(
 )
 
 parser.add_argument(
-    "module",
+    "task",
     type=str,
-    help="""Which %(prog)s module to run: 
-        `dashboard` for stock scans and charting of uploaded forecasts or 
-        `train` for continuous training and forecast uploads""",
-    choices=["dashboard", "train"],
+    help="""Which %(prog)s task to run: \n
+        `dashboard` for stock charting and scans of recorded forecasts.\n
+        `train` for continuous training of a new or a pre-trained model. Checkpoints saved to HF Hub daily.\n
+        `finetune` to fine tune saved model on latest market data.\n
+        `forecast` to run forecast on all stocks and upload dataset to HF Hub.
+        """,
+    choices=["dashboard", "train", "finetune", "forecast"],
 )
-
-
-# Required positional argument
-# parser.add_argument('pos_arg', type=int,
-#                    help='A required integer positional argument')
-# Optional positional argument
-# parser.add_argument('opt_pos_arg', type=int, nargs='?',
-#                    help='An optional integer positional argument')
-# Optional argument
-# parser.add_argument('--opt_arg', type=int,
-#                    help='An optional integer argument')
-# Switch
-# parser.add_argument('--switch', action='store_true',
-#                    help='A boolean switch')
 
 args = parser.parse_args()
 
-logger.info("argyment module:", module=args.module)
+load_dotenv(override=True)
+logging_dir = os.getenv("logging_dir", "tmp")
+logging_path = f"{logging_dir}/canswim.log"
+rot = "24 hours"
+ret = "30 days"
+logger.add(logging_path, rotation=rot, retention=ret)
 
-match args.module:
+logger.info(
+    "Logging to: {p} with rotation {rot} and retention {ret}",
+    p=logging_path,
+    rot=rot,
+    ret=ret,
+)
+
+logger.info("command line args: {args}", args=args)
+
+match args.task:
     case "train":
         train.main()
+    case "finetune":
+        raise NotImplementedError("finetune task not implemented yet")
+    case "forecast":
+        raise NotImplementedError("forecast task not implemented yet")
     case "dashboard":
         dashboard.main()
     case _:
-        logger.error("Unrecognized module argument {m} ", m=args.module)
+        logger.error("Unrecognized task argument {m} ", m=args.module)
