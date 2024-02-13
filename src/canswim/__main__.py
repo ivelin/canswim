@@ -18,7 +18,7 @@ from loguru import logger
 from dotenv import load_dotenv
 import os
 import argparse
-from canswim import train, dashboard
+from canswim import model_search, train, dashboard
 
 # Instantiate the parser
 parser = argparse.ArgumentParser(
@@ -34,11 +34,12 @@ parser.add_argument(
     type=str,
     help="""Which %(prog)s task to run: \n
         `dashboard` for stock charting and scans of recorded forecasts.\n
-        `train` for model training.\n
-        `finetune` to fine tune saved model.\n
+        `modelsearch` to find and save optimal hyperparameters for model training.\n
+        `train` for continuous model training.\n
+        `finetune` to fine tune pretrained model.\n
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
-    choices=["dashboard", "train", "finetune", "forecast"],
+    choices=["dashboard", "modelsearch", "train", "finetune", "forecast"],
 )
 
 args = parser.parse_args()
@@ -60,6 +61,8 @@ logger.info(
 logger.info("command line args: {args}", args=args)
 
 match args.task:
+    case "modelsearch":
+        model_search.main()
     case "train":
         train.main()
     case "finetune":

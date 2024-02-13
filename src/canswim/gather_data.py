@@ -97,24 +97,32 @@ class MarketDataGatherer:
 
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
-
         # Capture S&P500, NASDAQ100 and Russell 200 indecies and their equal weighted counter parts
         # As well as VIX volatility index, DYX US Dollar index, TNX US 12 Weeks Treasury Yield, 5 Years Treasury Yield and 10 Year Treasuries Yield
         broad_market_indicies = (
             "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
         )
+        bm_file = "data/data-3rd-party/broad_market.parquet"
+        latest_saved = None
+        try:
+            tmp_s = pd.read_parquet(bm_file)
+            latest_saved = 
+        except Exception as e:
+            logger.info(f"Could not read file: {sectors_file}")
         broad_market = yf.download(broad_market_indicies, period="max", group_by="tickers")
         logger.info("Broad market data gathered. Sample: {bm}", bm=broad_market)
-        bm_file = "data/data-3rd-party/broad_market.parquet"
         broad_market.to_parquet(bm_file)
         logger.info(f"Saved broad market data to {bm_file}")
         bm = pd.read_parquet(bm_file)
         logger.info(f"Sanity check passed for broad market data. Loaded OK from {bm_file}")
-
+        
+    def gather_sectors_data(self):
+        """Gather historic price and volume data for key market sectors"""
         sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
+        sectors_file = "data/data-3rd-party/sectors.parquet"
+        ... check if file already exists and adjust download period accordingly
         sectors = yf.download(sector_indicies, period="max")
         logger.info(f"Sector indicies data gathered. Sample: {sectors}")
-        sectors_file = "data/data-3rd-party/sectors.parquet"
         sectors.to_parquet(sectors_file)
         logger.info(f"Saved sectors data to {sectors_file}")
         tmp_s = pd.read_parquet(sectors_file)
