@@ -122,11 +122,12 @@ class Covariates:
                 assert not t_earn.index.isnull().any()
                 t_earn = self.align_earn_to_business_days(t_earn)
                 # drop rows with duplicate datetime index values
-                t_earn = (
-                    t_earn.reset_index()
-                    .drop_duplicates(subset="Date", keep="last")
-                    .set_index("Date")
-                )
+                t_earn = t_earn[~t_earn.index.duplicated(keep="last")]
+                # t_earn = (
+                #     t_earn.reset_index()
+                #     .drop_duplicates(subset="Date", keep="last")
+                #     .set_index("Date")
+                # )
                 # logger.info(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
@@ -175,12 +176,13 @@ class Covariates:
                 # logger.info(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
                 # logger.info(f"t_iown index to biz days")
-                t_iown = (
-                    t_iown.reset_index()
-                    .drop_duplicates(subset="Date", keep="last")
-                    .set_index("Date")
-                )
-                assert not t_iown.index.duplicated().any(), "date index has duplicates"
+                # t_iown = (
+                #     t_iown.reset_index()
+                #     .drop_duplicates(subset="Date", keep="last")
+                #     .set_index("Date")
+                # )
+                t_iown = t_iown[~t_iown.index.duplicated(keep="last")]
+                assert t_iown.index.is_unique, "date index has duplicates"
                 # logger.info(f"t_iown no index duplicates")
                 assert not t_iown.index.isnull().any(), "date index has missing values"
                 # logger.info(f"t_iown no index NaNs")

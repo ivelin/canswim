@@ -15,21 +15,17 @@ import typing
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from huggingface_hub import snapshot_download, upload_folder, create_repo
 from canswim.hfhub import HFHub
 import typing
 from fmpsdk.url_methods import __return_json_v3, __validate_period
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
 
-def get_ydelta(datetime_col):
-    """Return the max datetime value in a datetime formatted dataframe column"""
+def get_latest(datetime_col):
+    """Return the latest datetime value in a datetime formatted dataframe column"""
     assert len(datetime_col) > 0
     assert is_datetime(datetime_col)
-    now = pd.Timestamp.now()
     latest_saved_record = datetime_col.max()
-    ydelta = (now - latest_saved_record) // pd.Timedelta(52, "w")
-    return ydelta
-
+    return latest_saved_record
 
 class MarketDataGatherer:
 
@@ -39,6 +35,7 @@ class MarketDataGatherer:
         logger.info(f"FMP_API_KEY found: {self.FMP_API_KEY!= None}")
         self.all_stocks_file = "all_stocks.csv"
         self.price_frequency = "1d" # "1wk"
+        self.min_start_date = os.getenv("train_date_start", '1991-01-01')
 
     def gather_stock_tickers(self):
         # Prepare list of stocks for training
@@ -66,12 +63,13 @@ class MarketDataGatherer:
                 logger.info(f"{fp} not found.")
 
         logger.info(f"Total size of stock set: {len(all_stock_set)}")
-        logger.info(f"All stocks set: {all_stock_set}")
+        # logger.info(f"All stocks set: {all_stock_set}")
         # Drop invalid symbols with more than 10 ticker characters.
         # Almost all stocks have less than 5 characters.
-        self.stocks_ticker_set = [x for x in set(all_stock_set) if len(x) < 10]
+        slist = [x for x in set(all_stock_set) if len(x) < 10]
+        self.stocks_ticker_set = set(slist)
         # drop known junk symbols from the data feed
-        junk_tickers = set(
+        junk_tickers = set([
             "MSFUT",
             "GEFB",
             "METCV",
@@ -95,7 +93,8 @@ class MarketDataGatherer:
             "RTYH4",
             "\xa0",
             "CRDA",
-        )
+            'GBP', 'ESMT', 'MRTX', 'RAIN', 'CAD', 'EUR',
+        ])
         self.stocks_ticker_set = self.stocks_ticker_set-junk_tickers
         stocks_df = pd.DataFrame()
         stocks_df["Symbol"] = list(self.stocks_ticker_set)
@@ -106,6 +105,38 @@ class MarketDataGatherer:
         stocks_df.to_csv(stocks_file)
         logger.info(f"Saved stock set to {stocks_file}")
 
+    def _gather_yfdata(self, data_file: str = None, tickers: str = None):
+        start_date = self.min_start_date
+        old_df = None
+        try:
+            old_df = pd.read_parquet(data_file)
+            logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
+            start_date = get_latest(old_df.index) - pd.Timedelta(1, 'd')
+            logger.info(f"Columns: \n{old_df.columns}")
+            logger.info(f"Latest saved record is after {start_date}")
+        except Exception as e:
+            logger.exception(f"Could not load data from file: {data_file}. Error: {e}")
+        new_df = yf.download(tickers, start=start_date, group_by="tickers")
+        new_df = new_df.dropna(how="all")
+        logger.info("New data gathered. Sample: \n{bm}", bm=new_df)
+        logger.info(f"Columns: \n{new_df.columns}")
+        if old_df is not None:
+            assert sorted(old_df.columns) == sorted(new_df.columns)
+            merged_df = pd.concat([old_df, new_df], axis=0)
+            # logger.info(f"bm_df concat\n {merged_df}")
+            assert sorted(merged_df.columns) == sorted(old_df.columns)
+            assert len(merged_df) == len(old_df) + len(new_df)
+            merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
+        else:
+            merged_df = new_df
+        logger.info("Updated data ready. Sample: \n{bm}", bm=merged_df)
+        assert merged_df.index.is_unique
+        merged_df.to_parquet(data_file)
+        logger.info(f"Saved data to {data_file}")
+        _bm = pd.read_parquet(data_file)
+        assert sorted(_bm.columns) == sorted(merged_df.columns)
+        assert len(_bm) == len(merged_df)
+        logger.info(f"Sanity check passed for saved data. Loaded OK from {data_file}")
 
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
@@ -115,31 +146,45 @@ class MarketDataGatherer:
             "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
         )
         data_file = "data/data-3rd-party/broad_market.parquet"
-        period = "max"
+        self._gather_yfdata(data_file=data_file, tickers=broad_market_indicies)
+                
+    def gather_sectors_data(self):
+        """Gather historic price and volume data for key market sectors"""
+        sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
+        data_file = "data/data-3rd-party/sectors.parquet"
+        self._gather_yfdata(data_file=data_file, tickers=sector_indicies)
+
+    def gather_stock_price_data(self):
+        data_file = f"data/data-3rd-party/all_stocks_price_hist_{self.price_frequency}.parquet"
+        start_date = self.min_start_date
         old_df = None
         try:
             old_df = pd.read_parquet(data_file)
-            ydelta = 1 + get_ydelta(old_df.index)
-            logger.info("Loaded saved broad market data. Sample: \n{bm}", bm=old_df)
+            logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
+            start_date = get_latest(old_df.index.get_level_values("Date")) - pd.Timedelta(1, 'd')
             logger.info(f"Columns: \n{old_df.columns}")
-            logger.info(f"Latest saved record is less than {ydelta} year(s) ago")
-            period = f"{ydelta}y"
+            logger.info(f"Latest saved record is after {start_date}")
         except Exception as e:
-            logger.info(f"Could not load data from file: {data_file}. Error: {e}")
-        new_df = yf.download(broad_market_indicies, period=period, group_by="tickers")
-        logger.info("New broad market data gathered. Sample: \n{bm}", bm=new_df)
+            logger.exception(f"Could not load data from file: {data_file}. Error: {e}")
+        new_df = yf.download(self.stocks_ticker_set, start=start_date, group_by="tickers")
+        new_df = new_df.dropna(how="all")
+        new_df = new_df.stack(level=0)
+        new_df.index.names = ['Date', 'Symbol']
+        new_df.index = new_df.index.swaplevel(0)
+        logger.info(f"Stock price data index: {new_df.index.names}")
+        logger.info("New data gathered. Sample: \n{df}", df=new_df)
         logger.info(f"Columns: \n{new_df.columns}")
-        assert sorted(old_df.columns) == sorted(new_df.columns)
-        merged_df = pd.concat([old_df, new_df], axis=0)
-        logger.info(f"bm_df concat\n {merged_df}")
-        assert sorted(merged_df.columns) == sorted(old_df.columns)
-        assert len(merged_df) == len(old_df) + len(new_df)
-        merged_df = (
-            merged_df.reset_index()
-            .drop_duplicates(subset=[('Date','')], keep="last")
-            .set_index("Date")
-        )
-        logger.info("Updated broad market data ready. Sample: \n{bm}", bm=merged_df)
+        if old_df is not None:
+            assert sorted(old_df.columns) == sorted(new_df.columns)
+            merged_df = pd.concat([old_df, new_df], axis=0, join='inner')
+            # logger.info(f"merged_df concat\n {merged_df}")
+            assert sorted(merged_df.columns) == sorted(old_df.columns)
+            assert len(merged_df) == len(old_df) + len(new_df)
+            merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
+        else:
+            merged_df = new_df
+        logger.info("Updated data ready. Sample: \n{df}", df=merged_df) 
+        # df=merged_df.loc[merged_df.index.get_level_values("Symbol") == 'TEAM'])
         assert merged_df.index.is_unique
         merged_df.to_parquet(data_file)
         logger.info(f"Saved broad market data to {data_file}")
@@ -147,72 +192,13 @@ class MarketDataGatherer:
         assert sorted(_bm.columns) == sorted(merged_df.columns)
         assert len(_bm) == len(merged_df)
         logger.info(f"Sanity check passed for broad market data. Loaded OK from {data_file}")
-                
-    def gather_sectors_data(self):
-        """Gather historic price and volume data for key market sectors"""
-        sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
-        data_file = "data/data-3rd-party/sectors.parquet"
-        period = "max"
-        old_df = None
-        try:
-            old_df = pd.read_parquet(data_file)
-            ydelta = 1 + get_ydelta(old_df.index)
-            logger.info("Loaded saved sectors data. Sample: \n{df}", df=old_df)
-            logger.info(f"Columns: \n{old_df.columns}")
-            logger.info(f"Latest saved record is less than {ydelta} year(s) ago")
-            period = f"{ydelta}y"
-        except Exception as e:
-            logger.info(f"Could not load data from file: {data_file}. Error: {e}")
-        new_df = yf.download(sector_indicies, period=period, group_by="tickers")
-        logger.info(f"Sector indicies data gathered. Sample: \n{new_df}")
-        logger.info(f"Columns: \n{new_df.columns}")
-        assert sorted(old_df.columns) == sorted(new_df.columns)
-        merged_df = pd.concat([old_df, new_df], axis=0)
-        logger.info(f"merged_df concat\n {merged_df}")
-        assert sorted(merged_df.columns) == sorted(old_df.columns)
-        assert len(merged_df) == len(old_df) + len(new_df)
-        merged_df = (
-            merged_df.reset_index()
-            .drop_duplicates(subset=[('Date','')], keep="last")
-            .set_index("Date")
-        )
-        logger.info(f"Updated sectors data ready. Sample: \n{merged_df}")
-        assert merged_df.index.is_unique
-        merged_df.to_parquet(data_file)
-        logger.info(f"Saved sectors data to {data_file}")
-        _df = pd.read_parquet(data_file)
-        assert sorted(_df.columns) == sorted(merged_df.columns)
-        assert len(_df) == len(merged_df)
-        logger.info(f"Sanity check passed for sectors data. Loaded OK from {data_file}")
-
-    def gather_stock_price_data(self):
-        stock_price_data = yf.download(
-            self.all_stock_set, period="max", group_by="tickers", interval=self.price_frequency
-        )
-        logger.info(f"Stock price data downloaded. Sample:\n {stock_price_data}")
-        logger.info(f"stock_price_data.columns.levels: {stock_price_data.columns.levels}")
-        logger.info(f"len(stock_price_data): {len(stock_price_data)}")
-        # drop rows where all values are NaN
-        stock_price_data = stock_price_data.dropna(how="all")
-        len(stock_price_data)
-        logger.info(f"len(stock_price_data) after dropna: {len(stock_price_data)}")
-        price_hist_file = f"data/data-3rd-party/all_stocks_price_hist_{self.price_frequency}.parquet"
-        stock_price_data.to_parquet(price_hist_file)
-        logger.info(f"Stock price data saved to {price_hist_file}")
-        stock_price_data_loaded = pd.read_parquet(
-            price_hist_file
-        )  # , filters=[("Symbol", "in", ['AEP', 'AAPL'])])
-        logger.info(f"Sanity check passed for price history data. Loaded OK from {price_hist_file}")
-        stock_price_data_loaded.dropna()
-        logger.info(f"list(stock_price_data_loaded.index.levels[0]): {list(stock_price_data_loaded.index.levels[0])}")
-
 
     def gather_earnings_data(self):
         ## Prepare earnings and sales data
         earnings_all_df = pd.DataFrame()
         for ticker in self.stocks_ticker_set:  # ['AAON']: #
             earnings = fmpsdk.historical_earning_calendar(
-                apikey=FMP_API_KEY, symbol=ticker, limit=-1
+                apikey=self.FMP_API_KEY, symbol=ticker, limit=-1
             )
             if earnings is not None and len(earnings) > 0:
                 edf = pd.DataFrame(earnings)
@@ -502,38 +488,17 @@ class MarketDataGatherer:
         estimates_all_df
 
 
-    def upload_data_to_hfhub(self):
-        ## Upload all gathered data from 3rd party sources to hf hub
-        # prefix for HF Hub dataset repo
-        repo_id = "ivelin/canswim"
-        private = True
-
-        load_dotenv(override=True)
-
-        HF_TOKEN = os.getenv("HF_TOKEN")
-
-        logger.info(f"HF_TOKEN={HF_TOKEN!= None}")
-
-        # Create repo if not existing yet
-        repo_info = create_repo(
-            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True, token=HF_TOKEN
-        )
-        logger.info(f"repo_info: ", repo_info)
-        data_path = Path("data")
-        upload_folder(
-            repo_id=repo_id,
-            # path_in_repo="data-3rd-party",
-            repo_type="dataset",
-            folder_path=data_path,
-            token=HF_TOKEN,
-        )
-
-
 # main function
 def main():
+    hfhub = HFHub()
+    hfhub.download_data()
     g = MarketDataGatherer()
     g.gather_broad_market_data()
     g.gather_sectors_data()
+    g.gather_stock_tickers()
+    g.gather_stock_price_data()
+    # ...
+    # hfhub.upload_data()
 
 if __name__ == "__main__":
     main()
