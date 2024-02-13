@@ -269,13 +269,19 @@ class CanswimModel:
         logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
         if len(self.target_train_list) > 0:
             logger.info(
-                f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
+                f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}"
             )
             logger.info(
                 f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
             )
             logger.info(
-                f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
+                f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}"
+            )
+            logger.info(
+                f"Sample past covariates columns: {len(self.past_cov_list[0].columns)}"
+            )
+            logger.info(
+                f"Sample future covariates columns: {len(self.future_cov_list[0].columns)}"
             )
             # update targets series dict
         updated_target_series = {}
@@ -983,7 +989,7 @@ class CanswimModel:
     # for convenience, print some optimization trials information
 
     def find_model(self, n_trials: int = 100, study_name: str = "canswim-study"):
-        study = optuna.create_study(direction="minimize", study_name="canswim-study", storage="sqlite:///data/optuna_study.db")
+        study = optuna.create_study(direction="minimize", study_name=study_name, storage="sqlite:///data/optuna_study.db")
         study.optimize(
             self._optuna_objective,
             n_trials=n_trials,
