@@ -17,14 +17,16 @@ class HFHub:
     """
 
     def __init__(self, api_key: Optional[str] = None):
+        load_dotenv(override=True)
         if api_key is None:
             # load from .env file or OS vars if available
-            load_dotenv(override=True)
             api_key = os.getenv("HF_TOKEN")
             assert (
                 api_key is not None
             ), "Could not find HF_TOKEN in OS environment. Cannot interact with HF Hub."
         self.HF_TOKEN = api_key
+        self.data_dir = os.getenv("data_dir", "data")
+        self.repo_id = os.getenv("repo_id")
 
     def upload_model(
         self,
@@ -116,15 +118,42 @@ class HFHub:
             ts = TimeSeries.from_dataframe(df)
             return ts
 
-    def download_data(self, repo_id: str = None):
-        data_dir = "data"
+    def download_data(self, repo_id: str = None, local_dir: str = None):
+        if local_dir is not None:
+            data_dir = local_dir
+        else:
+            data_dir = self.data_dir
+        if repo_id is None:
+            repo_id = self.repo_id
         snapshot_download(
             repo_id=repo_id,
             repo_type="dataset",
-            local_dir="data",
+            local_dir=data_dir,
             token=self.HF_TOKEN,
         )
         logger.info(
             f"Downloaded hf dataset files from {repo_id} to data dir:\n",
             os.listdir(data_dir),
+        )
+
+    def upload_data(self, repo_id: str = None, private: bool = True, local_dir: str = None):
+        if local_dir is not None:
+            data_dir = local_dir
+        else:
+            data_dir = self.data_dir
+        if repo_id is None:
+            repo_id = self.repo_id
+        ## Upload all gathered data from 3rd party sources to hf hub
+        # prefix for HF Hub dataset repo
+        # Create repo if not existing yet
+        repo_info = create_repo(
+            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True, token=self.HF_TOKEN
+        )
+        logger.info(f"repo_info: ", repo_info)
+        upload_folder(
+            repo_id=repo_id,
+            # path_in_repo="data-3rd-party",
+            repo_type="dataset",
+            folder_path=data_dir,
+            token=self.HF_TOKEN,
         )
