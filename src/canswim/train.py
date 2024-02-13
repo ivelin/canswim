@@ -96,7 +96,7 @@ def main():
 
     wall_time = pd.Timestamp.now
     # set to yesterday
-    yesterday = wall_time().floor(freq="D") - Day(n=1)
+    yesterday = wall_time().floor(freq="D") # - Day(n=1)
     # set to previous Saturday
     previous_weekend = wall_time().floor(freq="D") - Day(n=wall_time().day_of_week + 2)
 
@@ -104,12 +104,17 @@ def main():
     i = 0
     while i < n_outer_train_loop:
         logger.info(f"Outer train loop: {i}")
-        # load a new data sample from local storage
-        trainer.canswim_model.load_data()
-        # prepare timeseries for training
-        trainer.canswim_model.prepare_data()
-        # train model
-        trainer.canswim_model.train()
+        # load saved model
+        trainer.canswim_model.load_model()
+        try:
+            # load a new data sample from local storage
+            trainer.canswim_model.load_data()
+            # prepare timeseries for training
+            trainer.canswim_model.prepare_data()
+            # train model
+            trainer.canswim_model.train()
+        except Exception as e:
+            logger.exception("Skipping train loop due to ERROR.")
         # Daily routine
         if wall_time() > yesterday + Day(n=1):
             try:

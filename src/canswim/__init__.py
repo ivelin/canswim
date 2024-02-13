@@ -34,9 +34,9 @@ parser.add_argument(
     type=str,
     help="""Which %(prog)s task to run: \n
         `dashboard` for stock charting and scans of recorded forecasts.\n
-        `train` for continuous training of a new or a pre-trained model. Checkpoints saved to HF Hub daily.\n
-        `finetune` to fine tune saved model on latest market data.\n
-        `forecast` to run forecast on all stocks and upload dataset to HF Hub.
+        `train` for model training.\n
+        `finetune` to fine tune saved model.\n
+        `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
     choices=["dashboard", "train", "finetune", "forecast"],
 )
