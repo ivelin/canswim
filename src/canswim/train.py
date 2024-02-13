@@ -21,6 +21,7 @@ class CanswimTrainer:
         self.canswim_model.plot_seasonality()
 
     def build_new_model(self):
+        """Build a new model using known optimal hyperparameters"""
         self.canswim_model.build(
             input_chunk_length=252,
             output_chunk_length=42,
@@ -45,7 +46,7 @@ class CanswimTrainer:
                 target=self.canswim_model.targets_list[i],
                 start=start_list[i],
                 past_covariates=self.canswim_model.past_cov_list[i],
-                future_covariates=self.canswim_model.future_cov_list[i],
+                    future_covariates=self.canswim_model.future_cov_list[i],
                 forecast_horizon=self.canswim_model.pred_horizon,
             )
             # logger.info(f"target series: \n{target}")
@@ -76,12 +77,15 @@ def main():
 
     n_outer_train_loop = 1
     hfhub = HFHub()
-    repo_id = "ivelin/canswim"
+    default_repo_id = "ivelin/canswim"
+    repo_id = default_repo_id
 
     def get_env():
         load_dotenv(override=True)
         nonlocal n_outer_train_loop
         n_outer_train_loop = int(os.getenv("n_outer_train_loop", 1))
+        nonlocal repo_id
+        repo_id = os.getenv("repo_id", default_repo_id)
 
     get_env()
 
@@ -92,7 +96,7 @@ def main():
     # build_new_model()
 
     # download market data from hf hub if it hasn't been downloaded already
-    # canswim_model.download_data()
+    trainer.canswim_model.download_data(repo_id=repo_id)
 
     wall_time = pd.Timestamp.now
     # set to yesterday

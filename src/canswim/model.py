@@ -594,6 +594,10 @@ class CanswimModel:
         assert repo_id is not None
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
 
+    def download_data(self, repo_id=None):
+        """Download saved data from HF Hub"""
+        self.hfhub.download_data(repo_id=repo_id)
+
     def load_data(
         self, stock_tickers: List[str] = None, start_date: pd.Timestamp = None
     ):
@@ -850,8 +854,8 @@ class CanswimModel:
         # try historical periods ranging between 1 and 2 years with a step of 1 month (21 busness days)
         input_chunk_length = trial.suggest_int(
             "input_chunk_length",
-            low=252,
-            high=self.train_history,
+            low=42,
+            high=252,
             step=42,
             # low=252,
             # high=self.train_history,
@@ -867,10 +871,10 @@ class CanswimModel:
             "hidden_size", low=512, high=2048, step=512
         )  # low=256, high=1024, step=256)
         num_encoder_layers = trial.suggest_int(
-            "num_encoder_layers", low=3, high=3
+            "num_encoder_layers", low=2, high=3
         )  # low=1, high=3)
         num_decoder_layers = trial.suggest_int(
-            "num_decoder_layers", low=3, high=3
+            "num_decoder_layers", low=2, high=3
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
             "decoder_output_dim", low=8, high=32, step=8  # low=4, high=32, step=4
@@ -978,11 +982,11 @@ class CanswimModel:
 
     # for convenience, print some optimization trials information
 
-    def find_model(self):
-        study = optuna.create_study(direction="minimize")
+    def find_model(self, n_trials: int = 100, study_name: str = "canswim-study"):
+        study = optuna.create_study(direction="minimize", study_name="canswim-study", storage="sqlite:///data/optuna_study.db")
         study.optimize(
             self._optuna_objective,
-            n_trials=100,
+            n_trials=n_trials,
             callbacks=[optuna_print_callback],
             gc_after_trial=True,
             show_progress_bar=True,
