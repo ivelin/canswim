@@ -267,20 +267,22 @@ class CanswimModel:
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
         logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
-        logger.info(
-            f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
-        )
-        logger.info(
-            f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
-        )
-        logger.info(
-            f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
-        )
-        # update targets series dict
+        if len(self.target_train_list) > 0:
+            logger.info(
+                f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
+            )
+            logger.info(
+                f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
+            )
+            logger.info(
+                f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
+            )
+            # update targets series dict
         updated_target_series = {}
         for t in self.train_series.keys():
             updated_target_series[t] = self.targets.target_series[t]
         self.targets.target_series = updated_target_series
+
 
     def __validate_train_data(self):
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
