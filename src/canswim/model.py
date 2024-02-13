@@ -267,20 +267,28 @@ class CanswimModel:
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
         logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
-        logger.info(
-            f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}, "
-        )
-        logger.info(
-            f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
-        )
-        logger.info(
-            f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}, "
-        )
-        # update targets series dict
+        if len(self.target_train_list) > 0:
+            logger.info(
+                f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}"
+            )
+            logger.info(
+                f"Sample val series start time: {self.target_val_list[0].start_time()}, end time: {self.target_val_list[0].end_time()}"
+            )
+            logger.info(
+                f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}"
+            )
+            logger.info(
+                f"Sample past covariates columns: {len(self.past_cov_list[0].columns)}"
+            )
+            logger.info(
+                f"Sample future covariates columns: {len(self.future_cov_list[0].columns)}"
+            )
+            # update targets series dict
         updated_target_series = {}
         for t in self.train_series.keys():
             updated_target_series[t] = self.targets.target_series[t]
         self.targets.target_series = updated_target_series
+
 
     def __validate_train_data(self):
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
@@ -317,15 +325,15 @@ class CanswimModel:
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
-        logger.info("n_stocks: ", self.n_stocks)
+        logger.info("n_stocks: {ns}", ns=self.n_stocks)
 
         # model training epochs
         self.n_epochs = int(os.getenv("n_epochs", 5))
-        logger.info("n_epochs: ", self.n_epochs)
+        logger.info("n_epochs: {ne}", ne=self.n_epochs)
 
         # patience for number of epochs without validation loss progress
         self.n_epochs_patience = int(os.getenv("n_epochs_patience", 5))
-        logger.info("n_epochs_patience: ", self.n_epochs_patience)
+        logger.info("n_epochs_patience: {nep}", nep=self.n_epochs_patience)
 
         # pick the earlies date after which market data is available for all covariate series
         self.train_date_start = pd.Timestamp(
@@ -333,7 +341,7 @@ class CanswimModel:
         )
 
         self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
-        logger.info("Stocks train list: ", self.stock_train_list)
+        logger.info("Stocks train list: {stl}", stl=self.stock_train_list)
 
     def prepare_forecast_data(self, start_date: pd.Timestamp = None):
         # prepare stock price time series
@@ -367,8 +375,27 @@ class CanswimModel:
         else:
             map_location = "cpu"
         try:
+            logger.info(f"Loading saved model name: {self.model_name}")
             self.torch_model = TiDEModel.load(
-                self.model_name, map_location=map_location
+                path=self.model_name, map_location=map_location
+            )
+            logger.info(
+                f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
+            )
+            return True
+        except Exception as e:
+            logger.exception("Unable to find or load a saved model. Error: \n", e)
+        return False
+
+    def load_model_weights(self):
+        if torch.cuda.is_available():
+            map_location = "cuda"
+        else:
+            map_location = "cpu"
+        try:
+            logger.info(f"Loading saved model name: {self.model_name}")
+            self.torch_model = self.torch_model.load_weights(
+                path=self.model_name, map_location=map_location
             )
             logger.info(
                 f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
@@ -572,6 +599,10 @@ class CanswimModel:
     def upload_model(self, repo_id: str = None):
         assert repo_id is not None
         self.hfhub.upload_model(model=self.torch_model, repo_id=repo_id)
+
+    def download_data(self, repo_id=None):
+        """Download saved data from HF Hub"""
+        self.hfhub.download_data(repo_id=repo_id)
 
     def load_data(
         self, stock_tickers: List[str] = None, start_date: pd.Timestamp = None
@@ -829,8 +860,8 @@ class CanswimModel:
         # try historical periods ranging between 1 and 2 years with a step of 1 month (21 busness days)
         input_chunk_length = trial.suggest_int(
             "input_chunk_length",
-            low=252,
-            high=self.train_history,
+            low=42,
+            high=252,
             step=42,
             # low=252,
             # high=self.train_history,
@@ -846,10 +877,10 @@ class CanswimModel:
             "hidden_size", low=512, high=2048, step=512
         )  # low=256, high=1024, step=256)
         num_encoder_layers = trial.suggest_int(
-            "num_encoder_layers", low=3, high=3
+            "num_encoder_layers", low=2, high=3
         )  # low=1, high=3)
         num_decoder_layers = trial.suggest_int(
-            "num_decoder_layers", low=3, high=3
+            "num_decoder_layers", low=2, high=3
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
             "decoder_output_dim", low=8, high=32, step=8  # low=4, high=32, step=4
@@ -957,11 +988,11 @@ class CanswimModel:
 
     # for convenience, print some optimization trials information
 
-    def find_model(self):
-        study = optuna.create_study(direction="minimize")
+    def find_model(self, n_trials: int = 100, study_name: str = "canswim-study"):
+        study = optuna.create_study(direction="minimize", study_name=study_name, storage="sqlite:///data/optuna_study.db")
         study.optimize(
             self._optuna_objective,
-            n_trials=100,
+            n_trials=n_trials,
             callbacks=[optuna_print_callback],
             gc_after_trial=True,
             show_progress_bar=True,

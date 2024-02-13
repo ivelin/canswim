@@ -121,11 +121,13 @@ class Covariates:
                 assert not t_earn.index.duplicated().any()
                 assert not t_earn.index.isnull().any()
                 t_earn = self.align_earn_to_business_days(t_earn)
-                t_earn = (
-                    t_earn.reset_index()
-                    .drop_duplicates(subset="Date", keep="last")
-                    .set_index("Date")
-                )
+                # drop rows with duplicate datetime index values
+                t_earn = t_earn[~t_earn.index.duplicated(keep="last")]
+                # t_earn = (
+                #     t_earn.reset_index()
+                #     .drop_duplicates(subset="Date", keep="last")
+                #     .set_index("Date")
+                # )
                 # logger.info(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
@@ -174,12 +176,13 @@ class Covariates:
                 # logger.info(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
                 # logger.info(f"t_iown index to biz days")
-                t_iown = (
-                    t_iown.reset_index()
-                    .drop_duplicates(subset="Date", keep="last")
-                    .set_index("Date")
-                )
-                assert not t_iown.index.duplicated().any(), "date index has duplicates"
+                # t_iown = (
+                #     t_iown.reset_index()
+                #     .drop_duplicates(subset="Date", keep="last")
+                #     .set_index("Date")
+                # )
+                t_iown = t_iown[~t_iown.index.duplicated(keep="last")]
+                assert t_iown.index.is_unique, "date index has duplicates"
                 # logger.info(f"t_iown no index duplicates")
                 assert not t_iown.index.isnull().any(), "date index has missing values"
                 # logger.info(f"t_iown no index NaNs")
@@ -328,35 +331,42 @@ class Covariates:
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
-
         # CBOE VIX volatility, DYX USD and TNT 10Y Treasury indices do not have meaningful values for Volume
         broad_market_df = broad_market_df.drop(
             columns=["^VIX_Volume", "DX-Y.NYB_Volume", "^TNX_Volume"]
         )
-
         # fix datetime index type issue
         # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
         broad_market_df.index = pd.to_datetime(broad_market_df.index)
-
         broad_market_series = TimeSeries.from_dataframe(broad_market_df, freq="B")
         broad_market_series = broad_market_series.slice(
             train_date_start, broad_market_series.end_time()
         )
-        broad_market_series
-
         filler = MissingValuesFiller(n_jobs=-1)
-
         series_filled = filler.transform(broad_market_series)
         assert len(series_filled.gaps()) == 0
         broad_market_series = series_filled
         return broad_market_series
 
-    ## def prepare_holidays(ticker_series=None):
-    ##    future_covariates = {
-    ##        t: ticker_series[t].univariate_component("holidays")
-    ##        for t in ticker_series.keys()
-    ##    }
-    ##    return future_covariates
+    def prepare_sectors_series(self, train_date_start=None):
+        logger.info("preparing past covariates: market sectors")
+        sectors_df = self.sectors_df.copy()
+        # flatten column hierarchy so Darts can use as covariate series
+        sectors_df.columns = [f"{i}_{j}" for i, j in sectors_df.columns]
+        # fix datetime index type issue
+        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
+        sectors_df.index = pd.to_datetime(sectors_df.index)
+        sectors_series = TimeSeries.from_dataframe(sectors_df, freq="B")
+        sectors_series = sectors_series.slice(
+            train_date_start, sectors_series.end_time()
+        )
+        filler = MissingValuesFiller(n_jobs=-1)
+        series_filled = filler.transform(sectors_series)
+        assert len(series_filled.gaps()) == 0
+        sectors_series = series_filled
+        logger.info(f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}")
+        return sectors_series
+
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date
@@ -369,6 +379,7 @@ class Covariates:
         self.load_earnings()
         self.load_key_metrics()
         self.load_broad_market()
+        self.load_sectors()
         self.load_institutional_symbol_ownership()
 
     def load_institutional_symbol_ownership(self):
@@ -391,6 +402,10 @@ class Covariates:
         file = "data/data-3rd-party/broad_market.parquet"
         # self.broad_market_df = pd.read_csv(csv_file, header=[0, 1], index_col=0)
         self.broad_market_df = pd.read_parquet(file)
+
+    def load_sectors(self):
+        file = "data/data-3rd-party/sectors.parquet"
+        self.sectors_df = pd.read_parquet(file)
 
     def load_future_covariates(self):
         self.load_estimates()
@@ -608,6 +623,13 @@ class Covariates:
         broad_market_dict = {t: broad_market_series for t in stock_price_series.keys()}
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
+        )
+        sectors_series = self.prepare_sectors_series(
+            train_date_start=train_date_start
+        )
+        sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
+        past_covariates_tmp = self.stack_covariates(
+            old_covs=past_covariates, new_covs=sectors_dict
         )
         past_covariates = past_covariates_tmp
         self.past_covariates = past_covariates
