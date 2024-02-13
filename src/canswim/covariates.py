@@ -121,6 +121,7 @@ class Covariates:
                 assert not t_earn.index.duplicated().any()
                 assert not t_earn.index.isnull().any()
                 t_earn = self.align_earn_to_business_days(t_earn)
+                # drop rows with duplicate datetime index values
                 t_earn = (
                     t_earn.reset_index()
                     .drop_duplicates(subset="Date", keep="last")

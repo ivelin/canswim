@@ -19,6 +19,17 @@ from huggingface_hub import snapshot_download, upload_folder, create_repo
 from canswim.hfhub import HFHub
 import typing
 from fmpsdk.url_methods import __return_json_v3, __validate_period
+from pandas.api.types import is_datetime64_any_dtype as is_datetime
+
+def get_ydelta(datetime_col):
+    """Return the max datetime value in a datetime formatted dataframe column"""
+    assert len(datetime_col) > 0
+    assert is_datetime(datetime_col)
+    now = pd.Timestamp.now()
+    latest_saved_record = datetime_col.max()
+    ydelta = (now - latest_saved_record) // pd.Timedelta(52, "w")
+    return ydelta
+
 
 class MarketDataGatherer:
 
@@ -95,6 +106,7 @@ class MarketDataGatherer:
         stocks_df.to_csv(stocks_file)
         logger.info(f"Saved stock set to {stocks_file}")
 
+
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
         # Capture S&P500, NASDAQ100 and Russell 200 indecies and their equal weighted counter parts
@@ -102,31 +114,76 @@ class MarketDataGatherer:
         broad_market_indicies = (
             "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
         )
-        bm_file = "data/data-3rd-party/broad_market.parquet"
-        latest_saved = None
+        data_file = "data/data-3rd-party/broad_market.parquet"
+        period = "max"
+        old_df = None
         try:
-            tmp_s = pd.read_parquet(bm_file)
-            latest_saved = 
+            old_df = pd.read_parquet(data_file)
+            ydelta = 1 + get_ydelta(old_df.index)
+            logger.info("Loaded saved broad market data. Sample: \n{bm}", bm=old_df)
+            logger.info(f"Columns: \n{old_df.columns}")
+            logger.info(f"Latest saved record is less than {ydelta} year(s) ago")
+            period = f"{ydelta}y"
         except Exception as e:
-            logger.info(f"Could not read file: {sectors_file}")
-        broad_market = yf.download(broad_market_indicies, period="max", group_by="tickers")
-        logger.info("Broad market data gathered. Sample: {bm}", bm=broad_market)
-        broad_market.to_parquet(bm_file)
-        logger.info(f"Saved broad market data to {bm_file}")
-        bm = pd.read_parquet(bm_file)
-        logger.info(f"Sanity check passed for broad market data. Loaded OK from {bm_file}")
-        
+            logger.info(f"Could not load data from file: {data_file}. Error: {e}")
+        new_df = yf.download(broad_market_indicies, period=period, group_by="tickers")
+        logger.info("New broad market data gathered. Sample: \n{bm}", bm=new_df)
+        logger.info(f"Columns: \n{new_df.columns}")
+        assert sorted(old_df.columns) == sorted(new_df.columns)
+        merged_df = pd.concat([old_df, new_df], axis=0)
+        logger.info(f"bm_df concat\n {merged_df}")
+        assert sorted(merged_df.columns) == sorted(old_df.columns)
+        assert len(merged_df) == len(old_df) + len(new_df)
+        merged_df = (
+            merged_df.reset_index()
+            .drop_duplicates(subset=[('Date','')], keep="last")
+            .set_index("Date")
+        )
+        logger.info("Updated broad market data ready. Sample: \n{bm}", bm=merged_df)
+        assert merged_df.index.is_unique
+        merged_df.to_parquet(data_file)
+        logger.info(f"Saved broad market data to {data_file}")
+        _bm = pd.read_parquet(data_file)
+        assert sorted(_bm.columns) == sorted(merged_df.columns)
+        assert len(_bm) == len(merged_df)
+        logger.info(f"Sanity check passed for broad market data. Loaded OK from {data_file}")
+                
     def gather_sectors_data(self):
         """Gather historic price and volume data for key market sectors"""
         sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
-        sectors_file = "data/data-3rd-party/sectors.parquet"
-        ... check if file already exists and adjust download period accordingly
-        sectors = yf.download(sector_indicies, period="max")
-        logger.info(f"Sector indicies data gathered. Sample: {sectors}")
-        sectors.to_parquet(sectors_file)
-        logger.info(f"Saved sectors data to {sectors_file}")
-        tmp_s = pd.read_parquet(sectors_file)
-        logger.info(f"Sanity check passed for sector data. Loaded OK from {sectors_file}")
+        data_file = "data/data-3rd-party/sectors.parquet"
+        period = "max"
+        old_df = None
+        try:
+            old_df = pd.read_parquet(data_file)
+            ydelta = 1 + get_ydelta(old_df.index)
+            logger.info("Loaded saved sectors data. Sample: \n{df}", df=old_df)
+            logger.info(f"Columns: \n{old_df.columns}")
+            logger.info(f"Latest saved record is less than {ydelta} year(s) ago")
+            period = f"{ydelta}y"
+        except Exception as e:
+            logger.info(f"Could not load data from file: {data_file}. Error: {e}")
+        new_df = yf.download(sector_indicies, period=period, group_by="tickers")
+        logger.info(f"Sector indicies data gathered. Sample: \n{new_df}")
+        logger.info(f"Columns: \n{new_df.columns}")
+        assert sorted(old_df.columns) == sorted(new_df.columns)
+        merged_df = pd.concat([old_df, new_df], axis=0)
+        logger.info(f"merged_df concat\n {merged_df}")
+        assert sorted(merged_df.columns) == sorted(old_df.columns)
+        assert len(merged_df) == len(old_df) + len(new_df)
+        merged_df = (
+            merged_df.reset_index()
+            .drop_duplicates(subset=[('Date','')], keep="last")
+            .set_index("Date")
+        )
+        logger.info(f"Updated sectors data ready. Sample: \n{merged_df}")
+        assert merged_df.index.is_unique
+        merged_df.to_parquet(data_file)
+        logger.info(f"Saved sectors data to {data_file}")
+        _df = pd.read_parquet(data_file)
+        assert sorted(_df.columns) == sorted(merged_df.columns)
+        assert len(_df) == len(merged_df)
+        logger.info(f"Sanity check passed for sectors data. Loaded OK from {data_file}")
 
     def gather_stock_price_data(self):
         stock_price_data = yf.download(
@@ -470,3 +527,13 @@ class MarketDataGatherer:
             folder_path=data_path,
             token=HF_TOKEN,
         )
+
+
+# main function
+def main():
+    g = MarketDataGatherer()
+    g.gather_broad_market_data()
+    g.gather_sectors_data()
+
+if __name__ == "__main__":
+    main()
