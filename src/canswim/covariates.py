@@ -364,9 +364,10 @@ class Covariates:
         series_filled = filler.transform(sectors_series)
         assert len(series_filled.gaps()) == 0
         sectors_series = series_filled
-        logger.info(f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}")
+        logger.info(
+            f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
+        )
         return sectors_series
-
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date
@@ -529,7 +530,7 @@ class Covariates:
     ):
         """
         Prepare future covariate series with analyst estimates for a given period (annual or quarter).
-        :param all_est_df: estimates dataframe indexed by ['symbol', 'date']
+        :param all_est_df: estimates dataframe indexed by ['Symbol', 'Date']
         :param n_future_periods: number of periods of future estimates to make visible at each timeseries date
         :param period: quarter or annual
         :return: estimate series expanded with forward periods at each series date indexed row
@@ -624,9 +625,7 @@ class Covariates:
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
-        sectors_series = self.prepare_sectors_series(
-            train_date_start=train_date_start
-        )
+        sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
         sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=sectors_dict
