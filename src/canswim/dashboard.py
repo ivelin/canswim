@@ -9,6 +9,7 @@ from canswim.hfhub import HFHub
 from matplotlib import pyplot
 import random
 from pandas.tseries.offsets import BDay
+from loguru import logger
 
 # pd.options.plotting.backend = "plotly"
 # pd.options.plotting.backend = "matplotlib"

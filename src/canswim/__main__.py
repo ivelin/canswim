@@ -18,13 +18,13 @@ from loguru import logger
 from dotenv import load_dotenv
 import os
 import argparse
-from canswim import model_search, train, dashboard, gather_data
+from canswim import dashboard, gather_data, model_search, train, forecast
 
 # Instantiate the parser
 parser = argparse.ArgumentParser(
     prog="canswim",
     description="""CANSWIM is a toolkit for CANSLIM style investors.
-        Humbly complements the Simple Moving Average and other technical indicators.
+        Aims to complement the Simple Moving Average and other technical indicators.
         """,
     epilog="NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
 )
@@ -37,7 +37,7 @@ parser.add_argument(
         'gatherdata` to gather 3rd party stock market data and save to HF Hub.
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
-        `finetune` to fine tune pretrained model.
+        `finetune` to fine tune pretrained model on new stock market data.
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
     choices=["dashboard", "gatherdata", "modelsearch", "train", "finetune", "forecast"],
@@ -62,6 +62,8 @@ logger.info(
 logger.info("command line args: {args}", args=args)
 
 match args.task:
+    case "dashboard":
+        dashboard.main()
     case "modelsearch":
         model_search.main()
     case "gatherdata":
@@ -71,8 +73,6 @@ match args.task:
     case "finetune":
         raise NotImplementedError("finetune task not implemented yet")
     case "forecast":
-        raise NotImplementedError("forecast task not implemented yet")
-    case "dashboard":
-        dashboard.main()
+        forecast.main()
     case _:
         logger.error("Unrecognized task argument {m} ", m=args.module)
