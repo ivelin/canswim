@@ -19,7 +19,6 @@ from canswim.hfhub import HFHub
 import typing
 from fmpsdk.url_methods import __return_json_v3, __validate_period
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
-from typing import Callable
 
 
 def get_latest_date(datetime_col):

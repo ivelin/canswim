@@ -289,7 +289,6 @@ class CanswimModel:
             updated_target_series[t] = self.targets.target_series[t]
         self.targets.target_series = updated_target_series
 
-
     def __validate_train_data(self):
         assert len(self.target_train_list) == len(self.past_cov_list) and len(
             self.target_train_list
@@ -362,6 +361,14 @@ class CanswimModel:
             pred_horizon=self.pred_horizon,
         )
         self.__align_targets_and_covariates()
+        # prepare forecast lists as expected by the torch predict method
+        self.targets_list = []
+        self.past_cov_list = []
+        self.future_cov_list = []
+        for t in sorted(self.target_series.keys()):
+            self.targets_list.append(self.targets.target_series[t])
+            self.past_cov_list.append(self.covariates.past_covariates[t])
+            self.future_cov_list.append(self.covariates.future_covariates[t])
         logger.info("Forecasting data prepared")
 
     def prepare_data(self):
@@ -860,7 +867,7 @@ class CanswimModel:
         # try historical periods ranging between 1 and 2 years with a step of 1 month (21 busness days)
         input_chunk_length = trial.suggest_int(
             "input_chunk_length",
-            low=42,
+            low=168,
             high=252,
             step=42,
             # low=252,
@@ -874,7 +881,7 @@ class CanswimModel:
 
         # Other hyperparameters
         hidden_size = trial.suggest_int(
-            "hidden_size", low=512, high=2048, step=512
+            "hidden_size", low=1024, high=2048, step=512
         )  # low=256, high=1024, step=256)
         num_encoder_layers = trial.suggest_int(
             "num_encoder_layers", low=2, high=3
@@ -883,7 +890,7 @@ class CanswimModel:
             "num_decoder_layers", low=2, high=3
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
-            "decoder_output_dim", low=8, high=32, step=8  # low=4, high=32, step=4
+            "decoder_output_dim", low=8, high=24, step=8  # low=4, high=32, step=4
         )
         temporal_decoder_hidden = trial.suggest_int(
             "temporal_decoder_hidden",
@@ -900,7 +907,7 @@ class CanswimModel:
         use_reversible_instance_norm = trial.suggest_categorical(
             "use_reversible_instance_norm", [True]  # , False]
         )
-        lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+        lr = trial.suggest_float("lr", 1e-6, 1e-4, log=True)
 
         # throughout training we'll monitor the validation loss for both pruning and early stopping
         pruner = PyTorchLightningPruningCallback(trial, monitor="val_loss")
@@ -989,7 +996,11 @@ class CanswimModel:
     # for convenience, print some optimization trials information
 
     def find_model(self, n_trials: int = 100, study_name: str = "canswim-study"):
-        study = optuna.create_study(direction="minimize", study_name=study_name, storage="sqlite:///data/optuna_study.db")
+        study = optuna.create_study(
+            direction="minimize",
+            study_name=study_name,
+            storage="sqlite:///data/optuna_study.db",
+        )
         study.optimize(
             self._optuna_objective,
             n_trials=n_trials,
