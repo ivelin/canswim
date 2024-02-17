@@ -6,7 +6,7 @@
 
 tasks:
   - init: |
-      pyenv install 3.11
+      pyenv install -s 3.11
       pyenv local 3.11
       pip install -e ./
     command: |
