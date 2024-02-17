@@ -97,9 +97,9 @@ class CanswimForecaster:
 def main():
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
     cf = CanswimForecaster()
-    # cf.download_model()
+    cf.download_model()
+    # cf.load_model()
     # cf.download_data()
-    cf.load_model()
     next(cf.prep_next_stock_group())
     # loop in groups over all stocks
     # while cf.prep_next_stock_group():
