@@ -570,7 +570,10 @@ class Covariates:
                 t_est_series[t] = est_padded
 
             except KeyError as e:
-                logger.exception(f"No analyst estimates available for {t}, error", e)
+                logger.info(
+                    f"Skipping {t} from covariates series. No analyst estimates available for {t}, error:",
+                    e,
+                )
         return t_est_series
 
     def prepare_analyst_estimates(self, stock_price_series=None):
@@ -645,16 +648,16 @@ class Covariates:
     def __extend_series(self, n: int = -1, series: {} = None, target: {} = None):
         new_series = {}
         for t, s in series.items():
-            logger.info(
-                f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
-            )
-            logger.info(f"target {t} end time: {target[t].end_time()}")
+            # logger.info(
+            #     f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
+            # )
+            # logger.info(f"target {t} end time: {target[t].end_time()}")
             start = s.start_time()
             if s.end_time() > target[t].end_time() + BDay(n=n):
                 new_series[t] = s
-                logger.info(
-                    f"No need to extend {t} series. End greater than target end."
-                )
+                # logger.info(
+                #     f"No need to extend {t} series. End greater than target end."
+                # )
             else:
                 end = s.end_time() + BDay(n=n)
                 df = s.pd_dataframe()
@@ -662,9 +665,9 @@ class Covariates:
                 df = df.reindex(idx).ffill()
                 s_ext = TimeSeries.from_dataframe(df, freq="B", fill_missing_dates=True)
                 new_series[t] = s_ext
-                logger.info(
-                    f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
-                )
+                # logger.info(
+                #     f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
+                # )
         return new_series
 
     def prepare_future_covariates(

@@ -392,6 +392,7 @@ class CanswimModel:
         self.__prepare_data_splits()
 
     def load_model(self):
+        """Load model from local storage"""
         if torch.cuda.is_available():
             map_location = "cuda"
         else:
