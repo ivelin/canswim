@@ -37,6 +37,12 @@ class CanswimForecaster:
         logger.info("trainer params", self.canswim_model.torch_model.trainer_params)
         self.canswim_model.torch_model.trainer_params["logger"] = False
 
+    def load_model(self):
+        """Load model from local storage"""
+        self.canswim_model.load()
+        logger.info("trainer params", self.canswim_model.torch_model.trainer_params)
+        self.canswim_model.torch_model.trainer_params["logger"] = False
+
     def download_data(self):
         """Prepare time series for model forecast"""
         self.hfhub.download_data()
@@ -91,8 +97,9 @@ class CanswimForecaster:
 def main():
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
     cf = CanswimForecaster()
-    cf.download_model()
-    cf.download_data()
+    # cf.download_model()
+    # cf.download_data()
+    cf.load_model()
     next(cf.prep_next_stock_group())
     # loop in groups over all stocks
     # while cf.prep_next_stock_group():
