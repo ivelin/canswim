@@ -278,10 +278,10 @@ class CanswimModel:
                 f"Sample test series start time: {self.target_test_list[0].start_time()}, end time: {self.target_test_list[0].end_time()}"
             )
             logger.info(
-                f"Sample past covariates columns: {len(self.past_cov_list[0].columns)}"
+                f"Sample past covariates columns count: {len(self.past_cov_list[0].columns)}, {self.past_cov_list[0].columns}"
             )
             logger.info(
-                f"Sample future covariates columns: {len(self.future_cov_list[0].columns)}"
+                f"Sample future covariates columns count: {len(self.future_cov_list[0].columns)}, {self.future_cov_list[0].columns}"
             )
             # update targets series dict
         updated_target_series = {}
@@ -348,11 +348,13 @@ class CanswimModel:
         self.stock_price_series = self.targets.prepare_stock_price_series(
             train_date_start=start_date
         )
+        logger.info(f"Prepared {len(self.stock_price_series)} stock price series")
         # prepare target time series
         target_columns = ["Close"]
         self.targets.prepare_data(
             stock_price_series=self.stock_price_series, target_columns=target_columns
         )
+        logger.info(f"Prepared {len(self.targets.target_series)} stock targets")
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
             target_columns=target_columns,
@@ -361,14 +363,27 @@ class CanswimModel:
             pred_horizon=self.pred_horizon,
         )
         self.__align_targets_and_covariates()
+        logger.info(
+            f"Prepared {len(self.targets.target_series)} stock targets after alignment with covariates"
+        )
         # prepare forecast lists as expected by the torch predict method
         self.targets_list = []
         self.past_cov_list = []
         self.future_cov_list = []
-        for t in sorted(self.target_series.keys()):
+        for t in sorted(self.targets.target_series.keys()):
             self.targets_list.append(self.targets.target_series[t])
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
+        logger.info(
+            f"Sample targets columns count: {len(self.targets_list[0].columns)}, {self.targets_list[0].columns}"
+        )
+        logger.info(
+            f"Sample past covariates columns count: {len(self.past_cov_list[0].columns)}, {self.past_cov_list[0].columns}"
+        )
+        logger.info(
+            f"Sample future covariates columns count: {len(self.future_cov_list[0].columns)}, {self.future_cov_list[0].columns}"
+        )
+
         logger.info("Forecasting data prepared")
 
     def prepare_data(self):
@@ -884,10 +899,10 @@ class CanswimModel:
             "hidden_size", low=1024, high=2048, step=512
         )  # low=256, high=1024, step=256)
         num_encoder_layers = trial.suggest_int(
-            "num_encoder_layers", low=2, high=3
+            "num_encoder_layers", low=3, high=3
         )  # low=1, high=3)
         num_decoder_layers = trial.suggest_int(
-            "num_decoder_layers", low=2, high=3
+            "num_decoder_layers", low=2, high=2
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
             "decoder_output_dim", low=8, high=24, step=8  # low=4, high=32, step=4
@@ -899,7 +914,7 @@ class CanswimModel:
             step=16,  # low=16, high=128, step=16
         )
         dropout = trial.suggest_float(
-            "dropout", low=0.2, high=0.3, step=0.1
+            "dropout", low=0.3, high=0.3, step=0.1
         )  # low=0.0, high=0.5, step=0.1)
         use_layer_norm = trial.suggest_categorical(
             "use_layer_norm", [True]
@@ -907,7 +922,7 @@ class CanswimModel:
         use_reversible_instance_norm = trial.suggest_categorical(
             "use_reversible_instance_norm", [True]  # , False]
         )
-        lr = trial.suggest_float("lr", 1e-6, 1e-4, log=True)
+        lr = trial.suggest_float("lr", 1e-5, 1e-5, log=True)
 
         # throughout training we'll monitor the validation loss for both pruning and early stopping
         pruner = PyTorchLightningPruningCallback(trial, monitor="val_loss")

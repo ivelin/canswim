@@ -88,6 +88,8 @@ class MarketDataGatherer:
         self.all_stocks_file = "all_stocks.csv"
         self.price_frequency = "1d"  # "1wk"
         self.min_start_date = os.getenv("train_date_start", "1991-01-01")
+        self.data_dir = os.getenv("data_dir", "data")
+        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
 
     def gather_stock_tickers(self):
         # Prepare list of stocks for training
@@ -166,7 +168,7 @@ class MarketDataGatherer:
         stocks_df.to_csv(stocks_file)
         logger.info(f"Saved stock set to {stocks_file}")
 
-    def _gather_yfdata_date_inde(self, data_file: str = None, tickers: str = None):
+    def _gather_yfdata_date_index(self, data_file: str = None, tickers: str = None):
         start_date = self.min_start_date
         old_df = None
         try:
@@ -177,7 +179,7 @@ class MarketDataGatherer:
             logger.info(f"Latest saved record is after {start_date}")
         except Exception as e:
             logger.exception(f"Could not load data from file: {data_file}. Error: {e}")
-        new_df = yf.download(tickers, start=start_date, group_by="tickers")
+        new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d")
         new_df = new_df.dropna(how="all")
         logger.info("New data gathered. Sample: \n{bm}", bm=new_df)
         logger.info(f"Columns: \n{new_df.columns}")
@@ -207,7 +209,7 @@ class MarketDataGatherer:
             "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
         )
         data_file = "data/data-3rd-party/broad_market.parquet"
-        self._gather_yfdata_date_inde(
+        self._gather_yfdata_date_index(
             data_file=data_file, tickers=broad_market_indicies
         )
 
@@ -215,7 +217,46 @@ class MarketDataGatherer:
         """Gather historic price and volume data for key market sectors"""
         sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
         data_file = "data/data-3rd-party/sectors.parquet"
-        self._gather_yfdata_date_inde(data_file=data_file, tickers=sector_indicies)
+        self._gather_yfdata_date_index(data_file=data_file, tickers=sector_indicies)
+
+    def gather_subindustries_data(self):
+        """
+        WARN: YFinance does not provide rich historical price and volume data for Industries and Sub-industries
+        the way it does for Sectors.
+        Do not use this method with YFinance.
+        """
+        return  # See warning message above.
+        """
+        Gather historic price and volume data for S&P 1500 GICS subindustries indecies.
+        S&P 1500 includes S&P 400, S&P 500, S&P 600 and overall about 90% of the US stock market capitalization.
+        The dataset has 163 GICS sub-industry indecies active as of 2023 plus 7 that were removed in 2023.
+        https://www.msci.com/documents/1296102/11185224/GICS+Map+2023.xlsx/82cc6504-9919-29e5-9789-a24fc039d0a5?t=1679087572540
+        The goal of these covariates is to provide the model with a more granural breakdown of stock grouping by industry.
+        Since stocks usually move together with their group, the model can learn the patterns how an individual stock trend
+        relates to its group price and volume action.
+        """
+        subindustry_indicies = []
+        gics_file = f"{self.data_dir}/{self.data_3rd_party}/GICS2023.csv"
+        gics_df = pd.read_csv(gics_file)
+        logger.info(f"Loaded {len(gics_df)} GICS records. Columns: {gics_df}")
+        code_col_name = "Sub-Industry Code"
+        subindustry_codes = gics_df[
+            pd.to_numeric(gics_df[code_col_name], errors="coerce").notnull()
+        ]
+        subindustry_codes = subindustry_codes[code_col_name].unique()
+        logger.info(
+            f"Loaded {len(subindustry_codes)} subindustry codes: {subindustry_codes}"
+        )
+        sub_prefix = "^sp1500-"
+        subindustry_symbols = []
+        for c in subindustry_codes:
+            subindustry_symbols.append(f"{sub_prefix}{c}")
+        logger.info(
+            f"Prepared list of {len(subindustry_symbols)} S&P1500 subindustry symbols: {subindustry_symbols}"
+        )
+        data_file = "data/data-3rd-party/subindustries.parquet"
+        self._gather_yfdata_date_index(data_file=data_file, tickers=subindustry_symbols)
+        logger.info("Finished gathering subindisty data")
 
     def gather_stock_price_data(self):
         data_file = (

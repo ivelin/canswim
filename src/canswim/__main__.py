@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 import os
 import argparse
 from canswim import dashboard, gather_data, model_search, train, forecast
+from canswim.hfhub import HFHub
 
 # Instantiate the parser
 parser = argparse.ArgumentParser(
@@ -35,12 +36,21 @@ parser.add_argument(
     help="""Which %(prog)s task to run:
         `dashboard` for stock charting and scans of recorded forecasts.
         'gatherdata` to gather 3rd party stock market data and save to HF Hub.
+        'uploaddata` upload to HF Hub any interim changes to local data storage.
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
         `finetune` to fine tune pretrained model on new stock market data.
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
-    choices=["dashboard", "gatherdata", "modelsearch", "train", "finetune", "forecast"],
+    choices=[
+        "dashboard",
+        "gatherdata",
+        "uploaddata",
+        "modelsearch",
+        "train",
+        "finetune",
+        "forecast",
+    ],
 )
 
 args = parser.parse_args()
@@ -61,6 +71,11 @@ logger.info(
 
 logger.info("command line args: {args}", args=args)
 
+hfhub = HFHub()
+load_dotenv(override=True)
+repo_id = os.getenv("repo_id", "ivelin/canswim")
+
+
 match args.task:
     case "dashboard":
         dashboard.main()
@@ -68,6 +83,8 @@ match args.task:
         model_search.main()
     case "gatherdata":
         gather_data.main()
+    case "uploaddata":
+        hfhub.upload_data()
     case "train":
         train.main()
     case "finetune":
