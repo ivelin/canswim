@@ -3,12 +3,15 @@ from loguru import logger
 from dotenv import load_dotenv
 import os
 import time
+from canswim.hfhub import HFHub
 
 
 # main function
 def main():
 
     canswim_model = CanswimModel()
+    hfhub = HFHub()
+    hfhub.download_data()
     load_dotenv(override=True)
     repo_id = os.getenv("repo_id", "ivelin/canswim")
     n_optuna_trials = int(os.getenv("n_optuna_trials", 100))
@@ -42,6 +45,8 @@ def main():
     study = canswim_model.find_model(
         n_trials=n_optuna_trials, study_name=f"canswim-study-{timestr}"
     )
+    # save model search results
+    hfhub.upload_data()
     logger.info(f"Finished Model Search. Study: {study}")
 
 
