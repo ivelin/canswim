@@ -5,5 +5,8 @@
 # Learn more from ready-to-use templates: https://www.gitpod.io/docs/introduction/getting-started/quickstart
 
 tasks:
-  - init: pip install -e ./
-    command: ./dashboard.sh
+  - init: |
+      pyenv install 3.11
+      pyenv local 3.11
+      pip install -e ./
+    command: |
