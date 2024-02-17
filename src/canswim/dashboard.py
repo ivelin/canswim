@@ -139,9 +139,9 @@ with gr.Blocks() as demo:
         ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
         lowq = gr.Slider(5, 80, value=20, label="Forecast probability low threshold", info="Choose from 5% to 80%")
 
-    tickerDropdown.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
-    lowq.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
+    tickerDropdown.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=True)
+    lowq.change(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=True)
     ## time.change(get_forecast, [lib, time], plt, queue=False)
-    demo.load(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=False)
+    demo.load(fn=canswim_playground.plot_forecast, inputs=[tickerDropdown, lowq], outputs=[plotComponent], queue=True)
 
 demo.launch()
