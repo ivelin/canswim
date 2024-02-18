@@ -19,29 +19,24 @@ repo_id = "ivelin/canswim"
 
 
 class CanswimPlayground:
-
     def get_target(self, ticker):
         target = self.canswim_model.targets.target_series[ticker]
         logger.info(
-            "target {ticker} start, end: ", target.start_time(), target.end_time()
+            f"target {ticker} start, end: {target.start_time()}, {target.end_time()}"
         )
         return target
 
     def get_past_covariates(self, ticker):
         past_covariates = self.canswim_model.covariates.past_covariates[ticker]
         logger.info(
-            "past covariates start, end: ",
-            past_covariates.start_time(),
-            past_covariates.end_time(),
+            f"past covariates start, end: {past_covariates.start_time()}, {past_covariates.end_time()}"
         )
         return past_covariates
 
     def get_future_covariates(self, ticker):
         future_covariates = self.canswim_model.covariates.future_covariates[ticker]
         logger.info(
-            "future covariates start, end: ",
-            future_covariates.start_time(),
-            future_covariates.end_time(),
+            f"future covariates start, end: {future_covariates.start_time()}, {future_covariates.end_time()}"
         )
         return future_covariates
 
@@ -56,7 +51,7 @@ class CanswimPlayground:
         """Load model from HF Hub"""
         # download model from hf hub
         self.canswim_model.download_model(repo_id=repo_id)
-        logger.info("trainer params", self.canswim_model.torch_model.trainer_params)
+        logger.info(f"trainer params {self.canswim_model.torch_model.trainer_params}")
         self.canswim_model.torch_model.trainer_params["logger"] = False
 
     def download_data(self):
@@ -67,12 +62,13 @@ class CanswimPlayground:
         self.canswim_model.load_data(start_date=start_date)
         # prepare timeseries for forecast
         self.canswim_model.prepare_forecast_data(start_date=start_date)
-        self.tickers = list(self.canswim_model.targets.target_series.keys())
+        self.tickers = self.canswim_model.targets_ticker_list
 
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
         target = self.get_target(ticker)
         baseline_forecast, canswim_forecast = self.get_forecast(ticker)
         backtest_forecasts = self.backtest(ticker)
+        saved_forecast = self.get_saved_forecast()
         lq = lowq / 100
         fig, axes = pyplot.subplots(figsize=(20, 12))
         target.plot(label=f"{ticker} Close actual")
@@ -82,6 +78,12 @@ class CanswimPlayground:
             low_quantile=lq,
             high_quantile=0.95,
         )
+        if saved_forecast is not None:
+            saved_forecast.plot(
+                label=f"{ticker} Close CANSWIM forecast",
+                low_quantile=lq,
+                high_quantile=0.95,
+            )
         for b in backtest_forecasts:
             b.plot(
                 label=f"{ticker} Close CANSWIM backtest",
@@ -147,6 +149,16 @@ class CanswimPlayground:
             logger.info(f"{ticker} backtest finished.\n", backtest_forecasts)
             self.backtest_cache[ticker] = backtest_forecasts
         return backtest_forecasts
+
+        def get_saved_forecast(self, ticker: str = None):
+            # load parquet partition for stock
+            filters = [("symbol", "=", ticker)]
+            df pd.read_parquet(
+                "s3://my-bucket/",
+                filters=filters,
+            )
+            # TODO... convert df to darts TimeSeries
+            pass
 
 
 def main():
