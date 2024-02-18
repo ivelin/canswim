@@ -6,6 +6,7 @@ import pandas as pd
 from loguru import logger
 from canswim.model import CanswimModel
 import pandas as pd
+from pandas import DataFrame
 from canswim.hfhub import HFHub
 from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
@@ -15,7 +16,6 @@ import os
 
 
 class CanswimForecaster:
-
     def __init__(self):
         self.data_dir = os.getenv("data_dir", "data")
         self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
@@ -52,8 +52,7 @@ class CanswimForecaster:
             # such as holidays. Apparently there are about 15 non-weekend days when the market is off
             # and price data is not available on such days.
             # Add a sufficiently big sample pad to include all market off days.
-            n=self.canswim_model.min_samples
-            + self.canswim_model.train_history
+            n=self.canswim_model.min_samples + self.canswim_model.train_history
         )
 
     def get_forecast(self):
@@ -63,7 +62,7 @@ class CanswimForecaster:
             past_covariates=self.canswim_model.past_cov_list,
             future_covariates=self.canswim_model.future_cov_list,
         )
-        logger.info(f"Forecast finished.")
+        logger.info("Forecast finished.")
         return canswim_forecast
 
     def prep_next_stock_group(self):
@@ -86,10 +85,51 @@ class CanswimForecaster:
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
             yield
 
-    def save_forecast(self):
+    def _list_to_df(self, forecast_list: [] = None):
+        """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
+        forecast_df = pd.DataFrame(
+            columns=[
+                "symbol",
+                "forecast_start_year",
+                "forecast_start_month",
+                "forecast_start_day",
+                "target_date",
+                "target_close",
+            ]
+        )
+        forecast_df.set_index(
+            [
+                "symbol",
+                "forecast_start_year",
+                "forecast_start_month",
+                "forecast_start_day",
+            ]
+        )
+        for i, t in enumerate(self.canswim_model.targets_ticker_list):
+            df = forecast_list[i].pd_dataframe()
+            df["symbol"] = t
+            df["forecast_start_year"] = self.start_date.year
+            df["forecast_start_month"] = self.start_date.month
+            df["forecast_start_day"] = self.start_date.day
+            forecast_df = pd.concat([forecast_df, df])
+        return forecast_df
+
+    def save_forecast(self, forecast_list: [] = None):
         """Saves forecast data to local database"""
-        # Load parquet data for stock group
-        #
+        assert forecast_list is not None and len(forecast_list) > 0
+        forecast_df = self._list_to_df(forecast_list)
+        logger.info(
+            f"Saving forecast_df with {len(forecast_df.columns)} columns, {len(forecast_df)} rows: {forecast_df}"
+        )
+        forecast_df.to_parquet(
+            f"{self.data_dir}/forecast",
+            partition_cols=[
+                "symbol",
+                "forecast_start_year",
+                "forecast_start_month",
+                "forecast_start_day",
+            ],
+        )
         logger.info(f"Saved forecast data to: {self.forecast_data_file}")
 
 
@@ -99,13 +139,13 @@ def main():
     cf = CanswimForecaster()
     cf.download_model()
     # cf.load_model()
-    # cf.download_data()
+    cf.download_data()
     next(cf.prep_next_stock_group())
     # loop in groups over all stocks
-    # while cf.prep_next_stock_group():
-    #   cf.get_forecast()
+    # while next(cf.prep_next_stock_group()):
+    forecast = cf.get_forecast()
     #   # save new or update existing data file
-    #   cf.save_forecast()
+    cf.save_forecast(forecast)
     # cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 

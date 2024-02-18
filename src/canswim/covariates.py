@@ -628,11 +628,11 @@ class Covariates:
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
-        sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
-        sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
-        past_covariates_tmp = self.stack_covariates(
-            old_covs=past_covariates, new_covs=sectors_dict
-        )
+        # sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
+        # sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
+        # past_covariates_tmp = self.stack_covariates(
+        #     old_covs=past_covariates, new_covs=sectors_dict
+        # )
         past_covariates = past_covariates_tmp
         self.past_covariates = past_covariates
 
