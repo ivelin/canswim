@@ -83,7 +83,7 @@ class CanswimForecaster:
             # prepare timeseries for forecast
             self.canswim_model.prepare_forecast_data(start_date=self.start_date)
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
-            yield
+            yield pos
 
     def _list_to_df(self, forecast_list: [] = None):
         """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
@@ -132,6 +132,9 @@ class CanswimForecaster:
         )
         logger.info(f"Saved forecast data to: {self.forecast_data_file}")
 
+    def upload_data(self):
+        self.hfhub.upload_data()
+
 
 # main function
 def main():
@@ -140,13 +143,12 @@ def main():
     cf.download_model()
     # cf.load_model()
     cf.download_data()
-    next(cf.prep_next_stock_group())
     # loop in groups over all stocks
-    # while next(cf.prep_next_stock_group()):
-    forecast = cf.get_forecast()
-    #   # save new or update existing data file
-    cf.save_forecast(forecast)
-    # cf.upload_data()
+    for pos in cf.prep_next_stock_group():
+        forecast = cf.get_forecast()
+        # save new or update existing data file
+        cf.save_forecast(forecast)
+    cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
 
