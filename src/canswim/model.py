@@ -153,7 +153,7 @@ class CanswimModel:
                     t
                 ].end_time() + BDay(
                     n=self.pred_horizon
-                ), f"""target end time {new_target_series[t].end_time()} > 
+                ), f"""target end time {new_target_series[t].end_time()} >
                     future covariate end time + pred_horizon {new_future_covariates[t].end_time() + BDay(n=self.pred_horizon)}"""
             except (KeyError, ValueError, AssertionError) as e:
                 logger.exception(f"Skipping {t} from data splits due to error: ", e)
@@ -290,10 +290,9 @@ class CanswimModel:
         self.targets.target_series = updated_target_series
 
     def __validate_train_data(self):
-        assert len(self.target_train_list) == len(self.past_cov_list) and len(
-            self.target_train_list
-        ) == len(
-            self.future_cov_list
+        assert (
+            len(self.target_train_list) == len(self.past_cov_list)
+            and len(self.target_train_list) == len(self.future_cov_list)
         ), f"train({len(self.target_train_list)}), past covs({len(self.past_cov_list)} and future covs({len(self.future_cov_list)}) lists must have the same tickers"
         for i, t in enumerate(self.train_tickers):
             assert (
@@ -367,10 +366,12 @@ class CanswimModel:
             f"Prepared {len(self.targets.target_series)} stock targets after alignment with covariates"
         )
         # prepare forecast lists as expected by the torch predict method
+        self.targets_ticker_list = []
         self.targets_list = []
         self.past_cov_list = []
         self.future_cov_list = []
         for t in sorted(self.targets.target_series.keys()):
+            self.targets_ticker_list.append(t)
             self.targets_list.append(self.targets.target_series[t])
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
@@ -892,7 +893,10 @@ class CanswimModel:
         )
         # try prediction periods ranging between 8 weeks to 12 weeks with a step of 1 week
         output_chunk_length = trial.suggest_int(
-            name="output_chunk_length", low=42, high=42, step=1  # high=62, step=5
+            name="output_chunk_length",
+            low=42,
+            high=42,
+            step=1,  # high=62, step=5
         )
 
         # Other hyperparameters
@@ -906,7 +910,10 @@ class CanswimModel:
             "num_decoder_layers", low=2, high=2
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
-            "decoder_output_dim", low=8, high=24, step=8  # low=4, high=32, step=4
+            "decoder_output_dim",
+            low=8,
+            high=24,
+            step=8,  # low=4, high=32, step=4
         )
         temporal_decoder_hidden = trial.suggest_int(
             "temporal_decoder_hidden",
@@ -921,7 +928,8 @@ class CanswimModel:
             "use_layer_norm", [True]
         )  # , False])
         use_reversible_instance_norm = trial.suggest_categorical(
-            "use_reversible_instance_norm", [True]  # , False]
+            "use_reversible_instance_norm",
+            [True],  # , False]
         )
         lr = trial.suggest_float("lr", 1e-5, 1e-5, log=True)
 
