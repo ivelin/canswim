@@ -53,6 +53,12 @@ parser.add_argument(
     ],
 )
 
+parser.add_argument(
+    '--forecast_start_date',
+    type=str,
+    required=False,
+    help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""")
+
 args = parser.parse_args()
 
 load_dotenv(override=True)
@@ -90,6 +96,6 @@ match args.task:
     case "finetune":
         raise NotImplementedError("finetune task not implemented yet")
     case "forecast":
-        forecast.main()
+        forecast.main(forecast_start_date=args.forecast_start_date)
     case _:
         logger.error("Unrecognized task argument {m} ", m=args.module)

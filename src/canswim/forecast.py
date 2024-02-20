@@ -56,8 +56,16 @@ class CanswimForecaster:
             n=self.canswim_model.min_samples + self.canswim_model.train_history
         )
 
-    def get_forecast(self):
+    def get_forecast(self, forecast_start_date: pd.Timestamp = None):
         logger.info("Forecast start. Calling model predict().")
+        target_sliced_list = self.canswim_model.targets_list
+        # trim end of targets to specified forecast start date
+        if forecast_start_date is not None:
+            logger.debug(f"Trimming targets after forecast start date: {forecast_start_date}")
+            for i, target in enumerate(target_sliced_list):
+                logger.debug(f"Target start date: {target.start_time()}")
+                logger.debug(f"Target sample count: {len(target)}")
+                target_sliced_list[i] = target.drop_after(forecast_start_date)
         canswim_forecast = self.canswim_model.predict(
             target=self.canswim_model.targets_list,
             past_covariates=self.canswim_model.past_cov_list,
@@ -126,17 +134,20 @@ class CanswimForecaster:
 
 
 # main function
-def main():
+def main(forecast_start_date: str = None):
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
+    if forecast_start_date is not None:
+        logger.info(f"forecast_start_date: {forecast_start_date}")
+        forecast_start_date = pd.Timestamp(forecast_start_date)
     cf = CanswimForecaster()
     cf.download_model()
     cf.download_data()
     ## loop in groups over all stocks
-    next(cf.prep_next_stock_group())
-    # for pos in cf.prep_next_stock_group():
-    forecast = cf.get_forecast()
-    ## save new or update existing data file
-    cf.save_forecast(forecast)
+    # next(cf.prep_next_stock_group())
+    for pos in cf.prep_next_stock_group():
+        forecast = cf.get_forecast(forecast_start_date=forecast_start_date)
+        ## save new or update existing data file
+        cf.save_forecast(forecast)
     # cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
