@@ -148,7 +148,7 @@ def main(forecast_start_date: str = None):
         forecast = cf.get_forecast(forecast_start_date=forecast_start_date)
         ## save new or update existing data file
         cf.save_forecast(forecast)
-    # cf.upload_data()
+    cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
 

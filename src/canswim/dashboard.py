@@ -230,7 +230,7 @@ class CanswimPlayground:
         target = self.get_target(ticker)
         # baseline_forecast, canswim_forecast = self.get_forecast(ticker)
         # backtest_forecasts = self.backtest(ticker)
-        saved_forecast_df = self.get_saved_forecast(ticker=ticker)
+        saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
         lq = lowq / 100
         fig, axes = plt.subplots(figsize=(20, 12))
         target.plot(label=f"{ticker} Close actual")
@@ -240,9 +240,10 @@ class CanswimPlayground:
         #     low_quantile=lq,
         #     high_quantile=0.95,
         # )
-        logger.info(f"Plotting saved forecast: {saved_forecast_df}")
-        if saved_forecast_df is not None:
-            self.plot_quantiles_df(df=saved_forecast_df, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close CANSWIM forecast")
+        logger.info(f"Plotting saved forecast: {saved_forecast_df_list}")
+        if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
+            for forecast in saved_forecast_df_list:
+                self.plot_quantiles_df(df=forecast, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close forecast")
         # for b in backtest_forecasts:
         #     b.plot(
         #         label=f"{ticker} Close CANSWIM backtest",
@@ -310,6 +311,7 @@ class CanswimPlayground:
         return backtest_forecasts
 
     def get_saved_forecast(self, ticker: str = None):
+        """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
         # load parquet partition for stock
         logger.info(f"Loading saved forecast for {ticker}")
         filters = [("symbol", "=", ticker)] # "AAON"
@@ -322,11 +324,18 @@ class CanswimPlayground:
         logger.info(f"df columns: {df.columns}")
         logger.info(f"df column types: \n{df.dtypes}")
         logger.info(f"df row sample: {df}")
-        df = df.drop(columns=["symbol",
-                "forecast_start_year",
-                "forecast_start_month",
-                "forecast_start_day",])
-        return df
+        df = df.drop(columns=["symbol"])
+        df_list = []
+        for y in df["forecast_start_year"].unique():
+            for m in df["forecast_start_month"].unique():
+                for d in df["forecast_start_day"].unique():
+                    single_forecast = df.loc[(df["forecast_start_year"] == y) & (df["forecast_start_month"] == m) & (df["forecast_start_day"] == d)]
+                    single_forecast = single_forecast.drop(columns=[
+                        "forecast_start_year",
+                        "forecast_start_month",
+                        "forecast_start_day",])
+                    df_list.append(single_forecast)
+        return df_list
 
 
 def main():
