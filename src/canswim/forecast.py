@@ -12,6 +12,7 @@ from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
 from loguru import logger
 from pandas.tseries.offsets import BDay
+from darts import TimeSeries
 import os
 
 
@@ -85,39 +86,27 @@ class CanswimForecaster:
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
             yield pos
 
-    def _list_to_df(self, forecast_list: [] = None):
-        """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
-        forecast_df = pd.DataFrame(
-            columns=[
-                "symbol",
-                "forecast_start_year",
-                "forecast_start_month",
-                "forecast_start_day",
-                "target_date",
-                "target_close",
-            ]
-        )
-        forecast_df.set_index(
-            [
-                "symbol",
-                "forecast_start_year",
-                "forecast_start_month",
-                "forecast_start_day",
-            ]
-        )
-        for i, t in enumerate(self.canswim_model.targets_ticker_list):
-            df = forecast_list[i].pd_dataframe()
-            df["symbol"] = t
-            df["forecast_start_year"] = self.start_date.year
-            df["forecast_start_month"] = self.start_date.month
-            df["forecast_start_day"] = self.start_date.day
-            forecast_df = pd.concat([forecast_df, df])
-        return forecast_df
-
     def save_forecast(self, forecast_list: [] = None):
         """Saves forecast data to local database"""
+
+        def _list_to_df(forecast_list: [] = None):
+            """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
+            forecast_df = pd.DataFrame()
+            for i, t in enumerate(self.canswim_model.targets_ticker_list):
+                ts = forecast_list[i]
+                pred_start = ts.start_time()
+                logger.info(f"Next forecast timeseries: {ts}")
+                df = ts.pd_dataframe()
+                df["symbol"] = t
+                df["forecast_start_year"] = pred_start.year
+                df["forecast_start_month"] = pred_start.month
+                df["forecast_start_day"] = pred_start.day
+                logger.info(f"Next forecast sample: {df}")
+                forecast_df = pd.concat([forecast_df, df])
+            return forecast_df
+
         assert forecast_list is not None and len(forecast_list) > 0
-        forecast_df = self._list_to_df(forecast_list)
+        forecast_df = _list_to_df(forecast_list)
         logger.info(
             f"Saving forecast_df with {len(forecast_df.columns)} columns, {len(forecast_df)} rows: {forecast_df}"
         )
@@ -141,14 +130,14 @@ def main():
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
     cf = CanswimForecaster()
     cf.download_model()
-    # cf.load_model()
     cf.download_data()
-    # loop in groups over all stocks
-    for pos in cf.prep_next_stock_group():
-        forecast = cf.get_forecast()
-        # save new or update existing data file
-        cf.save_forecast(forecast)
-    cf.upload_data()
+    ## loop in groups over all stocks
+    next(cf.prep_next_stock_group())
+    # for pos in cf.prep_next_stock_group():
+    forecast = cf.get_forecast()
+    ## save new or update existing data file
+    cf.save_forecast(forecast)
+    # cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
 
