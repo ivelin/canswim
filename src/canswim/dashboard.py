@@ -6,10 +6,13 @@ import gradio as gr
 from darts.models import ExponentialSmoothing
 from darts import TimeSeries
 from canswim.hfhub import HFHub
-from matplotlib import pyplot
+import matplotlib.pyplot as plt
 import random
+import pandas as pd
 from pandas.tseries.offsets import BDay
 from loguru import logger
+from typing import Union, Optional, Sequence
+import matplotlib
 
 # pd.options.plotting.backend = "plotly"
 # pd.options.plotting.backend = "matplotlib"
@@ -64,33 +67,189 @@ class CanswimPlayground:
         self.canswim_model.prepare_forecast_data(start_date=start_date)
         self.tickers = self.canswim_model.targets_ticker_list
 
+    def plot_quantiles_df(
+        self,
+        df: pd.DataFrame = None,
+        new_plot: bool = False,
+        central_quantile: Union[float, str] = 0.5,
+        low_quantile: Optional[float] = 0.05,
+        high_quantile: Optional[float] = 0.95,
+        default_formatting: bool = True,
+        label: Optional[Union[str, Sequence[str]]] = "",
+        max_nr_components: int = 10,
+        ax: Optional[matplotlib.axes.Axes] = None,
+        *args,
+        **kwargs,
+    ) -> matplotlib.axes.Axes:
+        """Plot the series saved as parquet via dataframe.
+        This method recreates the darts.TimeSeries.plot() method, which does not currently support restoring stochastic timeseries after saving.
+
+        This is a wrapper method around :func:`xarray.DataArray.plot()`.
+
+        Parameters
+        ----------
+        new_plot
+            Whether to spawn a new axis to plot on. See also parameter `ax`.
+        central_quantile
+            The quantile (between 0 and 1) to plot as a "central" value, if the series is stochastic (i.e., if
+            it has multiple samples). This will be applied on each component separately (i.e., to display quantiles
+            of the components' marginal distributions). For instance, setting `central_quantile=0.5` will plot the
+            median of each component. `central_quantile` can also be set to 'mean'.
+        low_quantile
+            The quantile to use for the lower bound of the plotted confidence interval. Similar to `central_quantile`,
+            this is applied to each component separately (i.e., displaying marginal distributions). No confidence
+            interval is shown if `confidence_low_quantile` is None (default 0.05).
+        high_quantile
+            The quantile to use for the upper bound of the plotted confidence interval. Similar to `central_quantile`,
+            this is applied to each component separately (i.e., displaying marginal distributions). No confidence
+            interval is shown if `high_quantile` is None (default 0.95).
+        default_formatting
+            Whether to use the darts default scheme.
+        label
+            Can either be a string or list of strings. If a string and the series only has a single component, it is
+            used as the label for that component. If a string and the series has multiple components, it is used as
+            a prefix for each component name. If a list of strings with length equal to the number of components in
+            the series, the labels will be mapped to the components in order.
+        max_nr_components
+            The maximum number of components of a series to plot. -1 means all components will be plotted.
+        ax
+            Optionally, an axis to plot on. If `None`, and `new_plot=False`, will use the current axis. If
+            `new_plot=True`, will create a new axis.
+        alpha
+             Optionally, set the line alpha for deterministic series, or the confidence interval alpha for
+            probabilistic series.
+        args
+            some positional arguments for the `plot()` method
+        kwargs
+            some keyword arguments for the `plot()` method
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Either the passed `ax` axis, a newly created one if `new_plot=True`, or the existing one.
+        """
+
+        if df is None or len(df) == 0:
+            logger.info("Dataframe is empty. Nothing to plot.")
+            return
+
+        alpha_confidence_intvls = 0.25
+
+        if central_quantile != "mean":
+            assert isinstance(central_quantile, float) and 0.0 <= central_quantile <= 1.0, 'central_quantile must be either "mean", or a float between 0 and 1.'
+
+        if high_quantile is not None and low_quantile is not None:
+            assert 0.0 <= low_quantile <= 1.0 and 0.0 <= high_quantile <= 1.0, "confidence interval low and high quantiles must be between 0 and 1."
+
+        if new_plot:
+            fig, ax = plt.subplots()
+        else:
+            if ax is None:
+                ax = plt.gca()
+
+        if not any(lw in kwargs for lw in ["lw", "linewidth"]):
+            kwargs["lw"] = 2
+
+        if label is not None:
+            assert isinstance(label, str), "The label argument should be a string"
+            custom_labels = True
+        else:
+            custom_labels = False
+
+        if central_quantile == "mean":
+            central_series = df.mean(axis=1)
+        else:
+            central_series = df.quantile(q=central_quantile, axis=1)
+
+            alpha = kwargs["alpha"] if "alpha" in kwargs else None
+            if custom_labels:
+                label_to_use = label
+            else:
+                if label == "":
+                    label_to_use = "Value"
+                else:
+                    label_to_use = label
+            kwargs["label"] = label_to_use
+
+            if len(central_series) > 1:
+                p = ax.plot(
+                    df.index.values,
+                    central_series.values,
+                    "-",
+                    *args,
+                    **kwargs
+                )
+            # empty TimeSeries
+            elif len(central_series) == 0:
+                p = ax.plot(
+                    [],
+                    [],
+                    *args,
+                    **kwargs,
+                )
+                ax.set_xlabel(df.index.name)
+            else:
+                p = ax.plot(
+                    [df.index.min()],
+                    central_series.values[0],
+                    "o",
+                    *args,
+                    **kwargs,
+                )
+            color_used = p[0].get_color() if default_formatting else None
+
+            # Optionally show confidence intervals
+            if (
+                low_quantile is not None
+                and high_quantile is not None
+            ):
+                low_series = df.quantile(q=low_quantile, axis=1)
+                high_series = df.quantile(q=high_quantile, axis=1)
+                if len(low_series) > 1:
+                    ax.fill_between(
+                        df.index,
+                        low_series,
+                        high_series,
+                        color=color_used,
+                        alpha=(alpha if alpha is not None else alpha_confidence_intvls),
+                    )
+                else:
+                    ax.plot(
+                        [df.index.min(), df.index.min()],
+                        [low_series.iloc[0], high_series.iloc[0]],
+                        "-+",
+                        color=color_used,
+                        lw=2,
+                    )
+
+        ax.legend()
+        return ax
+
+
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
         target = self.get_target(ticker)
-        baseline_forecast, canswim_forecast = self.get_forecast(ticker)
-        backtest_forecasts = self.backtest(ticker)
-        saved_forecast = self.get_saved_forecast()
+        # baseline_forecast, canswim_forecast = self.get_forecast(ticker)
+        # backtest_forecasts = self.backtest(ticker)
+        saved_forecast_df = self.get_saved_forecast(ticker=ticker)
         lq = lowq / 100
-        fig, axes = pyplot.subplots(figsize=(20, 12))
+        fig, axes = plt.subplots(figsize=(20, 12))
         target.plot(label=f"{ticker} Close actual")
-        baseline_forecast.plot(label=f"{ticker} Close baseline forecast")
-        canswim_forecast.plot(
-            label=f"{ticker} Close CANSWIM forecast",
-            low_quantile=lq,
-            high_quantile=0.95,
-        )
-        if saved_forecast is not None:
-            saved_forecast.plot(
-                label=f"{ticker} Close CANSWIM forecast",
-                low_quantile=lq,
-                high_quantile=0.95,
-            )
-        for b in backtest_forecasts:
-            b.plot(
-                label=f"{ticker} Close CANSWIM backtest",
-                low_quantile=lq,
-                high_quantile=0.95,
-            )
-        pyplot.legend()
+        # baseline_forecast.plot(label=f"{ticker} Close baseline forecast")
+        # canswim_forecast.plot(
+        #     label=f"{ticker} Close CANSWIM forecast",
+        #     low_quantile=lq,
+        #     high_quantile=0.95,
+        # )
+        logger.info(f"Plotting saved forecast: {saved_forecast_df}")
+        if saved_forecast_df is not None:
+            self.plot_quantiles_df(df=saved_forecast_df, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close CANSWIM forecast")
+        # for b in backtest_forecasts:
+        #     b.plot(
+        #         label=f"{ticker} Close CANSWIM backtest",
+        #         low_quantile=lq,
+        #         high_quantile=0.95,
+        #     )
+        plt.legend()
         return fig
 
     def get_forecast(self, ticker: str = None):
@@ -150,15 +309,24 @@ class CanswimPlayground:
             self.backtest_cache[ticker] = backtest_forecasts
         return backtest_forecasts
 
-        def get_saved_forecast(self, ticker: str = None):
-            # load parquet partition for stock
-            filters = [("symbol", "=", ticker)]
-            df pd.read_parquet(
-                "s3://my-bucket/",
-                filters=filters,
-            )
-            # TODO... convert df to darts TimeSeries
-            pass
+    def get_saved_forecast(self, ticker: str = None):
+        # load parquet partition for stock
+        logger.info(f"Loading saved forecast for {ticker}")
+        filters = [("symbol", "=", ticker)] # "AAON"
+        df = pd.read_parquet(
+            "data/forecast/",
+            filters=filters,
+        )
+        logger.info(f"df columns count: {len(df.columns)}")
+        logger.info(f"df row count: {len(df)}")
+        logger.info(f"df columns: {df.columns}")
+        logger.info(f"df column types: \n{df.dtypes}")
+        logger.info(f"df row sample: {df}")
+        df = df.drop(columns=["symbol",
+                "forecast_start_year",
+                "forecast_start_month",
+                "forecast_start_day",])
+        return df
 
 
 def main():
@@ -175,24 +343,29 @@ def main():
         canswim_playground.download_model()
         canswim_playground.download_data()
 
-        plotComponent = gr.Plot()
-
-        with gr.Row():
-            sorted_tickers = sorted(canswim_playground.tickers)
-            logger.info("Dropdown tickers: ", sorted_tickers)
-            tickerDropdown = gr.Dropdown(
-                choices=sorted_tickers,
-                label="Stock Symbol",
-                value=random.sample(sorted_tickers, 1)[0],
-            )
-            ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
-            lowq = gr.Slider(
-                5,
-                80,
-                value=20,
-                label="Forecast probability low threshold",
-                info="Choose from 5% to 80%",
-            )
+        with gr.Tab("Charts"):
+            plotComponent = gr.Plot()
+            with gr.Row():
+                sorted_tickers = sorted(canswim_playground.tickers)
+                logger.info("Dropdown tickers: ", sorted_tickers)
+                tickerDropdown = gr.Dropdown(
+                    choices=sorted_tickers,
+                    label="Stock Symbol",
+                    value=random.sample(sorted_tickers, 1)[0],
+                )
+                ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
+                lowq = gr.Slider(
+                    5,
+                    80,
+                    value=20,
+                    label="Forecast probability low threshold",
+                    info="Choose from 5% to 80%",
+                )
+            pass
+        with gr.Tab("Scans"):
+            pass
+        with gr.Tab("Advanced Queries"):
+            pass
 
         tickerDropdown.change(
             fn=canswim_playground.plot_forecast,
