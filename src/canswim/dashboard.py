@@ -3,13 +3,10 @@
 from canswim.model import CanswimModel
 import pandas as pd
 import gradio as gr
-from darts.models import ExponentialSmoothing
-from darts import TimeSeries
 from canswim.hfhub import HFHub
 import matplotlib.pyplot as plt
 import random
 import pandas as pd
-from pandas.tseries.offsets import BDay
 from loguru import logger
 from typing import Union, Optional, Sequence
 import matplotlib
@@ -228,87 +225,16 @@ class CanswimPlayground:
 
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
         target = self.get_target(ticker)
-        # baseline_forecast, canswim_forecast = self.get_forecast(ticker)
-        # backtest_forecasts = self.backtest(ticker)
         saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
         lq = lowq / 100
         fig, axes = plt.subplots(figsize=(20, 12))
         target.plot(label=f"{ticker} Close actual")
-        # baseline_forecast.plot(label=f"{ticker} Close baseline forecast")
-        # canswim_forecast.plot(
-        #     label=f"{ticker} Close CANSWIM forecast",
-        #     low_quantile=lq,
-        #     high_quantile=0.95,
-        # )
         logger.info(f"Plotting saved forecast: {saved_forecast_df_list}")
         if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
             for forecast in saved_forecast_df_list:
                 self.plot_quantiles_df(df=forecast, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close forecast")
-        # for b in backtest_forecasts:
-        #     b.plot(
-        #         label=f"{ticker} Close CANSWIM backtest",
-        #         low_quantile=lq,
-        #         high_quantile=0.95,
-        #     )
         plt.legend()
         return fig
-
-    def get_forecast(self, ticker: str = None):
-        target = self.get_target(ticker)
-        past_covariates = self.get_past_covariates(ticker)
-        future_covariates = self.get_future_covariates(ticker)
-        baseline_model = ExponentialSmoothing()
-        baseline_model.fit(target)
-        baseline_forecast = baseline_model.predict(
-            self.canswim_model.pred_horizon, num_samples=500
-        )
-        cached_canswim_pred = self.forecast_cache.get(ticker)
-        if cached_canswim_pred is not None:
-            logger.info(f"{ticker} forecast found in cache.")
-            canswim_forecast = cached_canswim_pred
-        else:
-            logger.info(f"{ticker} forecast not in cache. Running model predict().")
-            canswim_forecast = self.canswim_model.predict(
-                target=[target],
-                past_covariates=[past_covariates],
-                future_covariates=[future_covariates],
-            )[0]
-            self.forecast_cache[ticker] = canswim_forecast
-        logger.info(f"{ticker} get_forecast() finished.")
-        return baseline_forecast, canswim_forecast
-
-    def backtest(self, ticker: str = None):
-        cached_backtest = self.backtest_cache.get(ticker)
-        if cached_backtest is not None:
-            logger.info(f"{ticker} backtest found in cache.")
-            backtest_forecasts = cached_backtest
-        else:
-            logger.info(f"{ticker} backtest not in cache. Running model predict().")
-            target = self.get_target(ticker)
-            past_covariates = self.get_past_covariates(ticker)
-            future_covariates = self.get_future_covariates(ticker)
-            end_date = target.end_time()
-            earnings_df = self.canswim_model.covariates.earnings_loaded_df
-            logger.info("earnings_df.columns", earnings_df.columns)
-            mask = (earnings_df.index.get_level_values("Symbol") == ticker) & (
-                earnings_df.index.get_level_values("Date") < end_date - BDay(n=10)
-            )
-            earnings_dates = earnings_df.loc[mask]
-            logger.info(f"{ticker} earnings dates: {earnings_dates}")
-            earnings_dates_unique = earnings_dates.index.get_level_values(
-                "Date"
-            ).unique()
-            assert len(earnings_dates_unique) >= 2
-            target1 = target.drop_after(earnings_dates_unique[-1])
-            target2 = target.drop_after(earnings_dates_unique[-2])
-            backtest_forecasts = self.canswim_model.predict(
-                target=[target1, target2],
-                past_covariates=[past_covariates, past_covariates],
-                future_covariates=[future_covariates, future_covariates],
-            )
-            logger.info(f"{ticker} backtest finished.\n", backtest_forecasts)
-            self.backtest_cache[ticker] = backtest_forecasts
-        return backtest_forecasts
 
     def get_saved_forecast(self, ticker: str = None):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
@@ -334,6 +260,7 @@ class CanswimPlayground:
                         "forecast_start_year",
                         "forecast_start_month",
                         "forecast_start_day",])
+                    single_forecast = single_forecast.sort_index()
                     df_list.append(single_forecast)
         return df_list
 
@@ -362,7 +289,6 @@ def main():
                     label="Stock Symbol",
                     value=random.sample(sorted_tickers, 1)[0],
                 )
-                ## time = gr.Dropdown(["3 months", "6 months", "9 months", "12 months"], label="Downloads over the last...", value="12 months")
                 lowq = gr.Slider(
                     5,
                     80,
@@ -388,7 +314,6 @@ def main():
             outputs=[plotComponent],
             queue=False,
         )
-        ## time.change(get_forecast, [lib, time], plt, queue=False)
         demo.load(
             fn=canswim_playground.plot_forecast,
             inputs=[tickerDropdown, lowq],

@@ -7,3 +7,4 @@ tmp/**
 .vscode
 canswim_model.pt*
 build/**
+dist/**
