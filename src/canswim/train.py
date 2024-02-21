@@ -23,17 +23,17 @@ class CanswimTrainer:
     def build_new_model(self):
         """Build a new model using known optimal hyperparameters"""
         self.canswim_model.build(
-            input_chunk_length=252,
+            input_chunk_length=168,
             output_chunk_length=42,
             hidden_size=1536,
             num_encoder_layers=3,
             num_decoder_layers=3,
             decoder_output_dim=8,
-            temporal_decoder_hidden=64,
+            temporal_decoder_hidden=80,
             use_layer_norm=True,
             use_reversible_instance_norm=True,
-            dropout=0.2,
-            optimizer_kwargs={"lr": 3.5e-05},
+            dropout=0.3,
+            optimizer_kwargs={"lr": 1e-05},
             save_checkpoints=False,  # checkpoint to retrieve the best performing model state,
             force_reset=False,
         )
@@ -71,7 +71,7 @@ class CanswimTrainer:
 
 
 # main function
-def main():
+def main(new_model: bool = False):
 
     trainer = CanswimTrainer()
 
@@ -92,8 +92,10 @@ def main():
     logger.info("n_outer_train_loop:", n_outer_train_loop, type(n_outer_train_loop))
 
     # build a new model or download existing model from hf hub or local dir
-    trainer.canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
-    # build_new_model()
+    if new_model:
+        trainer.canswim_model.build_new_model()
+    else:
+        trainer.canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
 
     # download market data from hf hub if it hasn't been downloaded already
     trainer.canswim_model.download_data(repo_id=repo_id)
@@ -118,7 +120,7 @@ def main():
             # train model
             trainer.canswim_model.train()
         except Exception as e:
-            logger.exception("Skipping train loop due to ERROR.")
+            logger.exception(f"Skipping train loop due to ERROR.: {e}")
         # Daily routine
         if wall_time() > yesterday + Day(n=1):
             try:

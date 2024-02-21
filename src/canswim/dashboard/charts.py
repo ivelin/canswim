@@ -1,24 +1,49 @@
-"""CANSWIM Playground. A gradio app intended to be deployed on HF Hub."""
-
-from canswim.model import CanswimModel
-import pandas as pd
-import gradio as gr
-from canswim.hfhub import HFHub
-import matplotlib.pyplot as plt
-import random
-import pandas as pd
 from loguru import logger
 from typing import Union, Optional, Sequence
 import matplotlib
+from canswim.model import CanswimModel
+import gradio as gr
+import matplotlib.pyplot as plt
+import random
+import pandas as pd
 
-# pd.options.plotting.backend = "plotly"
-# pd.options.plotting.backend = "matplotlib"
-# pd.options.plotting.backend = "hvplot"
+# Note: It appears that gradio Plot ignores the backend plot lib setting
+# pd.options.plotting.backend = 'hvplot'
 
-repo_id = "ivelin/canswim"
+class ChartsTab:
+
+    def __init__(self, canswim_model: CanswimModel = None):
+      self.canswim_model = canswim_model
+      self.plotComponent = gr.Plot()
+      with gr.Row():
+          sorted_tickers = sorted(self.canswim_model.targets_ticker_list)
+          logger.info("Dropdown tickers: ", sorted_tickers)
+          self.tickerDropdown = gr.Dropdown(
+              choices=sorted_tickers,
+              label="Stock Symbol",
+              value=random.sample(sorted_tickers, 1)[0],
+          )
+          self.lowq = gr.Slider(
+              5,
+              90,
+              value=20,
+              label="Probability threshold for low end range of forecasted values",
+              info="Choose betweeen 5% and 90%",
+          )
+          self.tickerDropdown.change(
+              fn=self.plot_forecast,
+              inputs=[self.tickerDropdown, self.lowq],
+              outputs=[self.plotComponent],
+              queue=False,
+          )
+          self.lowq.change(
+              fn=self.plot_forecast,
+              inputs=[self.tickerDropdown, self.lowq],
+              outputs=[self.plotComponent],
+              queue=False,
+          )
 
 
-class CanswimPlayground:
     def get_target(self, ticker):
         target = self.canswim_model.targets.target_series[ticker]
         logger.info(
@@ -39,30 +64,6 @@ class CanswimPlayground:
             f"future covariates start, end: {future_covariates.start_time()}, {future_covariates.end_time()}"
         )
         return future_covariates
-
-    def __init__(self):
-        self.canswim_model = CanswimModel()
-        self.hfhub = HFHub()
-        # cache backtest and forecast predictions per ticker
-        self.forecast_cache = {}
-        self.backtest_cache = {}
-
-    def download_model(self):
-        """Load model from HF Hub"""
-        # download model from hf hub
-        self.canswim_model.download_model(repo_id=repo_id)
-        logger.info(f"trainer params {self.canswim_model.torch_model.trainer_params}")
-        self.canswim_model.torch_model.trainer_params["logger"] = False
-
-    def download_data(self):
-        """Prepare time series for model forecast"""
-        self.hfhub.download_data(repo_id=repo_id)
-        # load raw data from hf hub
-        start_date = pd.Timestamp("2019-10-21")
-        self.canswim_model.load_data(start_date=start_date)
-        # prepare timeseries for forecast
-        self.canswim_model.prepare_forecast_data(start_date=start_date)
-        self.tickers = self.canswim_model.targets_ticker_list
 
     def plot_quantiles_df(
         self,
@@ -127,7 +128,7 @@ class CanswimPlayground:
         """
 
         if df is None or len(df) == 0:
-            logger.info("Dataframe is empty. Nothing to plot.")
+            # logger.debug("Dataframe is empty. Nothing to plot.")
             return
 
         alpha_confidence_intvls = 0.25
@@ -229,7 +230,7 @@ class CanswimPlayground:
         lq = lowq / 100
         fig, axes = plt.subplots(figsize=(20, 12))
         target.plot(label=f"{ticker} Close actual")
-        logger.info(f"Plotting saved forecast: {saved_forecast_df_list}")
+        # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
         if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
             for forecast in saved_forecast_df_list:
                 self.plot_quantiles_df(df=forecast, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close forecast")
@@ -249,7 +250,7 @@ class CanswimPlayground:
         logger.info(f"df row count: {len(df)}")
         logger.info(f"df columns: {df.columns}")
         logger.info(f"df column types: \n{df.dtypes}")
-        logger.info(f"df row sample: {df}")
+        # logger.debug(f"df row sample: {df}")
         df = df.drop(columns=["symbol"])
         df_list = []
         for y in df["forecast_start_year"].unique():
@@ -263,66 +264,3 @@ class CanswimPlayground:
                     single_forecast = single_forecast.sort_index()
                     df_list.append(single_forecast)
         return df_list
-
-
-def main():
-    with gr.Blocks() as demo:
-        gr.Markdown(
-            """
-        CANSWIM Playground for CANSLIM style investors.
-        * __NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK!__
-        * Model trainer source repo [here](https://github.com/ivelin/canswim). Feedback welcome via github issues.
-        """
-        )
-
-        canswim_playground = CanswimPlayground()
-        canswim_playground.download_model()
-        canswim_playground.download_data()
-
-        with gr.Tab("Charts"):
-            plotComponent = gr.Plot()
-            with gr.Row():
-                sorted_tickers = sorted(canswim_playground.tickers)
-                logger.info("Dropdown tickers: ", sorted_tickers)
-                tickerDropdown = gr.Dropdown(
-                    choices=sorted_tickers,
-                    label="Stock Symbol",
-                    value=random.sample(sorted_tickers, 1)[0],
-                )
-                lowq = gr.Slider(
-                    5,
-                    80,
-                    value=20,
-                    label="Forecast probability low threshold",
-                    info="Choose from 5% to 80%",
-                )
-            pass
-        with gr.Tab("Scans"):
-            pass
-        with gr.Tab("Advanced Queries"):
-            pass
-
-        tickerDropdown.change(
-            fn=canswim_playground.plot_forecast,
-            inputs=[tickerDropdown, lowq],
-            outputs=[plotComponent],
-            queue=False,
-        )
-        lowq.change(
-            fn=canswim_playground.plot_forecast,
-            inputs=[tickerDropdown, lowq],
-            outputs=[plotComponent],
-            queue=False,
-        )
-        demo.load(
-            fn=canswim_playground.plot_forecast,
-            inputs=[tickerDropdown, lowq],
-            outputs=[plotComponent],
-            queue=False,
-        )
-
-    demo.launch()
-
-
-if __name__ == "__main__":
-    main()
