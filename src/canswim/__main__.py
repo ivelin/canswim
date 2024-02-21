@@ -59,6 +59,14 @@ parser.add_argument(
     required=False,
     help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""")
 
+parser.add_argument(
+    '--new_model',
+    type=bool,
+    required=False,
+    default=False,
+    help="""Optional argument for the `train` task. Whether to train a newly created model or continue training an existing pre-trained model.""")
+
+
 args = parser.parse_args()
 
 load_dotenv(override=True)
@@ -92,7 +100,7 @@ match args.task:
     case "uploaddata":
         hfhub.upload_data()
     case "train":
-        train.main()
+        train.main(new_model=args.new_model)
     case "finetune":
         raise NotImplementedError("finetune task not implemented yet")
     case "forecast":
