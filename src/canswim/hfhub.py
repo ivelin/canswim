@@ -59,6 +59,8 @@ class HFHub:
             map_location = "cuda"
         else:
             map_location = "cpu"
+        if repo_id is None:
+            repo_id = self.repo_id
         with tempfile.TemporaryDirectory() as tmpdirname:
             snapshot_download(
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
@@ -136,7 +138,9 @@ class HFHub:
             os.listdir(data_dir),
         )
 
-    def upload_data(self, repo_id: str = None, private: bool = True, local_dir: str = None):
+    def upload_data(
+        self, repo_id: str = None, private: bool = True, local_dir: str = None
+    ):
         if local_dir is not None:
             data_dir = local_dir
         else:
@@ -147,7 +151,11 @@ class HFHub:
         # prefix for HF Hub dataset repo
         # Create repo if not existing yet
         repo_info = create_repo(
-            repo_id=repo_id, repo_type="dataset", private=private, exist_ok=True, token=self.HF_TOKEN
+            repo_id=repo_id,
+            repo_type="dataset",
+            private=private,
+            exist_ok=True,
+            token=self.HF_TOKEN,
         )
         logger.info(f"repo_info: ", repo_info)
         upload_folder(
