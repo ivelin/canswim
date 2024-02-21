@@ -327,7 +327,7 @@ class Covariates:
         return t_kms_series
 
     def prepare_broad_market_series(self, train_date_start=None):
-        logger.info("preparing past covariates: broad market indecies")
+        logger.info("preparing past covariates: broad market indexes")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]

@@ -203,7 +203,7 @@ class MarketDataGatherer:
 
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
-        # Capture S&P500, NASDAQ100 and Russell 200 indecies and their equal weighted counter parts
+        # Capture S&P500, NASDAQ100 and Russell 200 indexes and their equal weighted counter parts
         # As well as VIX volatility index, DYX US Dollar index, TNX US 12 Weeks Treasury Yield, 5 Years Treasury Yield and 10 Year Treasuries Yield
         broad_market_indicies = (
             "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
@@ -227,9 +227,9 @@ class MarketDataGatherer:
         """
         return  # See warning message above.
         """
-        Gather historic price and volume data for S&P 1500 GICS subindustries indecies.
+        Gather historic price and volume data for S&P 1500 GICS subindustries indexes.
         S&P 1500 includes S&P 400, S&P 500, S&P 600 and overall about 90% of the US stock market capitalization.
-        The dataset has 163 GICS sub-industry indecies active as of 2023 plus 7 that were removed in 2023.
+        The dataset has 163 GICS sub-industry indexes active as of 2023 plus 7 that were removed in 2023.
         https://www.msci.com/documents/1296102/11185224/GICS+Map+2023.xlsx/82cc6504-9919-29e5-9789-a24fc039d0a5?t=1679087572540
         The goal of these covariates is to provide the model with a more granural breakdown of stock grouping by industry.
         Since stocks usually move together with their group, the model can learn the patterns how an individual stock trend
