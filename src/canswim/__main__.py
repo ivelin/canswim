@@ -18,13 +18,14 @@ from loguru import logger
 from dotenv import load_dotenv
 import os
 import argparse
-from canswim import model_search, train, dashboard, gather_data
+from canswim import dashboard, gather_data, model_search, train, forecast
+from canswim.hfhub import HFHub
 
 # Instantiate the parser
 parser = argparse.ArgumentParser(
     prog="canswim",
     description="""CANSWIM is a toolkit for CANSLIM style investors.
-        Humbly complements the Simple Moving Average and other technical indicators.
+        Aims to complement the Simple Moving Average and other technical indicators.
         """,
     epilog="NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
 )
@@ -35,13 +36,36 @@ parser.add_argument(
     help="""Which %(prog)s task to run:
         `dashboard` for stock charting and scans of recorded forecasts.
         'gatherdata` to gather 3rd party stock market data and save to HF Hub.
+        'uploaddata` upload to HF Hub any interim changes to local data storage.
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
-        `finetune` to fine tune pretrained model.
+        `finetune` to fine tune pretrained model on new stock market data.
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
-    choices=["dashboard", "gatherdata", "modelsearch", "train", "finetune", "forecast"],
+    choices=[
+        "dashboard",
+        "gatherdata",
+        "uploaddata",
+        "modelsearch",
+        "train",
+        "finetune",
+        "forecast",
+    ],
 )
+
+parser.add_argument(
+    '--forecast_start_date',
+    type=str,
+    required=False,
+    help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""")
+
+parser.add_argument(
+    '--new_model',
+    type=bool,
+    required=False,
+    default=False,
+    help="""Optional argument for the `train` task. Whether to train a newly created model or continue training an existing pre-trained model.""")
+
 
 args = parser.parse_args()
 
@@ -61,18 +85,25 @@ logger.info(
 
 logger.info("command line args: {args}", args=args)
 
+hfhub = HFHub()
+load_dotenv(override=True)
+repo_id = os.getenv("repo_id", "ivelin/canswim")
+
+
 match args.task:
+    case "dashboard":
+        dashboard.main()
     case "modelsearch":
         model_search.main()
     case "gatherdata":
         gather_data.main()
+    case "uploaddata":
+        hfhub.upload_data()
     case "train":
-        train.main()
+        train.main(new_model=args.new_model)
     case "finetune":
         raise NotImplementedError("finetune task not implemented yet")
     case "forecast":
-        raise NotImplementedError("forecast task not implemented yet")
-    case "dashboard":
-        dashboard.main()
+        forecast.main(forecast_start_date=args.forecast_start_date)
     case _:
         logger.error("Unrecognized task argument {m} ", m=args.module)

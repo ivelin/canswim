@@ -327,7 +327,7 @@ class Covariates:
         return t_kms_series
 
     def prepare_broad_market_series(self, train_date_start=None):
-        logger.info("preparing past covariates: broad market indecies")
+        logger.info("preparing past covariates: broad market indexes")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
@@ -364,9 +364,10 @@ class Covariates:
         series_filled = filler.transform(sectors_series)
         assert len(series_filled.gaps()) == 0
         sectors_series = series_filled
-        logger.info(f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}")
+        logger.info(
+            f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
+        )
         return sectors_series
-
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date
@@ -529,7 +530,7 @@ class Covariates:
     ):
         """
         Prepare future covariate series with analyst estimates for a given period (annual or quarter).
-        :param all_est_df: estimates dataframe indexed by ['symbol', 'date']
+        :param all_est_df: estimates dataframe indexed by ['Symbol', 'Date']
         :param n_future_periods: number of periods of future estimates to make visible at each timeseries date
         :param period: quarter or annual
         :return: estimate series expanded with forward periods at each series date indexed row
@@ -569,7 +570,10 @@ class Covariates:
                 t_est_series[t] = est_padded
 
             except KeyError as e:
-                logger.exception(f"No analyst estimates available for {t}, error", e)
+                logger.info(
+                    f"Skipping {t} from covariates series. No analyst estimates available for {t}, error:",
+                    e,
+                )
         return t_est_series
 
     def prepare_analyst_estimates(self, stock_price_series=None):
@@ -624,13 +628,11 @@ class Covariates:
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
-        sectors_series = self.prepare_sectors_series(
-            train_date_start=train_date_start
-        )
-        sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
-        past_covariates_tmp = self.stack_covariates(
-            old_covs=past_covariates, new_covs=sectors_dict
-        )
+        # sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
+        # sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
+        # past_covariates_tmp = self.stack_covariates(
+        #     old_covs=past_covariates, new_covs=sectors_dict
+        # )
         past_covariates = past_covariates_tmp
         self.past_covariates = past_covariates
 
@@ -646,16 +648,16 @@ class Covariates:
     def __extend_series(self, n: int = -1, series: {} = None, target: {} = None):
         new_series = {}
         for t, s in series.items():
-            logger.info(
-                f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
-            )
-            logger.info(f"target {t} end time: {target[t].end_time()}")
+            # logger.info(
+            #     f"{t} series before extension start, end: {s.start_time()}, {s.end_time()}"
+            # )
+            # logger.info(f"target {t} end time: {target[t].end_time()}")
             start = s.start_time()
             if s.end_time() > target[t].end_time() + BDay(n=n):
                 new_series[t] = s
-                logger.info(
-                    f"No need to extend {t} series. End greater than target end."
-                )
+                # logger.info(
+                #     f"No need to extend {t} series. End greater than target end."
+                # )
             else:
                 end = s.end_time() + BDay(n=n)
                 df = s.pd_dataframe()
@@ -663,9 +665,9 @@ class Covariates:
                 df = df.reindex(idx).ffill()
                 s_ext = TimeSeries.from_dataframe(df, freq="B", fill_missing_dates=True)
                 new_series[t] = s_ext
-                logger.info(
-                    f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
-                )
+                # logger.info(
+                #     f"{t} series after extension start, end: {s_ext.start_time()}, {s_ext.end_time()}"
+                # )
         return new_series
 
     def prepare_future_covariates(
