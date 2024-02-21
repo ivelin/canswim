@@ -4,8 +4,10 @@ import matplotlib
 from canswim.model import CanswimModel
 import gradio as gr
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import random
 import pandas as pd
+from pandas.tseries.offsets import BDay
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
@@ -226,14 +228,33 @@ class ChartsTab:
 
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
         target = self.get_target(ticker)
+        plot_start_date = pd.Timestamp.now() - BDay(
+            self.canswim_model.train_history
+        )
+        visible_target = target.drop_before(plot_start_date)
         saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
         lq = lowq / 100
         fig, axes = plt.subplots(figsize=(20, 12))
-        target.plot(label=f"{ticker} Close actual")
+        visible_target.plot(label=f"{ticker} Close actual")
         # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
         if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
             for forecast in saved_forecast_df_list:
                 self.plot_quantiles_df(df=forecast, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close forecast")
+        # Set the locator
+        major_locator = mdates.YearLocator() # every year
+        minor_locator = mdates.MonthLocator()  # every month
+        # Specify the format - %b gives us Jan, Feb...
+        major_fmt = mdates.DateFormatter('"%Y"')
+        minor_fmt = mdates.DateFormatter('%b')
+        X = plt.gca().xaxis
+        X.set_major_locator(major_locator)
+        X.set_minor_locator(minor_locator)
+        # Specify formatter
+        X.set_major_formatter(major_fmt)
+        X.set_minor_formatter(minor_fmt)
+        # plt.show()
+        # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
+        plt.grid(which='minor', color='lightgrey', linestyle='--')
         plt.legend()
         return fig
 
