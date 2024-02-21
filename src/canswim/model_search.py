@@ -11,6 +11,8 @@ def main():
 
     canswim_model = CanswimModel()
     hfhub = HFHub()
+    # Optionally download data if its not already available locally
+    # NOTE: be careful not to override local data from previous searches!
     hfhub.download_data()
     load_dotenv(override=True)
     repo_id = os.getenv("repo_id", "ivelin/canswim")
