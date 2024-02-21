@@ -26,9 +26,13 @@ CANSWIM is a toolkit for CANSLIM style investors. Aims to complement the Simple 
 
 positional arguments:
   {dashboard,gatherdata,uploaddata,modelsearch,train,finetune,forecast}
-                        Which canswim task to run: `dashboard` for stock charting and scans of recorded forecasts. 'gatherdata` to gather 3rd party stock market data and save to HF Hub. 'uploaddata` upload to HF Hub any interim changes to local data storage.
-                        `modelsearch` to find and save optimal hyperparameters for model training. `train` for continuous model training. `finetune` to fine tune pretrained model on new stock market data. `forecast` to run forecast on stocks and upload dataset to HF
-                        Hub.
+                        Which canswim task to run:
+                        `dashboard` for stock charting and scans of recorded forecasts.
+                        'gatherdata` to gather 3rd party stock market data and save to HF Hub.
+                        'uploaddata` upload to HF Hub any interim changes to local data storage.
+                        `modelsearch` to find and save optimal hyperparameters for model training.
+                        `train` for continuous model training.
+                        `finetune` to fine tune pretrained model on new stock market data. `forecast` to run forecast on stocks and upload dataset to HF Hub.
 
 options:
   -h, --help            show this help message and exit
