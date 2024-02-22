@@ -27,7 +27,7 @@ class CanswimTrainer:
             output_chunk_length=42,
             hidden_size=1536,
             num_encoder_layers=3,
-            num_decoder_layers=3,
+            num_decoder_layers=2,
             decoder_output_dim=8,
             temporal_decoder_hidden=80,
             use_layer_norm=True,
@@ -46,7 +46,7 @@ class CanswimTrainer:
                 target=self.canswim_model.targets_list[i],
                 start=start_list[i],
                 past_covariates=self.canswim_model.past_cov_list[i],
-                    future_covariates=self.canswim_model.future_cov_list[i],
+                future_covariates=self.canswim_model.future_cov_list[i],
                 forecast_horizon=self.canswim_model.pred_horizon,
             )
             # logger.info(f"target series: \n{target}")
@@ -93,16 +93,18 @@ def main(new_model: bool = False):
 
     # build a new model or download existing model from hf hub or local dir
     if new_model:
-        trainer.canswim_model.build_new_model()
+        trainer.build_new_model()
     else:
-        trainer.canswim_model.download_model(repo_id=repo_id)  # prepare next sample subset
+        trainer.canswim_model.download_model(
+            repo_id=repo_id
+        )  # prepare next sample subset
 
     # download market data from hf hub if it hasn't been downloaded already
     trainer.canswim_model.download_data(repo_id=repo_id)
 
     wall_time = pd.Timestamp.now
     # set to yesterday
-    yesterday = wall_time().floor(freq="D") # - Day(n=1)
+    yesterday = wall_time().floor(freq="D") - Day(n=1)
     # set to previous Saturday
     previous_weekend = wall_time().floor(freq="D") - Day(n=wall_time().day_of_week + 2)
 
@@ -110,8 +112,6 @@ def main(new_model: bool = False):
     i = 0
     while i < n_outer_train_loop:
         logger.info(f"Outer train loop: {i}")
-        # load saved model
-        trainer.canswim_model.load_model()
         try:
             # load a new data sample from local storage
             trainer.canswim_model.load_data()
@@ -164,6 +164,11 @@ def main(new_model: bool = False):
         # refresh any config changes in the OS environment
         i += 1
         get_env()
+        # Note: load locally saved model
+        # since PyTorch Lightning currently does not recommend
+        # using fit() multiple times without loading model weights
+        # WARNING:darts.models.forecasting.torch_forecasting_model:Attempting to retrain/fine-tune the model without resuming from a checkpoint. This is currently discouraged. Consider model `TiDEModel.load_weights()` to load the weights for fine-tuning.
+        trainer.canswim_model.load_model()
 
 
 if __name__ == "__main__":
