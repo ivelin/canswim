@@ -65,7 +65,7 @@ class HFHub:
             snapshot_download(
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
             )
-            logger.info("dir file list:\n", os.listdir(tmpdirname))
+            logger.info(f"dir file list:\n {os.listdir(tmpdirname)}")
             model = model_class.load(
                 path=f"{tmpdirname}/{model_name}", map_location=map_location, **kwargs
             )

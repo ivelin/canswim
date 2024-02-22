@@ -5,8 +5,10 @@ import pandas as pd
 import gradio as gr
 from canswim.hfhub import HFHub
 from loguru import logger
-from canswim.dashboard.charts import ChartsTab
+from canswim.dashboard.charts import ChartTab
+from canswim.dashboard.scans import ScanTab
 from pandas.tseries.offsets import BDay
+import os
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = "plotly"
@@ -57,10 +59,18 @@ def main():
         canswim_playground.download_model()
         canswim_playground.download_data()
 
+        data_dir = os.getenv("data_dir", "data")
+        forecast_subdir = os.getenv(
+            "forecast_subdir", "forecast/"
+        )
+        forecast_path = f"{data_dir}/{forecast_subdir}"
+        logger.info(f"Forecast path: {forecast_path}")
+
+
         with gr.Tab("Charts"):
-            charts_tab = ChartsTab(canswim_playground.canswim_model)
+            charts_tab = ChartTab(canswim_playground.canswim_model, forecast_path=forecast_path)
         with gr.Tab("Scans"):
-            pass
+            ScanTab(canswim_playground.canswim_model, forecast_path=forecast_path)
         with gr.Tab("Advanced Queries"):
             pass
 
