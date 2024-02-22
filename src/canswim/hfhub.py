@@ -157,11 +157,16 @@ class HFHub:
             exist_ok=True,
             token=self.HF_TOKEN,
         )
-        logger.info(f"repo_info: ", repo_info)
+        logger.info(
+            f"repo_info: {repo_info}",
+        )
         upload_folder(
             repo_id=repo_id,
             # path_in_repo="data-3rd-party",
             repo_type="dataset",
             folder_path=data_dir,
             token=self.HF_TOKEN,
+        )
+        logger.info(
+            "Upload finished.",
         )

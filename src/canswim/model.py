@@ -910,16 +910,13 @@ class CanswimModel:
             "num_decoder_layers", low=2, high=2
         )  # low=1, high=3)
         decoder_output_dim = trial.suggest_int(
-            "decoder_output_dim",
-            low=8,
-            high=24,
-            step=8,  # low=4, high=32, step=4
+            "decoder_output_dim", low=8, high=8, step=8  # low=4, high=32, step=4
         )
         temporal_decoder_hidden = trial.suggest_int(
             "temporal_decoder_hidden",
-            low=32,
+            low=48,
             high=128,
-            step=16,  # low=16, high=128, step=16
+            step=32,  # low=16, high=128, step=16
         )
         dropout = trial.suggest_float(
             "dropout", low=0.3, high=0.3, step=0.1
