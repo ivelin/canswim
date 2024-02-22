@@ -217,7 +217,7 @@ class Covariates:
                 #    .apply(lambda x: tuple(x.index))
                 #   .reset_index(name="date")
                 # )
-                logger.exception(f"Skipping {t} due to error: \n{e}")
+                logger.warning(f"Skipping {t} due to error: \n{e}")
                 # logger.info(
                 #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
                 #
@@ -244,7 +244,7 @@ class Covariates:
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
             except KeyError as e:
-                logger.exception(f"Skipping {t} covariates stack due to error: ", e)
+                logger.warning(f"Skipping {t} covariates stack due to error: ", e)
         return stacked_covs
 
     def df_index_to_biz_days(self, df=None):
@@ -628,11 +628,11 @@ class Covariates:
         past_covariates_tmp = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
-        # sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
-        # sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
-        # past_covariates_tmp = self.stack_covariates(
-        #     old_covs=past_covariates, new_covs=sectors_dict
-        # )
+        sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
+        sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
+        past_covariates_tmp = self.stack_covariates(
+            old_covs=past_covariates, new_covs=sectors_dict
+        )
         past_covariates = past_covariates_tmp
         self.past_covariates = past_covariates
 
