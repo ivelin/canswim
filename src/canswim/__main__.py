@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
    Copyright 2024 Cocoonhive LLC
 
@@ -14,6 +15,8 @@
    limitations under the License.
 """
 
+import signal
+import sys
 from loguru import logger
 from dotenv import load_dotenv
 import os
@@ -89,6 +92,12 @@ hfhub = HFHub()
 load_dotenv(override=True)
 repo_id = os.getenv("repo_id", "ivelin/canswim")
 
+
+def signal_handler(sig, frame):
+    print('Ctrl+C - Exit')
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 match args.task:
     case "dashboard":

@@ -12,10 +12,11 @@ from pandas.tseries.offsets import BDay
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
 
-class ChartsTab:
+class ChartTab:
 
-    def __init__(self, canswim_model: CanswimModel = None):
+    def __init__(self, canswim_model: CanswimModel = None,  forecast_path: str = None):
       self.canswim_model = canswim_model
+      self.forecast_path = forecast_path
       self.plotComponent = gr.Plot()
       with gr.Row():
           sorted_tickers = sorted(self.canswim_model.targets_ticker_list)
@@ -264,7 +265,7 @@ class ChartsTab:
         logger.info(f"Loading saved forecast for {ticker}")
         filters = [("symbol", "=", ticker)] # "AAON"
         df = pd.read_parquet(
-            "data/forecast/",
+            self.forecast_path,
             filters=filters,
         )
         logger.info(f"df columns count: {len(df.columns)}")
