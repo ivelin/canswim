@@ -11,8 +11,6 @@ from canswim.hfhub import HFHub
 from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
 from loguru import logger
-from pandas.tseries.offsets import BDay
-from darts import TimeSeries
 import os
 
 

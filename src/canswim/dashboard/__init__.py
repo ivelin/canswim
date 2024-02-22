@@ -6,6 +6,7 @@ import gradio as gr
 from canswim.hfhub import HFHub
 from loguru import logger
 from canswim.dashboard.charts import ChartsTab
+from pandas.tseries.offsets import BDay
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = "plotly"
@@ -31,7 +32,9 @@ class CanswimPlayground:
         """Prepare time series for model forecast"""
         self.hfhub.download_data(repo_id=repo_id)
         # load raw data from hf hub
-        start_date = pd.Timestamp("2019-10-21")
+        start_date = pd.Timestamp.now() - BDay(
+            n=self.canswim_model.min_samples + self.canswim_model.train_history
+        )
         self.canswim_model.load_data(start_date=start_date)
         # prepare timeseries for forecast
         self.canswim_model.prepare_forecast_data(start_date=start_date)
