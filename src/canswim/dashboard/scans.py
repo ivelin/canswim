@@ -40,9 +40,11 @@ class ScanTab:
         quantile_col = f'close_quantile_{lq}'
         mean_col = 'close_quantile_0.5'
         return duckdb.sql(f"""
-            select symbol, forecast_start_year, forecast_start_month, forecast_start_day, min("{quantile_col}") , max("{mean_col}")
-            from forecast
-            group by symbol, forecast_start_year, forecast_start_month, forecast_start_day
+            SELECT f.symbol, min(f.date) as forecast_start_date, max(c.date) as prior_close_date, arg_max(c.close, c.date) as prior_close_price, min("{quantile_col}") as forecast_low_quantile, max("{mean_col}") as forecast_mean_quantile
+            FROM forecast f, close_price c
+            WHERE f.symbol = c.symbol AND c.date < f.date 
+            GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol
+            HAVING forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > {rr})
             """).df()
             # we need a join with the close table that provides actual closing prices prior to forecast start date
             # having (max("close_quantile_0.5") - close_prior_to_forecast) / (min("close_quantile_0.2") - close_prior_to_forecast) > RR
