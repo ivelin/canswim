@@ -46,6 +46,7 @@ class HFHub:
         with tempfile.TemporaryDirectory() as tmpdirname:
             # logger.info("created temporary directory for model", tmpdirname)
             model.save(path=f"{tmpdirname}/{model.model_name}")
+            logger.info(f"Uploading model to repo: {repo_id}")
             upload_folder(repo_id=repo_id, folder_path=tmpdirname, token=self.HF_TOKEN)
 
     def download_model(
@@ -62,10 +63,11 @@ class HFHub:
         if repo_id is None:
             repo_id = self.repo_id
         with tempfile.TemporaryDirectory() as tmpdirname:
+            logger.info(f"Downloading model from repo: {repo_id}")
             snapshot_download(
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
             )
-            logger.info("dir file list:\n", os.listdir(tmpdirname))
+            logger.info(f"dir file list:\n {os.listdir(tmpdirname)}")
             model = model_class.load(
                 path=f"{tmpdirname}/{model_name}", map_location=map_location, **kwargs
             )
@@ -91,6 +93,7 @@ class HFHub:
             token=self.HF_TOKEN,
         )
         # logger.info(f"repo_info: ", repo_info)
+        logger.info(f"Uploading timesires to repo: {repo_id}")
         df = series.pd_dataframe()
         with tempfile.TemporaryDirectory() as tmpdirname:
             df.to_parquet(path=f"{tmpdirname}/{series_name}.parquet")
@@ -107,6 +110,7 @@ class HFHub:
         series_name: str = None,
     ) -> TimeSeries:
         with tempfile.TemporaryDirectory() as tmpdirname:
+            logger.info(f"Downloading data from repo: {repo_id}")
             snapshot_download(
                 repo_id=repo_id,
                 repo_type="dataset",
@@ -145,6 +149,7 @@ class HFHub:
             data_dir = local_dir
         else:
             data_dir = self.data_dir
+        logger.info(f"Uploading data from directory: {data_dir}")
         if repo_id is None:
             repo_id = self.repo_id
         ## Upload all gathered data from 3rd party sources to hf hub

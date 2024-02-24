@@ -22,7 +22,7 @@ from typing import Optional, Sequence, List
 from canswim.hfhub import HFHub
 import gc
 from loguru import logger
-
+from canswim import constants
 
 def election_year_offset(idx):
     """Calculate offset in number of years from most recent election year."""
@@ -540,7 +540,7 @@ class CanswimModel:
             # use_reversible_instance_norm=True,
             n_epochs=self.n_epochs,
             likelihood=QuantileRegression(
-                quantiles=[0.01, 0.05, 0.2, 0.5, 0.8, 0.95, 0.99]
+                quantiles=constants.quantiles
             ),
             model_name=self.model_name,
             log_tensorboard=True,

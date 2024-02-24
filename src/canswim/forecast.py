@@ -12,7 +12,7 @@ from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
 from loguru import logger
 import os
-
+from canswim import constants
 
 class CanswimForecaster:
     def __init__(self):
@@ -22,10 +22,10 @@ class CanswimForecaster:
         logger.info(f"Stocks train list: {self.stock_train_list}")
         self.n_stocks = int(os.getenv("n_stocks", 50))
         logger.info(f"n_stocks: {self.n_stocks}")
-        self.forecast_data_file = os.getenv(
-            "forecast_data_file", "forecast_data.parquet"
+        self.forecast_subdir = os.getenv(
+            "forecast_subdir", "forecast/"
         )
-        logger.info(f"Forecast data file: {self.forecast_data_file}")
+        logger.info(f"Forecast data file: {self.forecast_subdir}")
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
 
@@ -103,6 +103,11 @@ class CanswimForecaster:
                 pred_start = ts.start_time()
                 logger.info(f"Next forecast timeseries: {ts}")
                 df = ts.pd_dataframe()
+                # save commonly used quantiles
+                for q in constants.quantiles:
+                    qseries = df.quantile(q=q, axis=1)
+                    qname = f'close_quantile_{q}'
+                    df[qname] = qseries
                 df["symbol"] = t
                 df["forecast_start_year"] = pred_start.year
                 df["forecast_start_month"] = pred_start.month
@@ -117,7 +122,7 @@ class CanswimForecaster:
             f"Saving forecast_df with {len(forecast_df.columns)} columns, {len(forecast_df)} rows: {forecast_df}"
         )
         forecast_df.to_parquet(
-            f"{self.data_dir}/forecast",
+            f"{self.data_dir}/{self.forecast_subdir}",
             partition_cols=[
                 "symbol",
                 "forecast_start_year",
@@ -125,7 +130,7 @@ class CanswimForecaster:
                 "forecast_start_day",
             ],
         )
-        logger.info(f"Saved forecast data to: {self.forecast_data_file}")
+        logger.info(f"Saved forecast data to: {self.forecast_subdir}")
 
     def upload_data(self):
         self.hfhub.upload_data()

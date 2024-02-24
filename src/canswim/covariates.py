@@ -52,12 +52,12 @@ class Covariates:
     # backfill quarterly earnigs and revenue estimates so that the model can see the next quarter's estimates during the previou s quarter days
 
     def back_fill_earn_estimates(self, t_earn=None):
-        t_earn["time"].bfill(inplace=True)
-        t_earn["epsEstimated"].bfill(inplace=True)
-        t_earn["revenueEstimated"].bfill(inplace=True)
-        t_earn["fiscalDateEnding_day"].bfill(inplace=True)
-        t_earn["fiscalDateEnding_month"].bfill(inplace=True)
-        t_earn["fiscalDateEnding_year"].bfill(inplace=True)
+        t_earn["time"] = t_earn["time"].bfill()
+        t_earn["epsEstimated"] = t_earn["epsEstimated"].bfill()
+        t_earn["revenueEstimated"] = t_earn["revenueEstimated"].bfill()
+        t_earn["fiscalDateEnding_day"] = t_earn["fiscalDateEnding_day"].bfill()
+        t_earn["fiscalDateEnding_month"] = t_earn["fiscalDateEnding_month"].bfill()
+        t_earn["fiscalDateEnding_year"] = t_earn["fiscalDateEnding_year"].bfill()
         return t_earn
 
     def align_earn_to_business_days(self, t_earn=None):
@@ -73,7 +73,7 @@ class Covariates:
         return t_earn
 
     def prepare_earn_series(self, tickers=None):
-        logger.info(f"preparing past covariates: earnings estimates ")
+        logger.info("preparing past covariates: earnings estimates ")
         # convert date strings to numerical representation
         earn_df = self.earnings_loaded_df.copy()
         # logger.info("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
@@ -103,12 +103,12 @@ class Covariates:
         earn_df.pop("fiscalDateEnding")
 
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
-        earn_df["time"] = (
-            earn_df["time"]
-            .replace(["bmo", "amc", "--", "dmh"], [0, 1, -1, -1], inplace=False)
-            .astype("int32")
-        )
-
+        earn_df["time"] = pd.Categorical(earn_df["time"], categories=["bmo", "amc"]).codes
+        # earn_df["time"] = (
+        #     earn_df["time"]
+        #     .replace(["bmo", "amc", "--", "dmh"], [0, 1, -1, -1], inplace=False)
+        #     .astype("int32")
+        # )
         # convert earnings dataframe to series
         t_earn_series = {}
         for t in list(tickers):
@@ -218,6 +218,7 @@ class Covariates:
                 #   .reset_index(name="date")
                 # )
                 logger.warning(f"Skipping {t} due to error: \n{e}")
+                logger.warning(f"Skipping {t} due to error: {e}")
                 # logger.info(
                 #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
                 #
@@ -244,7 +245,7 @@ class Covariates:
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
             except KeyError as e:
-                logger.warning(f"Skipping {t} covariates stack due to error: ", e)
+                logger.warning(f"Skipping {t} covariates stack due to error: {e}")
         return stacked_covs
 
     def df_index_to_biz_days(self, df=None):
@@ -285,11 +286,12 @@ class Covariates:
         assert not kms_unique.index.has_duplicates
         kms_loaded_df = kms_unique.copy()
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
-        kms_loaded_df["period"] = (
-            kms_loaded_df["period"]
-            .replace(["Q1", "Q2", "Q3", "Q4"], [1, 2, 3, 4], inplace=False)
-            .astype("int32")
-        )
+        kms_loaded_df["period"] = pd.Categorical(kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]).codes
+        # kms_loaded_df["period"] = (
+        #     kms_loaded_df["period"]
+        #     .replace(["Q1", "Q2", "Q3", "Q4"], [1, 2, 3, 4], inplace=False)
+        #     .astype("int32")
+        # )
 
         t_kms_series = {}
         for t, prices in stock_price_series.items():

@@ -12,25 +12,26 @@ from pandas.tseries.offsets import BDay
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
 
-class ChartsTab:
+class ChartTab:
 
-    def __init__(self, canswim_model: CanswimModel = None):
+    def __init__(self, canswim_model: CanswimModel = None,  forecast_path: str = None):
       self.canswim_model = canswim_model
+      self.forecast_path = forecast_path
       self.plotComponent = gr.Plot()
       with gr.Row():
           sorted_tickers = sorted(self.canswim_model.targets_ticker_list)
-          logger.info("Dropdown tickers: ", sorted_tickers)
+          logger.info(f"Dropdown tickers: {sorted_tickers}")
           self.tickerDropdown = gr.Dropdown(
               choices=sorted_tickers,
               label="Stock Symbol",
               value=random.sample(sorted_tickers, 1)[0],
           )
           self.lowq = gr.Slider(
-              5,
-              90,
-              value=20,
-              label="Probability threshold for low end range of forecasted values",
-              info="Choose betweeen 5% and 90%",
+              50,
+              99,
+              value=80,
+              label="Confidence level for lowest close price",
+              info="Choose from 50% to 99%",
           )
           self.tickerDropdown.change(
               fn=self.plot_forecast,
@@ -233,7 +234,7 @@ class ChartsTab:
         )
         visible_target = target.drop_before(plot_start_date)
         saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
-        lq = lowq / 100
+        lq = (100-lowq) / 100
         fig, axes = plt.subplots(figsize=(20, 12))
         visible_target.plot(label=f"{ticker} Close actual")
         # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
@@ -262,9 +263,9 @@ class ChartsTab:
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
         # load parquet partition for stock
         logger.info(f"Loading saved forecast for {ticker}")
-        filters = [("symbol", "=", ticker)] # "AAON"
+        filters = [("symbol", "=", ticker)]
         df = pd.read_parquet(
-            "data/forecast/",
+            self.forecast_path,
             filters=filters,
         )
         logger.info(f"df columns count: {len(df.columns)}")
