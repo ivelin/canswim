@@ -11,9 +11,9 @@ class AdvancedTab:
             self.queryBox = gr.TextArea(value="""
                 SELECT f.symbol, min(f.date) as forecast_start_date, max(c.date) as prior_close_date, arg_max(c.close, c.date) as prior_close_price, min("close_quantile_0.2") as forecast_low_quantile, max("close_quantile_0.5") as forecast_mean_quantile
                 FROM forecast f, close_price c
-                WHERE f.symbol = c.symbol AND c.date < f.date 
+                WHERE f.symbol = c.symbol
                 GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol
-                HAVING forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > 3)
+                HAVING prior_close_date < forecast_start_date AND forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > 3)
             """)
 
         with gr.Row():
