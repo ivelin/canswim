@@ -20,7 +20,7 @@ class ChartTab:
       self.plotComponent = gr.Plot()
       with gr.Row():
           sorted_tickers = sorted(self.canswim_model.targets_ticker_list)
-          logger.info("Dropdown tickers: ", sorted_tickers)
+          logger.info(f"Dropdown tickers: {sorted_tickers}")
           self.tickerDropdown = gr.Dropdown(
               choices=sorted_tickers,
               label="Stock Symbol",

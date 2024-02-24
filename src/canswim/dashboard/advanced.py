@@ -14,6 +14,7 @@ class AdvancedTab:
                 WHERE f.symbol = c.symbol
                 GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol
                 HAVING prior_close_date < forecast_start_date AND forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > 3)
+                    AND (forecast_mean_quantile - prior_close_price) / prior_close_price > 0.2
             """)
 
         with gr.Row():
