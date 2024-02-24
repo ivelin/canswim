@@ -12,7 +12,7 @@ from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
 from loguru import logger
 import os
-
+from canswim import constants
 
 class CanswimForecaster:
     def __init__(self):
@@ -103,6 +103,11 @@ class CanswimForecaster:
                 pred_start = ts.start_time()
                 logger.info(f"Next forecast timeseries: {ts}")
                 df = ts.pd_dataframe()
+                # save commonly used quantiles
+                for q in constants.quantiles:
+                    qseries = df.quantile(q=q, axis=1)
+                    qname = f'close_quantile_{q}'
+                    df[qname] = qseries
                 df["symbol"] = t
                 df["forecast_start_year"] = pred_start.year
                 df["forecast_start_month"] = pred_start.month
