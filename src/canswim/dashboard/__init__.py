@@ -29,6 +29,10 @@ class CanswimPlayground:
             "forecast_subdir", "forecast/"
         )
         self.forecast_path = f"{data_dir}/{forecast_subdir}"
+        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
+        price_data = os.getenv("price_data", "all_stocks_price_hist_1d.parquet")
+        self.stocks_price_path = f"{data_dir}/{self.data_3rd_party}/{price_data}"
+
 
     def download_model(self):
         """Load model from HF Hub"""
@@ -53,6 +57,7 @@ class CanswimPlayground:
         logger.info(f"Forecast path: {self.forecast_path}")
         tickers_str = "'"+"','".join(self.canswim_model.targets_ticker_list)+"'"
         duckdb.sql(f"CREATE TABLE forecast AS SELECT date, symbol, forecast_start_year, forecast_start_month, forecast_start_day, COLUMNS(\"close_quantile_\d+\.\d+\") FROM read_parquet('{self.forecast_path}/**/*.parquet', hive_partitioning = 1) WHERE symbol in ({tickers_str})")
+        duckdb.sql(f"CREATE TABLE close_price AS SELECT Date, Symbol, Close FROM read_parquet('{self.stocks_price_path}') WHERE symbol in ({tickers_str})")
         duckdb.sql('SET enable_external_access = false; ')
 
 
