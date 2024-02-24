@@ -18,7 +18,7 @@ class ScanTab:
                 choices=[10, 15, 20, 25],
                 value=20,
                 label="Minimum probabilistic price gain.",
-                info="Choose gain percentage",
+                info="Choose reward percentage",
             )
             self.rr = gr.Radio(
                 choices=[3, 5, 10],
