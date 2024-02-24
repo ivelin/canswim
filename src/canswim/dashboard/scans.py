@@ -12,13 +12,19 @@ class ScanTab:
                 choices=[80, 95, 99],
                 value=80,
                 label="Confidence level for lowest close price",
-                info="Choose confidence percentage",
+                info="Choose low price confidence percentage",
+            )
+            self.reward = gr.Radio(
+                choices=[10, 15, 20, 25],
+                value=20,
+                label="Minimum probabilistic price gain.",
+                info="Choose gain percentage",
             )
             self.rr = gr.Radio(
-                choices=[3, 5, 8, 11],
+                choices=[3, 5, 10],
                 value=3,
                 label="Probabilistic Reward to Risk ratio between price increase and price drop within the forecast period.",
-                info="Choose confidence percentage",
+                info="Choose R/R percentage",
             )
 
 
@@ -30,13 +36,14 @@ class ScanTab:
 
         self.scanBtn.click(
             fn=self.scan_forecasts,
-            inputs=[self.lowq, self.rr],
+            inputs=[self.lowq, self.reward, self.rr],
             outputs=[self.scanResult],
             queue=False,
         )
 
-    def scan_forecasts(self, lowq, rr):
+    def scan_forecasts(self, lowq, reward, rr):
         lq = (100 - lowq)/100
+        reward = reward/100
         quantile_col = f'close_quantile_{lq}'
         mean_col = 'close_quantile_0.5'
         return duckdb.sql(f"""
@@ -45,6 +52,5 @@ class ScanTab:
             WHERE f.symbol = c.symbol
             GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol
             HAVING prior_close_date < forecast_start_date AND forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > {rr})
+                AND (forecast_mean_quantile - prior_close_price) / prior_close_price > {reward}
             """).df()
-            # we need a join with the close table that provides actual closing prices prior to forecast start date
-            # having (max("close_quantile_0.5") - close_prior_to_forecast) / (min("close_quantile_0.2") - close_prior_to_forecast) > RR
