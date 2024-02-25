@@ -14,6 +14,7 @@ from loguru import logger
 import os
 from canswim import constants
 
+
 class CanswimForecaster:
     def __init__(self):
         self.data_dir = os.getenv("data_dir", "data")
@@ -22,9 +23,7 @@ class CanswimForecaster:
         logger.info(f"Stocks train list: {self.stock_train_list}")
         self.n_stocks = int(os.getenv("n_stocks", 50))
         logger.info(f"n_stocks: {self.n_stocks}")
-        self.forecast_subdir = os.getenv(
-            "forecast_subdir", "forecast/"
-        )
+        self.forecast_subdir = os.getenv("forecast_subdir", "forecast/")
         logger.info(f"Forecast data file: {self.forecast_subdir}")
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
@@ -51,7 +50,8 @@ class CanswimForecaster:
             # such as holidays. Apparently there are about 15 non-weekend days when the market is off
             # and price data is not available on such days.
             # Add a sufficiently big sample pad to include all market off days.
-            n=self.canswim_model.min_samples + self.canswim_model.train_history
+            n=self.canswim_model.min_samples
+            + self.canswim_model.train_history
         )
 
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
@@ -59,7 +59,9 @@ class CanswimForecaster:
         target_sliced_list = self.canswim_model.targets_list
         # trim end of targets to specified forecast start date
         if forecast_start_date is not None:
-            logger.debug(f"Trimming targets after forecast start date: {forecast_start_date}")
+            logger.debug(
+                f"Trimming targets after forecast start date: {forecast_start_date}"
+            )
             for i, target in enumerate(target_sliced_list):
                 logger.debug(f"Target start date: {target.start_time()}")
                 logger.debug(f"Target sample count: {len(target)}")
@@ -106,7 +108,7 @@ class CanswimForecaster:
                 # save commonly used quantiles
                 for q in constants.quantiles:
                     qseries = df.quantile(q=q, axis=1)
-                    qname = f'close_quantile_{q}'
+                    qname = f"close_quantile_{q}"
                     df[qname] = qseries
                 df["symbol"] = t
                 df["forecast_start_year"] = pred_start.year
