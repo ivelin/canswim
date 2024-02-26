@@ -1,3 +1,15 @@
+"""
+Class representing an advanced tab for querying and scanning forecasts.
+
+Attributes:
+    canswim_model (CanswimModel): An instance of the CanswimModel class.
+
+Methods:
+    __init__(canswim_model): Initializes the AdvancedTab class.
+    scan_forecasts(query): Scans the forecasts based on the provided query.
+
+"""
+
 from loguru import logger
 from canswim.model import CanswimModel
 import gradio as gr
@@ -10,8 +22,7 @@ class AdvancedTab:
         self.canswim_model = canswim_model
         with gr.Row():
             self.queryBox = gr.TextArea(
-                value="""
-                SELECT 
+                value="""SELECT 
                     f.symbol, 
                     min(f.date) as forecast_start_date, 
                     max(c.date) as prior_close_date, 
@@ -50,6 +61,10 @@ class AdvancedTab:
         )
 
     def scan_forecasts(self, query):
-        # only run select queries
-        if query.strip().upper().startswith("SELECT"):
-            return duckdb.sql(query).df()
+        try:
+            # only run select queries
+            if query.strip().upper().startswith("SELECT"):
+                return duckdb.sql(query).df()
+        except Exception as e:
+            gr.Error("An error occurred while running the query:", e)
+            return None
