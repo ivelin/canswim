@@ -26,7 +26,7 @@ class ScanTab:
                 choices=[3, 5, 10],
                 value=3,
                 label="Probabilistic Reward to Risk ratio between price increase and price drop within the forecast period.",
-                info="Choose R/R percentage",
+                info="Choose R/R ratio",
             )
 
         with gr.Row():
@@ -46,7 +46,7 @@ class ScanTab:
         quantile_col = f"close_quantile_{lq}"
         mean_col = "close_quantile_0.5"
         return duckdb.sql(
-            f"""
+            f"""--sql
             SELECT 
                 f.symbol, 
                 min(f.date) as forecast_start_date, 
