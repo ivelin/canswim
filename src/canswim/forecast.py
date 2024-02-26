@@ -14,17 +14,16 @@ from loguru import logger
 import os
 from canswim import constants
 
+
 class CanswimForecaster:
     def __init__(self):
         self.data_dir = os.getenv("data_dir", "data")
         self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
-        self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
-        logger.info(f"Stocks train list: {self.stock_train_list}")
+        self.stock_tickers_list = os.getenv("stock_tickers_list", "all_stocks.csv")
+        logger.info(f"Stocks train list: {self.stock_tickers_list}")
         self.n_stocks = int(os.getenv("n_stocks", 50))
         logger.info(f"n_stocks: {self.n_stocks}")
-        self.forecast_subdir = os.getenv(
-            "forecast_subdir", "forecast/"
-        )
+        self.forecast_subdir = os.getenv("forecast_subdir", "forecast/")
         logger.info(f"Forecast data file: {self.forecast_subdir}")
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
@@ -51,7 +50,8 @@ class CanswimForecaster:
             # such as holidays. Apparently there are about 15 non-weekend days when the market is off
             # and price data is not available on such days.
             # Add a sufficiently big sample pad to include all market off days.
-            n=self.canswim_model.min_samples + self.canswim_model.train_history
+            n=self.canswim_model.min_samples
+            + self.canswim_model.train_history
         )
 
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
@@ -59,11 +59,16 @@ class CanswimForecaster:
         target_sliced_list = self.canswim_model.targets_list
         # trim end of targets to specified forecast start date
         if forecast_start_date is not None:
-            logger.debug(f"Trimming targets after forecast start date: {forecast_start_date}")
-            for i, target in enumerate(target_sliced_list):
-                logger.debug(f"Target start date: {target.start_time()}")
-                logger.debug(f"Target sample count: {len(target)}")
-                target_sliced_list[i] = target.drop_after(forecast_start_date)
+            logger.debug(
+                f"Trimming targets after forecast start date: {forecast_start_date}"
+            )
+            for i, t in enumerate(target_sliced_list):
+                try:
+                    logger.debug(f"Target start date: {t.start_time()}")
+                    logger.debug(f"Target sample count: {len(t)}")
+                    target_sliced_list[i] = t.drop_after(forecast_start_date)
+                except Exception as e:
+                    logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
         canswim_forecast = self.canswim_model.predict(
             target=self.canswim_model.targets_list,
             past_covariates=self.canswim_model.past_cov_list,
@@ -74,13 +79,14 @@ class CanswimForecaster:
 
     def prep_next_stock_group(self):
         """Generator which iterates over all stocks and prepares them in groups."""
-        stocks_file = f"{self.data_dir}/{self.data_3rd_party}/{self.stock_train_list}"
+        stocks_file = f"{self.data_dir}/{self.data_3rd_party}/{self.stock_tickers_list}"
         logger.info(f"Loading stock tickers from {stocks_file}")
         all_stock_tickers = pd.read_csv(stocks_file)
         logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
         stock_list = list(set(all_stock_tickers["Symbol"]))
+        if self.n_stocks == -1:
+            self.n_stocks = len(stock_list)
         # group tickers in workable sample sizes for each forecast pass
-
         # credit ref: https://stackoverflow.com/questions/434287/how-to-iterate-over-a-list-in-chunks
         for pos in range(0, len(stock_list), self.n_stocks):
             stock_group = stock_list[pos : pos + self.n_stocks]
@@ -101,18 +107,18 @@ class CanswimForecaster:
             for i, t in enumerate(self.canswim_model.targets_ticker_list):
                 ts = forecast_list[i]
                 pred_start = ts.start_time()
-                logger.info(f"Next forecast timeseries: {ts}")
+                # logger.debug(f"Next forecast timeseries: {ts}")
                 df = ts.pd_dataframe()
                 # save commonly used quantiles
                 for q in constants.quantiles:
                     qseries = df.quantile(q=q, axis=1)
-                    qname = f'close_quantile_{q}'
+                    qname = f"close_quantile_{q}"
                     df[qname] = qseries
                 df["symbol"] = t
                 df["forecast_start_year"] = pred_start.year
                 df["forecast_start_month"] = pred_start.month
                 df["forecast_start_day"] = pred_start.day
-                logger.info(f"Next forecast sample: {df}")
+                # logger.debug(f"Next forecast sample: {df}")
                 forecast_df = pd.concat([forecast_df, df])
             return forecast_df
 

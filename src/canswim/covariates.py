@@ -103,7 +103,9 @@ class Covariates:
         earn_df.pop("fiscalDateEnding")
 
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
-        earn_df["time"] = pd.Categorical(earn_df["time"], categories=["bmo", "amc"]).codes
+        earn_df["time"] = pd.Categorical(
+            earn_df["time"], categories=["bmo", "amc"]
+        ).codes
         # earn_df["time"] = (
         #     earn_df["time"]
         #     .replace(["bmo", "amc", "--", "dmh"], [0, 1, -1, -1], inplace=False)
@@ -137,7 +139,7 @@ class Covariates:
                 assert len(tes.gaps()) == 0
                 t_earn_series[t] = tes
             except KeyError as e:
-                logger.exception(f"Skipping {t} due to error: ", e)
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
 
         return t_earn_series
 
@@ -217,8 +219,7 @@ class Covariates:
                 #    .apply(lambda x: tuple(x.index))
                 #   .reset_index(name="date")
                 # )
-                logger.warning(f"Skipping {t} due to error: \n{e}")
-                logger.warning(f"Skipping {t} due to error: {e}")
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
                 # logger.info(
                 #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
                 #
@@ -245,7 +246,7 @@ class Covariates:
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
             except KeyError as e:
-                logger.warning(f"Skipping {t} covariates stack due to error: {e}")
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
         return stacked_covs
 
     def df_index_to_biz_days(self, df=None):
@@ -286,7 +287,9 @@ class Covariates:
         assert not kms_unique.index.has_duplicates
         kms_loaded_df = kms_unique.copy()
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
-        kms_loaded_df["period"] = pd.Categorical(kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]).codes
+        kms_loaded_df["period"] = pd.Categorical(
+            kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]
+        ).codes
         # kms_loaded_df["period"] = (
         #     kms_loaded_df["period"]
         #     .replace(["Q1", "Q2", "Q3", "Q4"], [1, 2, 3, 4], inplace=False)
@@ -324,7 +327,7 @@ class Covariates:
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
             except (KeyError, AssertionError) as e:
-                logger.exception(f"Skipping {t} due to error: ", e)
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
         # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
 

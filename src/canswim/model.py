@@ -24,6 +24,7 @@ import gc
 from loguru import logger
 from canswim import constants
 
+
 def election_year_offset(idx):
     """Calculate offset in number of years from most recent election year."""
     return idx.year % 4
@@ -290,9 +291,10 @@ class CanswimModel:
         self.targets.target_series = updated_target_series
 
     def __validate_train_data(self):
-        assert (
-            len(self.target_train_list) == len(self.past_cov_list)
-            and len(self.target_train_list) == len(self.future_cov_list)
+        assert len(self.target_train_list) == len(self.past_cov_list) and len(
+            self.target_train_list
+        ) == len(
+            self.future_cov_list
         ), f"train({len(self.target_train_list)}), past covs({len(self.past_cov_list)} and future covs({len(self.future_cov_list)}) lists must have the same tickers"
         for i, t in enumerate(self.train_tickers):
             assert (
@@ -320,9 +322,14 @@ class CanswimModel:
         # load from .env file or OS vars if available
         load_dotenv(override=True)
 
+        self.stock_train_list = os.getenv("stock_tickers_list", "all_stocks.csv")
+        logger.info("Stocks train list: {stl}", stl=self.stock_train_list)
+
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
+        if self.n_stocks == -1:
+            self.n_stocks = len(self.stock_train_list)
         logger.info("n_stocks: {ns}", ns=self.n_stocks)
 
         # model training epochs
@@ -337,9 +344,6 @@ class CanswimModel:
         self.train_date_start = pd.Timestamp(
             os.getenv("train_date_start", "1991-01-01")
         )
-
-        self.stock_train_list = os.getenv("stocks_train_list", "all_stocks.csv")
-        logger.info("Stocks train list: {stl}", stl=self.stock_train_list)
 
     def prepare_forecast_data(self, start_date: pd.Timestamp = None):
         # prepare stock price time series
@@ -375,15 +379,18 @@ class CanswimModel:
             self.targets_list.append(self.targets.target_series[t])
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
-        logger.info(
-            f"Sample targets columns count: {len(self.targets_list[0].columns)}, {self.targets_list[0].columns}"
-        )
-        logger.info(
-            f"Sample past covariates columns count: {len(self.past_cov_list[0].columns)}, {self.past_cov_list[0].columns}"
-        )
-        logger.info(
-            f"Sample future covariates columns count: {len(self.future_cov_list[0].columns)}, {self.future_cov_list[0].columns}"
-        )
+        if self.targets_list is not None and len(self.targets_list) > 0:
+            logger.info(
+                f"Sample targets columns count: {len(self.targets_list[0].columns)}, {self.targets_list[0].columns}"
+            )
+            logger.info(
+                f"Sample past covariates columns count: {len(self.past_cov_list[0].columns)}, {self.past_cov_list[0].columns}"
+            )
+            logger.info(
+                f"Sample future covariates columns count: {len(self.future_cov_list[0].columns)}, {self.future_cov_list[0].columns}"
+            )
+        else:
+            logger.info("Not enough data to prepare targets and covariates")
 
         logger.info("Forecasting data prepared")
 
@@ -408,7 +415,9 @@ class CanswimModel:
             )
             return True
         except Exception as e:
-            logger.exception("Unable to find or load a saved model. Error: \n", e)
+            logger.exception(
+                f"Unable to find or load a locally saved model. Error: {e}"
+            )
         return False
 
     def load_model_weights(self):
@@ -436,7 +445,11 @@ class CanswimModel:
             model_class=TiDEModel,
             **kwargs,
         )
-        self.torch_model = torch_model
+        if torch_model is None:
+            logger.info("No model downloaded from remote repo. Loading local model...")
+            self.load_model()
+        else:
+            self.torch_model = torch_model
 
     def build(self, **kwargs):
         # early stopping (needs to be reset for each model later on)
@@ -539,9 +552,7 @@ class CanswimModel:
             # use_layer_norm=True,
             # use_reversible_instance_norm=True,
             n_epochs=self.n_epochs,
-            likelihood=QuantileRegression(
-                quantiles=constants.quantiles
-            ),
+            likelihood=QuantileRegression(quantiles=constants.quantiles),
             model_name=self.model_name,
             log_tensorboard=True,
             nr_epochs_val_period=1,
