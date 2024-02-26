@@ -2,6 +2,8 @@ from loguru import logger
 from canswim.model import CanswimModel
 import gradio as gr
 import duckdb
+
+
 class ScanTab:
 
     def __init__(self, canswim_model: CanswimModel = None):
@@ -27,7 +29,6 @@ class ScanTab:
                 info="Choose R/R percentage",
             )
 
-
         with gr.Row():
             self.scanBtn = gr.Button(value="Scan", variant="primary")
 
@@ -38,19 +39,27 @@ class ScanTab:
             fn=self.scan_forecasts,
             inputs=[self.lowq, self.reward, self.rr],
             outputs=[self.scanResult],
-            queue=False,
         )
 
     def scan_forecasts(self, lowq, reward, rr):
-        lq = (100 - lowq)/100
-        reward = reward/100
-        quantile_col = f'close_quantile_{lq}'
-        mean_col = 'close_quantile_0.5'
-        return duckdb.sql(f"""
-            SELECT f.symbol, min(f.date) as forecast_start_date, max(c.date) as prior_close_date, arg_max(c.close, c.date) as prior_close_price, min("{quantile_col}") as forecast_low_quantile, max("{mean_col}") as forecast_mean_quantile
+        lq = (100 - lowq) / 100
+        quantile_col = f"close_quantile_{lq}"
+        mean_col = "close_quantile_0.5"
+        return duckdb.sql(
+            f"""
+            SELECT 
+                f.symbol, 
+                min(f.date) as forecast_start_date, 
+                max(c.date) as prior_close_date, 
+                arg_max(c.close, c.date) as prior_close_price, 
+                min("{quantile_col}") as forecast_low_quantile, 
+                max("{mean_col}") as forecast_mean_quantile, 
+                ROUND(100*(forecast_mean_quantile - prior_close_price) / prior_close_price) as reward_percent, 
+                ROUND((forecast_mean_quantile - prior_close_price)/GREATEST(prior_close_price-forecast_low_quantile, 0.01),2) as reward_risk 
             FROM forecast f, close_price c
             WHERE f.symbol = c.symbol
             GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol
-            HAVING prior_close_date < forecast_start_date AND forecast_mean_quantile > prior_close_price AND (forecast_low_quantile > prior_close_price OR (forecast_mean_quantile - prior_close_price)/(prior_close_price-forecast_low_quantile) > {rr})
-                AND (forecast_mean_quantile - prior_close_price) / prior_close_price > {reward}
-            """).df()
+            HAVING prior_close_date < forecast_start_date AND forecast_mean_quantile > prior_close_price 
+                AND reward_risk >= {rr} AND reward_percent >= {reward}
+            """
+        ).df()

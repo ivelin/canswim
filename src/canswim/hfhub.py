@@ -8,6 +8,7 @@ from darts import TimeSeries
 from darts.models.forecasting.forecasting_model import ForecastingModel
 from huggingface_hub import snapshot_download, upload_folder, create_repo
 import torch
+import canswim
 
 
 class HFHub:
@@ -27,6 +28,13 @@ class HFHub:
         self.HF_TOKEN = api_key
         self.data_dir = os.getenv("data_dir", "data")
         self.repo_id = os.getenv("repo_id")
+        lm = os.getenv("local_mode", False)
+        if isinstance(lm, str) and lm == "False":
+            lm = False
+        else:
+            lm = True
+        self.local_mode = lm
+        logger.info(f"local_mode: {self.local_mode}")
 
     def upload_model(
         self,
@@ -34,6 +42,9 @@ class HFHub:
         model: ForecastingModel = None,
         private: Optional[bool] = True,
     ):
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping download.")
+            return
         # Create repo if not existing yet and get the associated repo_id
         create_repo(
             repo_id=repo_id,
@@ -56,6 +67,9 @@ class HFHub:
         model_class: object = None,
         **kwargs,
     ) -> ForecastingModel:
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping download.")
+            return
         if torch.cuda.is_available():
             map_location = "cuda"
         else:
@@ -84,6 +98,9 @@ class HFHub:
         series_name: str = None,
         private: Optional[bool] = True,
     ):
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping download.")
+            return
         # Create repo if not existing
         repo_info = create_repo(
             repo_id=repo_id,
@@ -109,6 +126,9 @@ class HFHub:
         repo_id: str = None,
         series_name: str = None,
     ) -> TimeSeries:
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping download.")
+            return
         with tempfile.TemporaryDirectory() as tmpdirname:
             logger.info(f"Downloading data from repo: {repo_id}")
             snapshot_download(
@@ -125,6 +145,9 @@ class HFHub:
             return ts
 
     def download_data(self, repo_id: str = None, local_dir: str = None):
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping download.")
+            return
         if local_dir is not None:
             data_dir = local_dir
         else:
@@ -145,6 +168,9 @@ class HFHub:
     def upload_data(
         self, repo_id: str = None, private: bool = True, local_dir: str = None
     ):
+        if self.local_mode:
+            logger.info("Local mode selected. Skipping upload.")
+            return
         if local_dir is not None:
             data_dir = local_dir
         else:
