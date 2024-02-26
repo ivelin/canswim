@@ -314,6 +314,7 @@ class MarketDataGatherer:
             )
             if earnings is not None and len(earnings) > 0:
                 edf = pd.DataFrame(earnings)
+                edf = edf.dropna(how="all")
                 edf["date"] = pd.to_datetime(edf["date"])
                 edf = edf.set_index(["symbol", "date"])
                 # edf = edf.pivot(columns='symbol')

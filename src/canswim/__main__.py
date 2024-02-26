@@ -39,7 +39,8 @@ parser.add_argument(
     help="""Which %(prog)s task to run:
         `dashboard` for stock charting and scans of recorded forecasts.
         'gatherdata` to gather 3rd party stock market data and save to HF Hub.
-        'uploaddata` upload to HF Hub any interim changes to local data storage.
+        'downloaddata` download model training and forecast data from HF Hub to local data storage.
+        'uploaddata` upload to HF Hub any interim changes to local train and forecast data.
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
         `finetune` to fine tune pretrained model on new stock market data.
@@ -48,6 +49,7 @@ parser.add_argument(
     choices=[
         "dashboard",
         "gatherdata",
+        "downloaddata",
         "uploaddata",
         "modelsearch",
         "train",
@@ -57,18 +59,19 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    '--forecast_start_date',
+    "--forecast_start_date",
     type=str,
     required=False,
-    help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""")
+    help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""",
+)
 
 parser.add_argument(
-    '--new_model',
+    "--new_model",
     type=bool,
     required=False,
     default=False,
-    help="""Optional argument for the `train` task. Whether to train a newly created model or continue training an existing pre-trained model.""")
-
+    help="""Optional argument for the `train` task. Whether to train a newly created model or continue training an existing pre-trained model.""",
+)
 
 args = parser.parse_args()
 
@@ -94,8 +97,9 @@ repo_id = os.getenv("repo_id", "ivelin/canswim")
 
 
 def signal_handler(sig, frame):
-    print('Ctrl+C - Exit')
+    print("Ctrl+C - Exit")
     sys.exit(0)
+
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -106,6 +110,8 @@ match args.task:
         model_search.main()
     case "gatherdata":
         gather_data.main()
+    case "downloaddata":
+        hfhub.download_data()
     case "uploaddata":
         hfhub.upload_data()
     case "train":

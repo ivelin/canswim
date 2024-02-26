@@ -8,51 +8,60 @@ import matplotlib.dates as mdates
 import random
 import pandas as pd
 from pandas.tseries.offsets import BDay
+import duckdb
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
 
+
 class ChartTab:
 
-    def __init__(self, canswim_model: CanswimModel = None,  forecast_path: str = None):
-      self.canswim_model = canswim_model
-      self.forecast_path = forecast_path
-      self.plotComponent = gr.Plot()
-      with gr.Row():
-          sorted_tickers = sorted(self.canswim_model.targets_ticker_list)
-          logger.info(f"Dropdown tickers: {sorted_tickers}")
-          self.tickerDropdown = gr.Dropdown(
-              choices=sorted_tickers,
-              label="Stock Symbol",
-              value=random.sample(sorted_tickers, 1)[0],
-          )
-          self.lowq = gr.Slider(
-              50,
-              99,
-              value=80,
-              label="Confidence level for lowest close price",
-              info="Choose from 50% to 99%",
-          )
-          self.tickerDropdown.change(
-              fn=self.plot_forecast,
-              inputs=[self.tickerDropdown, self.lowq],
-              outputs=[self.plotComponent],
-              queue=False,
-          )
-          self.lowq.change(
-              fn=self.plot_forecast,
-              inputs=[self.tickerDropdown, self.lowq],
-              outputs=[self.plotComponent],
-              queue=False,
-          )
+    def __init__(self, canswim_model: CanswimModel = None, forecast_path: str = None):
+        self.canswim_model = canswim_model
+        self.forecast_path = forecast_path
+        self.plotComponent = gr.Plot()
+        with gr.Row():
+            sorted_tickers = sorted(self.get_tickers())
+            logger.info(f"Dropdown tickers: {sorted_tickers}")
+            self.tickerDropdown = gr.Dropdown(
+                choices=sorted_tickers,
+                label="Stock Symbol",
+                value=random.sample(sorted_tickers, 1)[0],
+            )
+            self.lowq = gr.Slider(
+                50,
+                99,
+                value=80,
+                label="Confidence level for lowest close price",
+                info="Choose from 50% to 99%",
+            )
+            self.tickerDropdown.change(
+                fn=self.plot_forecast,
+                inputs=[self.tickerDropdown, self.lowq],
+                outputs=[self.plotComponent],
+            )
+            self.lowq.change(
+                fn=self.plot_forecast,
+                inputs=[self.tickerDropdown, self.lowq],
+                outputs=[self.plotComponent],
+            )
 
+    def get_tickers(self):
+        logger.info(f"Loading stock tickers from stock_tickers table")
+        tickers_df = duckdb.sql("SELECT symbol from stock_tickers ORDER BY symbol").df()
+        logger.info(f"Loaded {len(tickers_df)} symbols in total")
+        stock_list = list(set(tickers_df["Symbol"]))
+        return stock_list
 
     def get_target(self, ticker):
-        target = self.canswim_model.targets.target_series[ticker]
-        logger.info(
-            f"target {ticker} start, end: {target.start_time()}, {target.end_time()}"
-        )
-        return target
+        try:
+            target = self.canswim_model.targets.target_series[ticker]
+            logger.info(
+                f"target {ticker} start, end: {target.start_time()}, {target.end_time()}"
+            )
+            return target
+        except KeyError as e:
+            logger.warning(f"No target series for {ticker}")
 
     def get_past_covariates(self, ticker):
         past_covariates = self.canswim_model.covariates.past_covariates[ticker]
@@ -137,10 +146,14 @@ class ChartTab:
         alpha_confidence_intvls = 0.25
 
         if central_quantile != "mean":
-            assert isinstance(central_quantile, float) and 0.0 <= central_quantile <= 1.0, 'central_quantile must be either "mean", or a float between 0 and 1.'
+            assert (
+                isinstance(central_quantile, float) and 0.0 <= central_quantile <= 1.0
+            ), 'central_quantile must be either "mean", or a float between 0 and 1.'
 
         if high_quantile is not None and low_quantile is not None:
-            assert 0.0 <= low_quantile <= 1.0 and 0.0 <= high_quantile <= 1.0, "confidence interval low and high quantiles must be between 0 and 1."
+            assert (
+                0.0 <= low_quantile <= 1.0 and 0.0 <= high_quantile <= 1.0
+            ), "confidence interval low and high quantiles must be between 0 and 1."
 
         if new_plot:
             fig, ax = plt.subplots()
@@ -174,11 +187,7 @@ class ChartTab:
 
             if len(central_series) > 1:
                 p = ax.plot(
-                    df.index.values,
-                    central_series.values,
-                    "-",
-                    *args,
-                    **kwargs
+                    df.index.values, central_series.values, "-", *args, **kwargs
                 )
             # empty TimeSeries
             elif len(central_series) == 0:
@@ -200,10 +209,7 @@ class ChartTab:
             color_used = p[0].get_color() if default_formatting else None
 
             # Optionally show confidence intervals
-            if (
-                low_quantile is not None
-                and high_quantile is not None
-            ):
+            if low_quantile is not None and high_quantile is not None:
                 low_series = df.quantile(q=low_quantile, axis=1)
                 high_series = df.quantile(q=high_quantile, axis=1)
                 if len(low_series) > 1:
@@ -226,37 +232,52 @@ class ChartTab:
         ax.legend()
         return ax
 
-
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
-        target = self.get_target(ticker)
-        plot_start_date = pd.Timestamp.now() - BDay(
-            self.canswim_model.train_history
+        load_start_date = pd.Timestamp.now() - BDay(
+            n=self.canswim_model.min_samples + self.canswim_model.train_history
         )
-        visible_target = target.drop_before(plot_start_date)
-        saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
-        lq = (100-lowq) / 100
+        self.canswim_model.load_data(stock_tickers=[ticker], start_date=load_start_date)
+        # prepare timeseries for forecast
+        self.canswim_model.prepare_forecast_data(start_date=load_start_date)
         fig, axes = plt.subplots(figsize=(20, 12))
-        visible_target.plot(label=f"{ticker} Close actual")
-        # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
-        if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
-            for forecast in saved_forecast_df_list:
-                self.plot_quantiles_df(df=forecast, low_quantile=lq, high_quantile=0.95, label=f"{ticker} Close forecast")
-        # Set the locator
-        major_locator = mdates.YearLocator() # every year
-        minor_locator = mdates.MonthLocator()  # every month
-        # Specify the format - %b gives us Jan, Feb...
-        major_fmt = mdates.DateFormatter('"%Y"')
-        minor_fmt = mdates.DateFormatter('%b')
-        X = plt.gca().xaxis
-        X.set_major_locator(major_locator)
-        X.set_minor_locator(minor_locator)
-        # Specify formatter
-        X.set_major_formatter(major_fmt)
-        X.set_minor_formatter(minor_fmt)
-        # plt.show()
-        # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
-        plt.grid(which='minor', color='lightgrey', linestyle='--')
-        plt.legend()
+        target = self.get_target(ticker)
+        if target is None:
+            msg = f"Not enough data available to forecast {ticker}"
+            gr.Info(msg)
+            plt.text(0.5, 0.5, msg, fontsize="large")
+        else:
+            plot_start_date = pd.Timestamp.now() - BDay(
+                self.canswim_model.train_history
+            )
+            visible_target = target.drop_before(plot_start_date)
+            saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
+            lq = (100 - lowq) / 100
+            visible_target.plot(label=f"{ticker} Close actual")
+            # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
+            if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
+                for forecast in saved_forecast_df_list:
+                    self.plot_quantiles_df(
+                        df=forecast,
+                        low_quantile=lq,
+                        high_quantile=0.95,
+                        label=f"{ticker} Close forecast",
+                    )
+            # Set the locator
+            major_locator = mdates.YearLocator()  # every year
+            minor_locator = mdates.MonthLocator()  # every month
+            # Specify the format - %b gives us Jan, Feb...
+            major_fmt = mdates.DateFormatter('"%Y"')
+            minor_fmt = mdates.DateFormatter("%b")
+            X = plt.gca().xaxis
+            X.set_major_locator(major_locator)
+            X.set_minor_locator(minor_locator)
+            # Specify formatter
+            X.set_major_formatter(major_fmt)
+            X.set_minor_formatter(minor_fmt)
+            # plt.show()
+            # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
+            plt.grid(which="minor", color="lightgrey", linestyle="--")
+            plt.legend()
         return fig
 
     def get_saved_forecast(self, ticker: str = None):
@@ -278,11 +299,18 @@ class ChartTab:
         for y in df["forecast_start_year"].unique():
             for m in df["forecast_start_month"].unique():
                 for d in df["forecast_start_day"].unique():
-                    single_forecast = df.loc[(df["forecast_start_year"] == y) & (df["forecast_start_month"] == m) & (df["forecast_start_day"] == d)]
-                    single_forecast = single_forecast.drop(columns=[
-                        "forecast_start_year",
-                        "forecast_start_month",
-                        "forecast_start_day",])
+                    single_forecast = df.loc[
+                        (df["forecast_start_year"] == y)
+                        & (df["forecast_start_month"] == m)
+                        & (df["forecast_start_day"] == d)
+                    ]
+                    single_forecast = single_forecast.drop(
+                        columns=[
+                            "forecast_start_year",
+                            "forecast_start_month",
+                            "forecast_start_day",
+                        ]
+                    )
                     single_forecast = single_forecast.sort_index()
                     df_list.append(single_forecast)
         return df_list

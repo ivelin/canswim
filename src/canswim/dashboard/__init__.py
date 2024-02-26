@@ -19,20 +19,20 @@ import os
 
 repo_id = "ivelin/canswim"
 
+
 class CanswimPlayground:
 
     def __init__(self):
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
         data_dir = os.getenv("data_dir", "data")
-        forecast_subdir = os.getenv(
-            "forecast_subdir", "forecast/"
-        )
+        forecast_subdir = os.getenv("forecast_subdir", "forecast/")
         self.forecast_path = f"{data_dir}/{forecast_subdir}"
-        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
+        data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
         price_data = os.getenv("price_data", "all_stocks_price_hist_1d.parquet")
-        self.stocks_price_path = f"{data_dir}/{self.data_3rd_party}/{price_data}"
-
+        self.stocks_price_path = f"{data_dir}/{data_3rd_party}/{price_data}"
+        stock_tickers_list = os.getenv("stock_tickers_list", "all_stocks.csv")
+        self.stock_tickers_path = f"{data_dir}/{data_3rd_party}/{stock_tickers_list}"
 
     def download_model(self):
         """Load model from HF Hub"""
@@ -43,22 +43,40 @@ class CanswimPlayground:
 
     def download_data(self):
         """Prepare time series for model forecast"""
+        # download raw data from hf hub
         self.hfhub.download_data(repo_id=repo_id)
-        # load raw data from hf hub
-        start_date = pd.Timestamp.now() - BDay(
-            n=self.canswim_model.min_samples + self.canswim_model.train_history
-        )
-        self.canswim_model.load_data(start_date=start_date)
-        # prepare timeseries for forecast
-        self.canswim_model.prepare_forecast_data(start_date=start_date)
-
 
     def initdb(self):
         logger.info(f"Forecast path: {self.forecast_path}")
-        tickers_str = "'"+"','".join(self.canswim_model.targets_ticker_list)+"'"
-        duckdb.sql(f"CREATE TABLE forecast AS SELECT date, symbol, forecast_start_year, forecast_start_month, forecast_start_day, COLUMNS(\"close_quantile_\d+\.\d+\") FROM read_parquet('{self.forecast_path}/**/*.parquet', hive_partitioning = 1) WHERE symbol in ({tickers_str})")
-        duckdb.sql(f"CREATE TABLE close_price AS SELECT Date, Symbol, Close FROM read_parquet('{self.stocks_price_path}') WHERE symbol in ({tickers_str})")
-        duckdb.sql('SET enable_external_access = false; ')
+        duckdb.sql(
+            f"""
+            CREATE VIEW stock_tickers 
+            AS SELECT * FROM read_csv('{self.stock_tickers_path}', header=True)
+            """
+        )
+        # df_tickers = duckdb.sql("SELECT * from stock_tickers").df()
+        # logger.info(f"stock ticker list:\n {df_tickers}")
+        duckdb.sql(
+            f"""
+            CREATE VIEW forecast 
+            AS SELECT date, symbol, forecast_start_year, forecast_start_month, forecast_start_day, COLUMNS(\"close_quantile_\d+\.\d+\") 
+            FROM read_parquet('{self.forecast_path}/**/*.parquet', hive_partitioning = 1) as f
+            SEMI JOIN stock_tickers
+            ON f.symbol = stock_tickers.symbol;
+            """
+        )
+        duckdb.sql(
+            f"""
+            CREATE VIEW close_price 
+            AS SELECT Date, Symbol, Close 
+            FROM read_parquet('{self.stocks_price_path}') as cp
+            SEMI JOIN stock_tickers
+            ON cp.symbol = stock_tickers.symbol;
+            """
+        )
+        # access protected via read only remote access tokebs
+        # restricting access prevents sql views from working
+        # duckdb.sql("SET enable_external_access = false; ")
 
 
 def main():
@@ -78,7 +96,10 @@ def main():
         canswim_playground.initdb()
 
         with gr.Tab("Charts"):
-            charts_tab = ChartTab(canswim_playground.canswim_model, forecast_path=canswim_playground.forecast_path)
+            charts_tab = ChartTab(
+                canswim_playground.canswim_model,
+                forecast_path=canswim_playground.forecast_path,
+            )
         with gr.Tab("Scans"):
             ScanTab(canswim_playground.canswim_model)
         with gr.Tab("Advanced Queries"):
@@ -88,10 +109,9 @@ def main():
             fn=charts_tab.plot_forecast,
             inputs=[charts_tab.tickerDropdown, charts_tab.lowq],
             outputs=[charts_tab.plotComponent],
-            queue=False,
         )
 
-    demo.launch()
+    demo.queue().launch()
 
 
 if __name__ == "__main__":
