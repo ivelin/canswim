@@ -74,6 +74,17 @@ class CanswimPlayground:
             ON cp.symbol = stock_tickers.symbol;
             """
         )
+        duckdb.sql(
+            f"""
+            CREATE VIEW backtest_error 
+            AS SELECT f.symbol, mean(log(1+abs(f."close_quantile_0.5"-cp.Close))) as mal_error
+            FROM forecast as f, close_price as cp
+            WHERE cp.symbol = f.symbol AND cp.date = f.date
+            GROUP BY f.symbol, cp.symbol
+            HAVING cp.symbol = f.symbol
+            """
+        )
+
         # access protected via read only remote access tokebs
         # restricting access prevents sql views from working
         # duckdb.sql("SET enable_external_access = false; ")

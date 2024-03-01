@@ -25,7 +25,7 @@ class CanswimTrainer:
         self.canswim_model.build(
             input_chunk_length=168,
             output_chunk_length=42,
-            hidden_size=1536,
+            hidden_size=2048,
             num_encoder_layers=3,
             num_decoder_layers=2,
             decoder_output_dim=8,
