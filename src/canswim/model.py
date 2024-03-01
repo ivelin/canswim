@@ -897,7 +897,7 @@ class CanswimModel:
             "input_chunk_length",
             low=168,
             high=252,
-            step=42,
+            step=84,  # 42,
             # low=252,
             # high=self.train_history,
             # step=21,
@@ -912,7 +912,7 @@ class CanswimModel:
 
         # Other hyperparameters
         hidden_size = trial.suggest_int(
-            "hidden_size", low=1024, high=2048, step=512
+            "hidden_size", low=2048, high=2048, step=256
         )  # low=256, high=1024, step=256)
         num_encoder_layers = trial.suggest_int(
             "num_encoder_layers", low=3, high=3
@@ -925,8 +925,8 @@ class CanswimModel:
         )
         temporal_decoder_hidden = trial.suggest_int(
             "temporal_decoder_hidden",
-            low=48,
-            high=128,
+            low=80,  # 48,
+            high=112,
             step=32,  # low=16, high=128, step=16
         )
         dropout = trial.suggest_float(

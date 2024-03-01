@@ -84,12 +84,12 @@ class MarketDataGatherer:
     def __init__(self) -> None:
         load_dotenv(override=True)
         self.FMP_API_KEY = os.getenv("FMP_API_KEY")
-        logger.info(f"FMP_API_KEY found: {self.FMP_API_KEY!= None}")
+        logger.info(f"FMP_API_KEY found: {self.FMP_API_KEY != None}")
+        self.data_dir = os.getenv("data_dir", "data")
+        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
         self.all_stocks_file = "all_stocks.csv"
         self.price_frequency = "1d"  # "1wk"
         self.min_start_date = os.getenv("train_date_start", "1991-01-01")
-        self.data_dir = os.getenv("data_dir", "data")
-        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
 
     def gather_stock_tickers(self):
         # Prepare list of stocks for training
@@ -168,6 +168,27 @@ class MarketDataGatherer:
         stocks_df.to_csv(stocks_file)
         logger.info(f"Saved stock set to {stocks_file}")
 
+    def gather_fund_tickers(self):
+        # Prepare list of funds to use as covariates series
+        all_funds_set = set()
+        fund_files = ["ibdfunds.csv", "industry_funds.csv"]
+        logger.info("Compiling list of funds: {files}", files=fund_files)
+        for f in fund_files:
+            fp = f"{self.data_dir}/{self.data_3rd_party}/{f}"
+            if Path(fp).is_file():
+                funds = pd.read_csv(fp)
+                logger.info(f"loaded {len(funds)} fund symbols from {fp}")
+                logger.info(f"fund file columns: {funds.columns}")
+                fund_set = set(funds["Symbol"])
+                logger.info(f"{len(fund_set)} symbols in fund set")
+                all_funds_set |= fund_set
+                logger.info(f"total fund symbols loaded: {len(all_funds_set)}")
+            else:
+                logger.error(f"{fp} not found.")
+
+        logger.info(f"Loaded fund tickers: \n{sorted(list(all_funds_set))}")
+        return all_funds_set
+
     def _gather_yfdata_date_index(self, data_file: str = None, tickers: str = None):
         start_date = self.min_start_date
         old_df = None
@@ -178,7 +199,7 @@ class MarketDataGatherer:
             logger.info(f"Columns: \n{old_df.columns}")
             logger.info(f"Latest saved record is after {start_date}")
         except Exception as e:
-            logger.exception(f"Could not load data from file: {data_file}. Error: {e}")
+            logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
         new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d")
         new_df = new_df.dropna(how="all")
         logger.info("New data gathered. Sample: \n{bm}", bm=new_df)
@@ -219,44 +240,15 @@ class MarketDataGatherer:
         data_file = "data/data-3rd-party/sectors.parquet"
         self._gather_yfdata_date_index(data_file=data_file, tickers=sector_indicies)
 
-    def gather_subindustries_data(self):
+    def gather_industry_fund_data(self):
         """
-        WARN: YFinance does not provide rich historical price and volume data for Industries and Sub-industries
-        the way it does for Sectors.
-        Do not use this method with YFinance.
-        """
-        return  # See warning message above.
-        """
-        Gather historic price and volume data for S&P 1500 GICS subindustries indexes.
-        S&P 1500 includes S&P 400, S&P 500, S&P 600 and overall about 90% of the US stock market capitalization.
-        The dataset has 163 GICS sub-industry indexes active as of 2023 plus 7 that were removed in 2023.
-        https://www.msci.com/documents/1296102/11185224/GICS+Map+2023.xlsx/82cc6504-9919-29e5-9789-a24fc039d0a5?t=1679087572540
+        Gather historic price and volume data for key industry ETFs.
         The goal of these covariates is to provide the model with a more granural breakdown of stock grouping by industry.
-        Since stocks usually move together with their group, the model can learn the patterns how an individual stock trend
-        relates to its group price and volume action.
+        Since stocks usually move together with their group, the model can learn which group(s) a stock moves with from these covariates.
         """
-        subindustry_indicies = []
-        gics_file = f"{self.data_dir}/{self.data_3rd_party}/GICS2023.csv"
-        gics_df = pd.read_csv(gics_file)
-        logger.info(f"Loaded {len(gics_df)} GICS records. Columns: {gics_df}")
-        code_col_name = "Sub-Industry Code"
-        subindustry_codes = gics_df[
-            pd.to_numeric(gics_df[code_col_name], errors="coerce").notnull()
-        ]
-        subindustry_codes = subindustry_codes[code_col_name].unique()
-        logger.info(
-            f"Loaded {len(subindustry_codes)} subindustry codes: {subindustry_codes}"
-        )
-        sub_prefix = "^sp1500-"
-        subindustry_symbols = []
-        for c in subindustry_codes:
-            subindustry_symbols.append(f"{sub_prefix}{c}")
-        logger.info(
-            f"Prepared list of {len(subindustry_symbols)} S&P1500 subindustry symbols: {subindustry_symbols}"
-        )
-        data_file = "data/data-3rd-party/subindustries.parquet"
-        self._gather_yfdata_date_index(data_file=data_file, tickers=subindustry_symbols)
-        logger.info("Finished gathering subindisty data")
+        fund_tickers = self.gather_fund_tickers()
+        data_file = f"{self.data_dir}/{self.data_3rd_party}/industry_funds.parquet"
+        self._gather_yfdata_date_index(data_file=data_file, tickers=fund_tickers)
 
     def gather_stock_price_data(self):
         data_file = (
@@ -538,6 +530,7 @@ def main():
     g = MarketDataGatherer()
     g.gather_broad_market_data()
     g.gather_sectors_data()
+    g.gather_industry_fund_data()
     g.gather_stock_tickers()
     g.gather_stock_price_data()
     g.gather_earnings_data()

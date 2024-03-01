@@ -28,13 +28,13 @@ class HFHub:
         self.HF_TOKEN = api_key
         self.data_dir = os.getenv("data_dir", "data")
         self.repo_id = os.getenv("repo_id")
-        lm = os.getenv("local_mode", False)
+        lm = os.getenv("hfhub_sync", False)
         if isinstance(lm, str) and lm == "False":
             lm = False
         else:
             lm = True
-        self.local_mode = lm
-        logger.info(f"local_mode: {self.local_mode}")
+        self.hfhub_sync = lm
+        logger.info(f"hfhub_sync: {self.hfhub_sync}")
 
     def upload_model(
         self,
@@ -42,7 +42,7 @@ class HFHub:
         model: ForecastingModel = None,
         private: Optional[bool] = True,
     ):
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping download.")
             return
         # Create repo if not existing yet and get the associated repo_id
@@ -67,7 +67,7 @@ class HFHub:
         model_class: object = None,
         **kwargs,
     ) -> ForecastingModel:
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping download.")
             return
         if torch.cuda.is_available():
@@ -98,7 +98,7 @@ class HFHub:
         series_name: str = None,
         private: Optional[bool] = True,
     ):
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping download.")
             return
         # Create repo if not existing
@@ -126,7 +126,7 @@ class HFHub:
         repo_id: str = None,
         series_name: str = None,
     ) -> TimeSeries:
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping download.")
             return
         with tempfile.TemporaryDirectory() as tmpdirname:
@@ -145,7 +145,7 @@ class HFHub:
             return ts
 
     def download_data(self, repo_id: str = None, local_dir: str = None):
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping download.")
             return
         if local_dir is not None:
@@ -168,7 +168,7 @@ class HFHub:
     def upload_data(
         self, repo_id: str = None, private: bool = True, local_dir: str = None
     ):
-        if self.local_mode:
+        if not self.hfhub_sync:
             logger.info("Local mode selected. Skipping upload.")
             return
         if local_dir is not None:

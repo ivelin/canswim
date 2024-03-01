@@ -374,6 +374,27 @@ class Covariates:
         )
         return sectors_series
 
+    def prepare_industry_fund_series(self, train_date_start=None):
+        logger.info("preparing past covariates: industry funds")
+        industry_funds_df = self.industry_funds_df.copy()
+        # flatten column hierarchy so Darts can use as covariate series
+        industry_funds_df.columns = [f"{i}_{j}" for i, j in industry_funds_df.columns]
+        # fix datetime index type issue
+        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
+        industry_funds_df.index = pd.to_datetime(industry_funds_df.index)
+        industry_funds_series = TimeSeries.from_dataframe(industry_funds_df, freq="B")
+        industry_funds_series = industry_funds_series.slice(
+            train_date_start, industry_funds_series.end_time()
+        )
+        filler = MissingValuesFiller(n_jobs=-1)
+        industry_funds_filled = filler.transform(industry_funds_series)
+        assert len(industry_funds_filled.gaps()) == 0
+        industry_funds_series = industry_funds_filled
+        logger.info(
+            f"Finished preparing past covariates: industry funds. {len(industry_funds_series.columns)} columns, {len(industry_funds_series)} records,  \ncolumns: \n{industry_funds_series.columns}"
+        )
+        return industry_funds_series
+
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date
         self.__load_tickers = stock_tickers
@@ -386,6 +407,7 @@ class Covariates:
         self.load_key_metrics()
         self.load_broad_market()
         self.load_sectors()
+        self.load_industry_funds()
         self.load_institutional_symbol_ownership()
 
     def load_institutional_symbol_ownership(self):
@@ -412,6 +434,10 @@ class Covariates:
     def load_sectors(self):
         file = "data/data-3rd-party/sectors.parquet"
         self.sectors_df = pd.read_parquet(file)
+
+    def load_industry_funds(self):
+        file = "data/data-3rd-party/industry_funds.parquet"
+        self.industry_funds_df = pd.read_parquet(file)
 
     def load_future_covariates(self):
         self.load_estimates()
@@ -630,16 +656,25 @@ class Covariates:
             train_date_start=train_date_start
         )
         broad_market_dict = {t: broad_market_series for t in stock_price_series.keys()}
-        past_covariates_tmp = self.stack_covariates(
+        past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
         sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
         sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
-        past_covariates_tmp = self.stack_covariates(
+        past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=sectors_dict
         )
-        past_covariates = past_covariates_tmp
+        industry_funds_series = self.prepare_industry_fund_series(
+            train_date_start=train_date_start
+        )
+        industry_funds_dict = {
+            t: industry_funds_series for t in stock_price_series.keys()
+        }
+        past_covariates = self.stack_covariates(
+            old_covs=past_covariates, new_covs=industry_funds_dict
+        )
         self.past_covariates = past_covariates
+        logger.info(f"Prepared past covariates.")
 
     def __add_holidays(self, series_dict: dict = None):
         logger.info("preparing future covariates: holidays")
