@@ -77,7 +77,7 @@ class CanswimPlayground:
         duckdb.sql(
             f"""
             CREATE VIEW backtest_error 
-            AS SELECT f.symbol, mean(log(1+abs(f."close_quantile_0.5"-cp.Close))) as mal_error
+            AS SELECT f.symbol, mean(abs(log(greatest(f."close_quantile_0.5", 0.01)/cp.Close))) as mal_error
             FROM forecast as f, close_price as cp
             WHERE cp.symbol = f.symbol AND cp.date = f.date
             GROUP BY f.symbol, cp.symbol

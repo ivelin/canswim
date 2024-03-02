@@ -267,7 +267,6 @@ class CanswimModel:
             self.past_cov_list.append(self.covariates.past_covariates[t])
             self.future_cov_list.append(self.covariates.future_covariates[t])
         self.__validate_train_data()
-        logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
         if len(self.target_train_list) > 0:
             logger.info(
                 f"Sample train series start time: {self.target_train_list[0].start_time()}, end time: {self.target_train_list[0].end_time()}"
@@ -285,6 +284,7 @@ class CanswimModel:
                 f"Sample future covariates columns count: {len(self.future_cov_list[0].columns)}, {self.future_cov_list[0].columns}"
             )
             # update targets series dict
+        logger.info(f"Total # stocks in train list: {len(self.target_train_list)}")
         updated_target_series = {}
         for t in self.train_series.keys():
             updated_target_series[t] = self.targets.target_series[t]
