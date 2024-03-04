@@ -119,7 +119,7 @@ def main():
         demo.load(
             fn=charts_tab.plot_forecast,
             inputs=[charts_tab.tickerDropdown, charts_tab.lowq],
-            outputs=[charts_tab.plotComponent],
+            outputs=[charts_tab.plotComponent, charts_tab.rrTable],
         )
 
     demo.queue().launch()
