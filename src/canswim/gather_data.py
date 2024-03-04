@@ -101,6 +101,7 @@ class MarketDataGatherer:
             "russell2000_iwm_holdings.csv",
             "sp500_ivv_holdings.csv",
             "nasdaq100_cndx_holdings.csv",
+            "watchlist.csv",
             self.all_stocks_file,
         ]
         logger.info(
@@ -299,7 +300,9 @@ class MarketDataGatherer:
 
     def gather_earnings_data(self):
         logger.info("Gathering  earnings and sales data...")
-        earnings_all_df = pd.DataFrame()
+        earnings_all_df = (
+            None  # pd.DataFrame() -- Pandas prefers None to empty df in concat
+        )
         for ticker in self.stocks_ticker_set:  # ['AAON']: #
             earnings = fmpsdk.historical_earning_calendar(
                 apikey=self.FMP_API_KEY, symbol=ticker, limit=-1
