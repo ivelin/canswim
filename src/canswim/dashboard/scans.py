@@ -45,18 +45,18 @@ class ScanTab:
         lq = (100 - lowq) / 100
         low_quantile_col = f"close_quantile_{lq}"
         mean_col = "close_quantile_0.5"
-        return duckdb.sql(
+        df = duckdb.sql(
             f"""--sql
             SELECT 
                 f.symbol, 
                 min(f.date) as forecast_start_date, 
+                arg_max(c.close, c.date) as prior_close_price, 
+                min("{low_quantile_col}") as forecast_close_low, 
+                max("{mean_col}") as forecast_close_high, 
+                100*(forecast_close_high / prior_close_price - 1) as reward_percent, 
+                (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
+                max(e.mal_error) as backtest_error,
                 max(c.date) as prior_close_date, 
-                round(arg_max(c.close, c.date), 2) as prior_close_price, 
-                round(min("{low_quantile_col}"), 2) as forecast_close_low, 
-                round(max("{mean_col}"), 2) as forecast_close_high, 
-                round(100*(forecast_close_high / prior_close_price - 1), 2) as reward_percent, 
-                round((forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01),2) as reward_risk,
-                round(max(e.mal_error), 4) as backtest_error
             FROM forecast f, close_price c, backtest_error as e
             WHERE f.symbol = c.symbol and f.symbol = e.symbol
             GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol
@@ -64,3 +64,12 @@ class ScanTab:
                 AND reward_risk> {rr} AND reward_percent >= {reward}
             """
         ).df()
+        dateformat = lambda d: d.strftime("%d %b, %Y")
+        df_styler = df.style.format(
+            {"prior_close_date": dateformat, "forecast_start_date": dateformat},
+            precision=2,
+            thousands=",",
+            decimal=".",
+        )
+        # .format(...date columns format ... .format(na_rep='PASS', precision=2, subset=[1, 2]))
+        return df_styler
