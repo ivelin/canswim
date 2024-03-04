@@ -101,6 +101,7 @@ class MarketDataGatherer:
             "russell2000_iwm_holdings.csv",
             "sp500_ivv_holdings.csv",
             "nasdaq100_cndx_holdings.csv",
+            "watchlist.csv",
             self.all_stocks_file,
         ]
         logger.info(
