@@ -29,8 +29,8 @@ class ChartTab:
                 value=random.sample(sorted_tickers, 1)[0],
             )
             self.lowq = gr.Slider(
-                50,
-                99,
+                minimum=50,
+                maximum=99,
                 value=80,
                 label="Confidence level for lowest close price",
                 info="Choose from 50% to 99%",
