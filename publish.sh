@@ -1,8 +1,13 @@
 #!/usr/bin/bash
 echo "Packaging canswim and publishing to PyPI repo"
-set exv
+set -exv
 
 rm -r dist/
+
+# install build deps
+python3 -m pip install build
+python3 -m pip install twine
+
 
 # test repo publish
 python3 -m build
