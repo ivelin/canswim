@@ -1,0 +1,12 @@
+input_chunk_length: 168
+output_chunk_length: 42
+hidden_size: 2048
+num_encoder_layers: 3
+num_decoder_layers: 2
+decoder_output_dim: 8
+temporal_decoder_hidden: 80
+use_layer_norm: True
+use_reversible_instance_norm: True
+dropout: 0.3
+optimizer_kwargs:
+  lr: 1e-05
