@@ -37,13 +37,17 @@ class CanswimPlayground:
     def download_model(self):
         """Load model from HF Hub"""
         # download model from hf hub
+        logger.info(f"Downloading model from remote repo: {repo_id}")
         self.canswim_model.download_model(repo_id=repo_id)
+        if self.canswim_model.torch_model is None:
+            self.canswim_model.build()
         logger.info(f"trainer params {self.canswim_model.torch_model.trainer_params}")
         self.canswim_model.torch_model.trainer_params["logger"] = False
 
     def download_data(self):
         """Prepare time series for model forecast"""
         # download raw data from hf hub
+        logger.info(f"Downloading data from remote repo: {repo_id}")
         self.hfhub.download_data(repo_id=repo_id)
 
     def initdb(self):

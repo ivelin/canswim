@@ -23,6 +23,7 @@ from canswim.hfhub import HFHub
 import gc
 from loguru import logger
 from canswim import constants
+import yaml
 
 
 def election_year_offset(idx):
@@ -452,6 +453,13 @@ class CanswimModel:
             self.torch_model = torch_model
 
     def build(self, **kwargs):
+        try:
+            hparams = yaml.load("hparams.yaml")
+            for k, v in hparams:
+                kwargs.setdefault(k, v)
+            logger.info("hparams.yaml loaded")
+        except Exception as e:
+            logger.info("hparams.yaml not found")
         # early stopping (needs to be reset for each model later on)
         # this setting stops training once the the validation loss has not decreased by more than 1e-3 for `patience` epochs
         early_stopper = EarlyStopping(
