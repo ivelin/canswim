@@ -29,22 +29,26 @@ class ChartTab:
                 value=random.sample(sorted_tickers, 1)[0],
             )
             self.lowq = gr.Slider(
-                50,
-                99,
+                minimum=50,
+                maximum=99,
                 value=80,
                 label="Confidence level for lowest close price",
                 info="Choose from 50% to 99%",
             )
-            self.tickerDropdown.change(
-                fn=self.plot_forecast,
-                inputs=[self.tickerDropdown, self.lowq],
-                outputs=[self.plotComponent],
+        with gr.Row():
+            self.rrTable = gr.Dataframe(
+                label="Reward / Risk metrics (only for uptrending forecasts)"
             )
-            self.lowq.change(
-                fn=self.plot_forecast,
-                inputs=[self.tickerDropdown, self.lowq],
-                outputs=[self.plotComponent],
-            )
+        self.tickerDropdown.change(
+            fn=self.plot_forecast,
+            inputs=[self.tickerDropdown, self.lowq],
+            outputs=[self.plotComponent, self.rrTable],
+        )
+        self.lowq.change(
+            fn=self.plot_forecast,
+            inputs=[self.tickerDropdown, self.lowq],
+            outputs=[self.plotComponent, self.rrTable],
+        )
 
     def get_tickers(self):
         logger.info(f"Loading stock tickers from stock_tickers table")
@@ -76,6 +80,42 @@ class ChartTab:
             f"future covariates start, end: {future_covariates.start_time()}, {future_covariates.end_time()}"
         )
         return future_covariates
+
+    def get_rr(self, ticker=None, lowq_min=None):
+        assert ticker is not None
+        assert lowq_min is not None and lowq_min >= 0
+        # logger.debug(f"lowq_min: {lowq_min}")
+        mean_col = "close_quantile_0.5"
+        rr = 1.01  # minimum reward/risk ratio
+        reward = 1  # minimum reward percent
+        df = duckdb.sql(
+            f"""--sql
+            SELECT 
+                f.symbol, 
+                min(f.date) as forecast_start_date, 
+                arg_max(c.close, c.date) as prior_close_price, 
+                {lowq_min} as forecast_close_low, 
+                max("{mean_col}") as forecast_close_high, 
+                100*(forecast_close_high / prior_close_price - 1) as reward_percent, 
+                (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
+                max(e.mal_error) as backtest_error,
+                max(c.date) as prior_close_date, 
+            FROM forecast f, close_price c, backtest_error as e
+            WHERE f.symbol = '{ticker}' AND f.symbol = c.symbol AND f.symbol = e.symbol
+            GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol
+            HAVING prior_close_date < forecast_start_date AND forecast_close_high > prior_close_price 
+            AND reward_risk> {rr} AND reward_percent >= {reward}                
+            """
+        ).df()
+        logger.info(f"rr table df: {df}")
+        dateformat = lambda d: d.strftime("%d %b, %Y")
+        df_styler = df.style.format(
+            {"prior_close_date": dateformat, "forecast_start_date": dateformat},
+            precision=2,
+            thousands=",",
+            decimal=".",
+        )
+        return df_styler
 
     def plot_quantiles_df(
         self,
@@ -241,6 +281,8 @@ class ChartTab:
         self.canswim_model.prepare_forecast_data(start_date=load_start_date)
         fig, axes = plt.subplots(figsize=(20, 12))
         target = self.get_target(ticker)
+        # reward risk df
+        rr_df = None
         if target is None:
             msg = f"Not enough data available to forecast {ticker}"
             gr.Info(msg)
@@ -250,7 +292,7 @@ class ChartTab:
                 self.canswim_model.train_history
             )
             visible_target = target.drop_before(plot_start_date)
-            saved_forecast_df_list = self.get_saved_forecast(ticker=ticker)
+            saved_forecast_df_list = self.get_saved_forecasts(ticker=ticker)
             lq = (100 - lowq) / 100
             visible_target.plot(label=f"{ticker} Close actual")
             # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
@@ -262,6 +304,13 @@ class ChartTab:
                         high_quantile=0.95,
                         label=f"{ticker} Close forecast",
                     )
+                # fetch Reward Risk data for latest forecast
+                latest_forecast_df = saved_forecast_df_list[-1]
+                if latest_forecast_df is not None and not latest_forecast_df.empty:
+                    lowq_df = latest_forecast_df.quantile(q=lq, axis=1)
+                    # logger.debug(f"lowq_df: {lowq_df}")
+                    lowq_min = lowq_df.min()
+                    rr_df = self.get_rr(ticker=ticker, lowq_min=lowq_min)
             # Set the locator
             major_locator = mdates.YearLocator()  # every year
             minor_locator = mdates.MonthLocator()  # every month
@@ -278,9 +327,9 @@ class ChartTab:
             # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
             plt.grid(which="minor", color="lightgrey", linestyle="--")
             plt.legend()
-        return fig
+        return {self.plotComponent: fig, self.rrTable: rr_df}
 
-    def get_saved_forecast(self, ticker: str = None):
+    def get_saved_forecasts(self, ticker: str = None):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
         # load parquet partition for stock
         logger.info(f"Loading saved forecast for {ticker}")
@@ -297,8 +346,12 @@ class ChartTab:
         df = df.drop(columns=["symbol"])
         df_list = []
         for y in df["forecast_start_year"].unique():
-            for m in df["forecast_start_month"].unique():
-                for d in df["forecast_start_day"].unique():
+            for m in df.loc[df["forecast_start_year"] == y][
+                "forecast_start_month"
+            ].unique():
+                for d in df.loc[
+                    (df["forecast_start_year"] == y) & (df["forecast_start_month"] == m)
+                ]["forecast_start_day"].unique():
                     single_forecast = df.loc[
                         (df["forecast_start_year"] == y)
                         & (df["forecast_start_month"] == m)
@@ -311,6 +364,7 @@ class ChartTab:
                             "forecast_start_day",
                         ]
                     )
-                    single_forecast = single_forecast.sort_index()
-                    df_list.append(single_forecast)
+                    if not single_forecast.empty:
+                        single_forecast = single_forecast.sort_index()
+                        df_list.append(single_forecast)
         return df_list
