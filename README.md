@@ -27,7 +27,7 @@ CANSWIM is a toolkit for CANSLIM style investors. Aims to complement the Simple 
 positional arguments:
   {dashboard,gatherdata,uploaddata,modelsearch,train,finetune,forecast}
                         Which canswim task to run:
-                        `dashboard` for stock charting and scans of recorded forecasts.
+                        `dashboard` - start Web App service with stock charting and forecast scans.
                         'gatherdata` to gather 3rd party stock market data and save to HF Hub.
                         'uploaddata` upload to HF Hub any interim changes to local data storage.
                         `modelsearch` to find and save optimal hyperparameters for model training.
@@ -41,10 +41,3 @@ options:
 
 NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.
 ```
-
-## Interactive Dashboard hosted on Hugging Face Hub
-
-
-https://huggingface.co/spaces/ivelin/canswim_playground
-
-![canswim playground](https://github.com/ivelin/canswim/assets/2234901/26fb1a5d-49e0-4888-bc1b-042800bcef8f)

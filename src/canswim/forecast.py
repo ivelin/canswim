@@ -57,18 +57,29 @@ class CanswimForecaster:
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
         logger.info("Forecast start. Calling model predict().")
         target_sliced_list = self.canswim_model.targets_list
+        tickers_list = self.canswim_model.targets_ticker_list
         # trim end of targets to specified forecast start date
         if forecast_start_date is not None:
             logger.debug(
-                f"Trimming targets after forecast start date: {forecast_start_date}"
+                f"Dropping target samples after forecast start date, included: {forecast_start_date}"
             )
             for i, t in enumerate(target_sliced_list):
                 try:
-                    logger.debug(f"Target start date: {t.start_time()}")
-                    logger.debug(f"Target sample count: {len(t)}")
-                    target_sliced_list[i] = t.drop_after(forecast_start_date)
-                except Exception as e:
-                    logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+                    logger.debug(
+                        f"Target {tickers_list[i]} start date, end date, sample count: {t.start_time()}, {t.end_time()}, {len(t)}"
+                    )
+                    # if forecast start date is after the end of the target time series,
+                    # then we can still forecast if the target series ends on the business day before the forecast start date
+                    if forecast_start_date == target_sliced_list[i].end_time() + BDay(
+                        n=1
+                    ):
+                        target_sliced_list[i] = t
+                    else:
+                        target_sliced_list[i] = t.drop_after(forecast_start_date)
+                except ValueError as e:
+                    logger.exception(
+                        f"Skipping {tickers_list[i]} due to error: {type(e)}: {e}"
+                    )
         canswim_forecast = self.canswim_model.predict(
             target=self.canswim_model.targets_list,
             past_covariates=self.canswim_model.past_cov_list,
@@ -108,6 +119,12 @@ class CanswimForecaster:
                 ts = forecast_list[i]
                 pred_start = ts.start_time()
                 # logger.debug(f"Next forecast timeseries: {ts}")
+                # normalize name of target series column ("Adj Close" -> "Close")
+                if self.canswim_model.target_column != "Close":
+                    ts = ts.with_columns_renamed(
+                        self.canswim_model.target_column, "Close"
+                    )
+                # convert probabilistic forecast into a dataframe with quantile samples as columns Close_01, Close_02...
                 df = ts.pd_dataframe()
                 # save commonly used quantiles
                 for q in constants.quantiles:

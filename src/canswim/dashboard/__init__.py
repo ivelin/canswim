@@ -72,7 +72,7 @@ class CanswimPlayground:
         duckdb.sql(
             f"""
             CREATE VIEW close_price 
-            AS SELECT Date, Symbol, Close 
+            AS SELECT Date, Symbol, "{self.canswim_model.target_column}" as Close
             FROM read_parquet('{self.stocks_price_path}') as cp
             SEMI JOIN stock_tickers
             ON cp.symbol = stock_tickers.symbol;
