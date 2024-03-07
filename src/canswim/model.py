@@ -55,6 +55,7 @@ class CanswimModel:
         self.n_plot_samples: int = 4
         self.train_date_start: pd.Timestamp = None
         self.targets = Targets()
+        self.target_column = "Adj Close"
         self.covariates = Covariates()
         self.hfhub = HFHub()
         # use GPU if available
@@ -354,14 +355,14 @@ class CanswimModel:
         )
         logger.info(f"Prepared {len(self.stock_price_series)} stock price series")
         # prepare target time series
-        target_columns = ["Close"]
         self.targets.prepare_data(
-            stock_price_series=self.stock_price_series, target_columns=target_columns
+            stock_price_series=self.stock_price_series,
+            target_columns=self.target_column,
         )
         logger.info(f"Prepared {len(self.targets.target_series)} stock targets")
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
-            target_columns=target_columns,
+            target_columns=self.target_column,
             train_date_start=start_date,
             min_samples=self.min_samples,
             pred_horizon=self.pred_horizon,
@@ -614,13 +615,15 @@ class CanswimModel:
         for i, t in enumerate(self.train_series.keys()):
             if i > self.n_plot_samples - 1:
                 break
-            self.train_series[t]["Close"].plot(
+            self.train_series[t][self.target_column].plot(
                 label=f"ticker {t} Close train", ax=axes[i]
             )
             #    train_series[t]['Volume'].plot(label=f'ticker {t} Volume train', ax=axes2[i])
-            self.val_series[t]["Close"].plot(label=f"ticker {t} Close val", ax=axes[i])
+            self.val_series[t][self.target_column].plot(
+                label=f"ticker {t} Close val", ax=axes[i]
+            )
             #    val_series[t]['Volume'].plot(label=f'ticker {t} Volume val', ax=axes2[i])
-            self.test_series[t]["Close"].plot(
+            self.test_series[t][self.target_column].plot(
                 label=f"ticker {t} Close test", ax=axes[i]
             )
         #    test_series[t]['Volume'].plot(label=f'ticker {t} Volume test', ax=axes2[i])
@@ -632,7 +635,7 @@ class CanswimModel:
         for i, t in enumerate(self.train_series.keys()):
             if i >= self.n_plot_samples:
                 break
-            plot_acf(self.train_series[t]["Close"], alpha=0.05, axis=axes[i])
+            plot_acf(self.train_series[t][self.target_column], alpha=0.05, axis=axes[i])
 
         axes[0].set_ylabel("Seasonality")
 
@@ -775,7 +778,7 @@ class CanswimModel:
                     target = self.targets.target_series[t]
                     actual[t] = target.slice(self.val_start[t], target.end_time())
                     # ax = actual[t]['Open'].plot(label='actual Open', linewidth=1, ax=axes[i])
-                    ax = actual[t]["Close"].plot(
+                    ax = actual[t][self.target_column].plot(
                         label="actual Close", linewidth=1, ax=axes[i]
                     )
                     vol = self.covariates.past_covariates[t]["Volume"].slice(
@@ -788,7 +791,7 @@ class CanswimModel:
             for i, t in enumerate(sorted(self.train_series.keys())):
                 if i < self.n_plot_samples:
                     # ax = pred_out[i]['Open'].plot(label=f'forecast Open', linewidth=2, ax=axes[i])
-                    ax = pred_out[i]["Close"].plot(
+                    ax = pred_out[i][self.target_column].plot(
                         label="forecast Close", linewidth=2, ax=axes[i]
                     )
                     plt.legend()
@@ -876,7 +879,9 @@ class CanswimModel:
             start - pd.Timedelta(days=self.train_history),
             target.end_time(),
         )
-        ax = actual_sliced["Close"].plot(label="actual Close", linewidth=2, ax=axes)
+        ax = actual_sliced[self.target_column].plot(
+            label="actual Close", linewidth=2, ax=axes
+        )
         # past_cov_list[i]['Volume'].plot(label='actual Volume', ax=axes2)
 
         # Major ticks every half year, minor ticks every month,
