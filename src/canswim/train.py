@@ -23,7 +23,7 @@ class CanswimTrainer:
     def build_new_model(self):
         """Build a new model using known optimal hyperparameters"""
         self.canswim_model.build(
-            input_chunk_length=168,
+            input_chunk_length=252,
             output_chunk_length=42,
             hidden_size=2048,
             num_encoder_layers=3,
