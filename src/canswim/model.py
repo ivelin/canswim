@@ -55,6 +55,7 @@ class CanswimModel:
         self.n_plot_samples: int = 4
         self.train_date_start: pd.Timestamp = None
         self.targets = Targets()
+        self.target_column = "Close"
         self.covariates = Covariates()
         self.hfhub = HFHub()
         # use GPU if available
@@ -329,8 +330,6 @@ class CanswimModel:
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
-        if self.n_stocks == -1:
-            self.n_stocks = len(self.stock_train_list)
         logger.info("n_stocks: {ns}", ns=self.n_stocks)
 
         # model training epochs
@@ -354,14 +353,14 @@ class CanswimModel:
         )
         logger.info(f"Prepared {len(self.stock_price_series)} stock price series")
         # prepare target time series
-        target_columns = ["Close"]
         self.targets.prepare_data(
-            stock_price_series=self.stock_price_series, target_columns=target_columns
+            stock_price_series=self.stock_price_series,
+            target_columns=self.target_column,
         )
         logger.info(f"Prepared {len(self.targets.target_series)} stock targets")
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
-            target_columns=target_columns,
+            target_columns=self.target_column,
             train_date_start=start_date,
             min_samples=self.min_samples,
             pred_horizon=self.pred_horizon,
@@ -490,7 +489,9 @@ class CanswimModel:
 
         encoders = {
             "cyclic": {"future": ["dayofweek", "month", "quarter"]},
-            "datetime_attribute": {"future": ["dayofweek", "month", "quarter", "year"]},
+            "datetime_attribute": {
+                "future": ["dayofweek", "day", "month", "quarter", "year"]
+            },
             "position": {"past": ["relative"], "future": ["relative"]},
             "custom": {
                 "future": [election_year_offset]
@@ -577,15 +578,31 @@ class CanswimModel:
         )
         assert supports_multi_ts is True
         # train model
-        # for i in range(100):
         logger.info("Starting model training...")
+        assert (
+            self.target_train_list is not None and len(self.target_train_list) > 0
+        ), "Targets train list must not be empty"
+        assert len(self.target_train_list) == len(
+            self.past_cov_list
+        ), f"""Past covs series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.past_cov_list)}
+            """
+        assert len(self.target_train_list) == len(
+            self.future_cov_list
+        ), f"""Future covs series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.future_cov_list)}
+            """
+        assert len(self.target_train_list) == len(
+            self.future_cov_list
+        ), f"""Validation series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.target_val_list)}
+            """
         self.torch_model.fit(
             self.target_train_list,
             epochs=self.n_epochs,
             past_covariates=self.past_cov_list,
             future_covariates=self.future_cov_list,
             val_series=self.target_val_list,
-            ##val_past_covariates=self.past_cov_val_list,
             val_past_covariates=self.past_cov_list,
             val_future_covariates=self.future_cov_list,
             verbose=True,
@@ -614,13 +631,15 @@ class CanswimModel:
         for i, t in enumerate(self.train_series.keys()):
             if i > self.n_plot_samples - 1:
                 break
-            self.train_series[t]["Close"].plot(
+            self.train_series[t][self.target_column].plot(
                 label=f"ticker {t} Close train", ax=axes[i]
             )
             #    train_series[t]['Volume'].plot(label=f'ticker {t} Volume train', ax=axes2[i])
-            self.val_series[t]["Close"].plot(label=f"ticker {t} Close val", ax=axes[i])
+            self.val_series[t][self.target_column].plot(
+                label=f"ticker {t} Close val", ax=axes[i]
+            )
             #    val_series[t]['Volume'].plot(label=f'ticker {t} Volume val', ax=axes2[i])
-            self.test_series[t]["Close"].plot(
+            self.test_series[t][self.target_column].plot(
                 label=f"ticker {t} Close test", ax=axes[i]
             )
         #    test_series[t]['Volume'].plot(label=f'ticker {t} Volume test', ax=axes2[i])
@@ -632,7 +651,7 @@ class CanswimModel:
         for i, t in enumerate(self.train_series.keys()):
             if i >= self.n_plot_samples:
                 break
-            plot_acf(self.train_series[t]["Close"], alpha=0.05, axis=axes[i])
+            plot_acf(self.train_series[t][self.target_column], alpha=0.05, axis=axes[i])
 
         axes[0].set_ylabel("Seasonality")
 
@@ -669,7 +688,10 @@ class CanswimModel:
             logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop
-            self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+            if self.n_stocks > 0 and self.n_stocks < len(stock_set):
+                self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+            else:
+                self.__stock_tickers = stock_set
         logger.info(
             f"Training loop stock subset has {len(self.stock_tickers)} tickers: ",
             self.stock_tickers,
@@ -775,7 +797,7 @@ class CanswimModel:
                     target = self.targets.target_series[t]
                     actual[t] = target.slice(self.val_start[t], target.end_time())
                     # ax = actual[t]['Open'].plot(label='actual Open', linewidth=1, ax=axes[i])
-                    ax = actual[t]["Close"].plot(
+                    ax = actual[t][self.target_column].plot(
                         label="actual Close", linewidth=1, ax=axes[i]
                     )
                     vol = self.covariates.past_covariates[t]["Volume"].slice(
@@ -788,7 +810,7 @@ class CanswimModel:
             for i, t in enumerate(sorted(self.train_series.keys())):
                 if i < self.n_plot_samples:
                     # ax = pred_out[i]['Open'].plot(label=f'forecast Open', linewidth=2, ax=axes[i])
-                    ax = pred_out[i]["Close"].plot(
+                    ax = pred_out[i][self.target_column].plot(
                         label="forecast Close", linewidth=2, ax=axes[i]
                     )
                     plt.legend()
@@ -865,7 +887,7 @@ class CanswimModel:
     def plot_backtest_results(
         self,
         target: TimeSeries = None,
-        backtest: [TimeSeries] = None,
+        backtest: List[TimeSeries] = None,
         start: pd.Timestamp = None,
         forecast_horizon: int = None,
     ):
@@ -876,7 +898,9 @@ class CanswimModel:
             start - pd.Timedelta(days=self.train_history),
             target.end_time(),
         )
-        ax = actual_sliced["Close"].plot(label="actual Close", linewidth=2, ax=axes)
+        ax = actual_sliced[self.target_column].plot(
+            label="actual Close", linewidth=2, ax=axes
+        )
         # past_cov_list[i]['Volume'].plot(label='actual Volume', ax=axes2)
 
         # Major ticks every half year, minor ticks every month,

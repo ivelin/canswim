@@ -52,11 +52,12 @@ class Targets:
             # logger.info(f"validating price data for {t}")
             stock_full_hist = stocks_df.loc[[t]]
             if len(stock_full_hist.index) >= self.min_samples:
-                # UPDATE: Do not drop Close as it carries unique information about the relationships between OHLC and Adj Close
-                # We also keep Adj Close which takes into account dividends and splits
                 stock_full_hist = stock_full_hist.droplevel("Symbol")
                 stock_full_hist.index = pd.to_datetime(stock_full_hist.index)
-                stock_price_dict[t] = stock_full_hist  # .drop(columns=['Close'])
+                # Drop Adj Close because yfiance changes its values retroactively at future dates
+                # after stock dividend or split dates, which makes training data less stable
+                # Ref: https://help.yahoo.com/kb/adjusted-close-sln28256.html
+                stock_price_dict[t] = stock_full_hist.drop(columns=["Adj Close"])
                 # logger.info(f'ticker: {t}')
                 # logger.info(f'ticker historic data: {ticker_dict[t]}')
             else:

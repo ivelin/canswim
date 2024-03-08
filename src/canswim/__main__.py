@@ -17,8 +17,13 @@
 
 import signal
 import sys
-from loguru import logger
 from dotenv import load_dotenv
+
+# load os env vars before loguru import
+# otherwise it won't pickup LOGURU_LEVEL
+load_dotenv(override=True)
+
+from loguru import logger
 import os
 import argparse
 from canswim import dashboard, gather_data, model_search, train, forecast
@@ -43,7 +48,6 @@ parser.add_argument(
         'uploaddata` upload to HF Hub any interim changes to local train and forecast data.
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
-        `finetune` to fine tune pretrained model on new stock market data.
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
         """,
     choices=[
@@ -53,7 +57,6 @@ parser.add_argument(
         "uploaddata",
         "modelsearch",
         "train",
-        "finetune",
         "forecast",
     ],
 )
@@ -75,7 +78,6 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-load_dotenv(override=True)
 logging_dir = os.getenv("logging_dir", "tmp")
 logging_path = f"{logging_dir}/canswim.log"
 rot = "24 hours"
@@ -116,8 +118,6 @@ match args.task:
         hfhub.upload_data()
     case "train":
         train.main(new_model=args.new_model)
-    case "finetune":
-        raise NotImplementedError("finetune task not implemented yet")
     case "forecast":
         forecast.main(forecast_start_date=args.forecast_start_date)
     case _:

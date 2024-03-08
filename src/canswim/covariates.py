@@ -5,6 +5,7 @@ from darts.dataprocessing.transformers import MissingValuesFiller
 from typing import Union
 import numpy as np
 from loguru import logger
+import os
 
 fiscal_periods = ["quarter", "annual"]
 fiscal_freq = {"annual": "Y", "quarter": "Q"}
@@ -32,6 +33,8 @@ class Covariates:
     def __init__(self):
         self.past_covariates = {}
         self.future_covariates = {}
+        self.data_dir = os.getenv("data_dir", "data")
+        self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
 
     @property
     def pyarrow_filters(self):
@@ -49,7 +52,7 @@ class Covariates:
         }
         return past_price_covariates
 
-    # backfill quarterly earnigs and revenue estimates so that the model can see the next quarter's estimates during the previou s quarter days
+    # backfill quarterly earnigs and revenue estimates so that the model can see the next quarter's estimates during the previous quarter days
 
     def back_fill_earn_estimates(self, t_earn=None):
         t_earn["time"] = t_earn["time"].bfill()
@@ -203,15 +206,9 @@ class Covariates:
                 ts_padded = self.pad_covs(
                     cov_series=ts, price_series=prices, fillna_value=0
                 )
-                ##ts_padded = ts_padded.with_static_covariates(
-                ##    covariates=static_covs_single
-                ##)
-                # logger.info(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(ts_padded.gaps()) == 0
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
-                t_inst_ownership_series[t] = ts_padded
-                assert len(ts_padded.gaps()) == 0
                 t_inst_ownership_series[t] = ts_padded
             except Exception as e:
                 # df1 = (
@@ -228,7 +225,7 @@ class Covariates:
         return t_inst_ownership_series
 
     def stack_covariates(self, old_covs=None, new_covs=None, min_samples=1):
-        logger.info(f"stacking covariates")
+        logger.info(f"stacking covariates.")
         # stack sales and earnigns to past covariates
         stacked_covs = {}
         for t, covs in list(old_covs.items()):
@@ -247,6 +244,8 @@ class Covariates:
                     stacked_covs[t] = stacked
             except KeyError as e:
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+        if len(stacked_covs.keys()) > 0:
+            logger.info(f"stacked covariates column count: {len(stacked.columns)}")
         return stacked_covs
 
     def df_index_to_biz_days(self, df=None):
@@ -369,9 +368,9 @@ class Covariates:
         series_filled = filler.transform(sectors_series)
         assert len(series_filled.gaps()) == 0
         sectors_series = series_filled
-        logger.info(
-            f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
-        )
+        # logger.debug(
+        #     f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
+        # )
         return sectors_series
 
     def prepare_industry_fund_series(self, train_date_start=None):
@@ -390,9 +389,9 @@ class Covariates:
         industry_funds_filled = filler.transform(industry_funds_series)
         assert len(industry_funds_filled.gaps()) == 0
         industry_funds_series = industry_funds_filled
-        logger.info(
-            f"Finished preparing past covariates: industry funds. {len(industry_funds_series.columns)} columns, {len(industry_funds_series)} records,  \ncolumns: \n{industry_funds_series.columns}"
-        )
+        # logger.debug(
+        #     f"Finished preparing past covariates: industry funds. {len(industry_funds_series.columns)} columns, {len(industry_funds_series)} records,  \ncolumns: \n{industry_funds_series.columns}"
+        # )
         return industry_funds_series
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
@@ -441,6 +440,8 @@ class Covariates:
 
     def load_future_covariates(self):
         self.load_estimates()
+        self.load_dividends()
+        self.load_splits()
 
     def prepare_data(
         self,
@@ -506,15 +507,32 @@ class Covariates:
             # est_loaded_df = pd.read_csv(est_file)
             est_loaded_df = pd.read_parquet(est_file, filters=self.pyarrow_filters)
             assert est_loaded_df.index.is_unique
-            # logger.info(f'{period} estimates loaded: \n{est_loaded_df}')
-            # est_loaded_df["date"] = pd.to_datetime(est_loaded_df["date"])
-            est_unique = est_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
-            assert not est_unique.duplicated().any()
-            # est_unique = est_unique.set_index(keys=["symbol", "date"])
-            assert est_loaded_df.index.has_duplicates == False
-            assert est_loaded_df.index.is_unique == True
+            est_loaded_df = est_loaded_df.drop_duplicates()
+            assert not est_loaded_df.duplicated().any()
             # logger.info(f'{period} estimates prepared: \n{est_unique}')
             self.est_loaded_df[period] = est_loaded_df
+
+    def load_dividends(self):
+        self.dividends_loaded_df = {}
+        data_file = f"{self.data_dir}/{self.data_3rd_party}/stock_dividends.parquet"
+        logger.info(f"Loading data from: {data_file}")
+        loaded_df = pd.read_parquet(data_file, filters=self.pyarrow_filters)
+        assert loaded_df.index.is_unique
+        loaded_df = loaded_df.drop_duplicates()
+        assert not loaded_df.duplicated().any()
+        # logger.debug(f"Dividends loaded: \n{loaded_df}")
+        self.dividends_loaded_df = loaded_df
+
+    def load_splits(self):
+        self.splits_loaded_df = {}
+        data_file = f"{self.data_dir}/{self.data_3rd_party}/stock_splits.parquet"
+        logger.info(f"Loading data from: {data_file}")
+        loaded_df = pd.read_parquet(data_file, filters=self.pyarrow_filters)
+        assert loaded_df.index.is_unique
+        loaded_df = loaded_df.drop_duplicates()
+        assert not loaded_df.duplicated().any()
+        # logger.debug(f"Splits loaded: \n{loaded_df}")
+        self.splits_loaded_df = loaded_df
 
     def est_add_future_periods(self, est_df=None, n_future_periods=None, period=None):
         """
@@ -631,27 +649,32 @@ class Covariates:
     ):
         logger.info("preparing past covariates")
         # start with price-volume covariates
-        price_covariates = self.get_price_covariates(
+        past_covariates = self.get_price_covariates(
             stock_price_series=stock_price_series, target_columns=target_columns
         )
         # add revenue and earnings covariates
-        self.earn_covariates = self.prepare_earn_series(
-            tickers=stock_price_series.keys()
-        )
-        self.past_covariates = self.stack_covariates(
-            old_covs=price_covariates, new_covs=self.earn_covariates
+        earn_covariates = self.prepare_earn_series(tickers=stock_price_series.keys())
+        past_covariates = self.stack_covariates(
+            old_covs=past_covariates, new_covs=earn_covariates
         )
         # add key metrics covariates
         kms_series = self.prepare_key_metrics(stock_price_series=stock_price_series)
         past_covariates = self.stack_covariates(
-            old_covs=self.past_covariates, new_covs=kms_series
+            old_covs=past_covariates, new_covs=kms_series
         )
+        # add historical stock splits covariates
+        stock_split_series = self.prepare_splits(stock_price_series=stock_price_series)
+        past_covariates = self.stack_covariates(
+            old_covs=past_covariates, new_covs=stock_split_series
+        )
+        # add stock institutional ownership covariates
         inst_ownership_series = self.prepare_institutional_symbol_ownership_series(
             stock_price_series=stock_price_series
         )
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=inst_ownership_series
         )
+        # add broad market covariates
         broad_market_series = self.prepare_broad_market_series(
             train_date_start=train_date_start
         )
@@ -659,11 +682,13 @@ class Covariates:
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=broad_market_dict
         )
+        # add market sectors covariates
         sectors_series = self.prepare_sectors_series(train_date_start=train_date_start)
         sectors_dict = {t: sectors_series for t in stock_price_series.keys()}
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=sectors_dict
         )
+        # add industry fund covariates
         industry_funds_series = self.prepare_industry_fund_series(
             train_date_start=train_date_start
         )
@@ -710,8 +735,166 @@ class Covariates:
                 # )
         return new_series
 
+    def prepare_dividends(self, stock_price_series: dict = None):
+        logger.info("preparing future covariates: stock dividends")
+        # convert date strings to numerical representation
+        div_df = self.dividends_loaded_df.copy()
+        # logger.debug(f"div_df sample: \n{div_df}")
+        # logger.debug(f"div_df.columns: {div_df.columns}")
+        # remove adjDividend because it cannot be used as a future covariate
+        # remove label because it is simply another string format for Date,
+        # which does not add unique and useful information to the training data
+        div_df = div_df.drop(["adjDividend", "label"], axis="columns")
+        t_series = {}
+        for t, prices in stock_price_series.items():
+            try:
+                # logger.debug(f"ticker: {t}")
+                t_div = div_df.loc[[t]]
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                t_div["declarationDate"] = pd.to_datetime(t_div["declarationDate"])
+                # replace Date index with declarationDate
+                t_div = t_div.set_index("declarationDate")
+                # logger.debug(f"t_div.columns: {t_div.columns}")
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                t_div.index.name = "Date"
+                # t_div.drop(columns="Date", inplace=True)
+                # make declaration date the default index date
+                # logger.debug(f"t_div.columns: {t_div.columns}")
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                # logger.debug(f"t_div.columns: {t_div.columns}")
+                # drop rows with null index values (incomplete data samples)
+                t_div = t_div[~t_div.index.isnull()]
+                # logger.debug(f"t_div.columns: {t_div.columns}")
+                # logger.debug(
+                #     f"t_div sample for {t}: \n{t_div.loc[t_div.index == pd.Timestamp('2007-05-04')]}"
+                # )
+                assert not t_div.index.isnull().any()
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                # logger.debug(f"t_div.columns: {t_div.columns}")
+                # logger.debug(f"t_div.index: {t_div.index}")
+                date_col_names = ["paymentDate", "recordDate"]
+                for date_col_name in date_col_names:
+                    date_col = pd.to_datetime(t_div[date_col_name])
+                    date_col_year = date_col.dt.year
+                    date_col_month = date_col.dt.month
+                    date_col_day = date_col.dt.day
+                    div_n_cols = len(t_div.columns)
+                    # add encodings for year, month and day to make it easier for the model to see how far in the future is the next dividends date
+                    # and potentially discover cyclical behavior in stock price movement based on dividends
+                    t_div.insert(
+                        loc=div_n_cols,
+                        column=f"{date_col_name}_day",
+                        value=date_col_day,
+                    )
+                    t_div.insert(
+                        loc=div_n_cols,
+                        column=f"{date_col_name}_month",
+                        value=date_col_month,
+                    )
+                    t_div.insert(
+                        loc=div_n_cols,
+                        column=f"{date_col_name}_year",
+                        value=date_col_year,
+                    )
+                t_div.drop(date_col_names, axis="columns", inplace=True)
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                # logger.debug(f"t_div.index for {t}: \n{t_div.index}")
+                # align declaration dates to the closest business days used in the target timeseries index
+                t_div = self.df_index_to_biz_days(t_div)
+                # drop rows with duplicate datetime index values
+                t_div = t_div[~t_div.index.duplicated(keep="last")]
+                assert (
+                    t_div.index.is_unique
+                ), f"Duplicate index keys found for {t}: {t_div[t_div.index.duplicated()]}"
+                # make sure we don't leak forward dividend declarations
+                # that are not known at prediction time
+                t_div.drop(
+                    index=t_div[t_div.index > prices.end_time()].index, inplace=True
+                )
+                assert (
+                    t_div.index.max() <= prices.end_time()
+                ), f"""Dividend declarations not know at prediction time must not leak into future covariates: 
+                    dividends end time {t_div.index.max} > price target end time {prices.end_time()}"""
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                tmp = TimeSeries.from_dataframe(
+                    t_div, freq="B", fill_missing_dates=True
+                )
+                # logger.debug(
+                #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
+                # )
+                t_div = tmp.pd_dataframe()
+                t_div.ffill(inplace=True)
+                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
+                ts_padded = self.pad_covs(
+                    cov_series=ts, price_series=prices, fillna_value=0
+                )
+                assert (
+                    len(ts_padded.gaps()) == 0
+                ), f"Found unexpected gaps in series: \n{ts_padded.gaps()}"
+                t_series[t] = ts_padded
+            except KeyError as e:
+                logger.exception(f"Skipping {t} due to error: {type(e)}: {e}")
+
+        # if len(t_series.keys()) > 0:
+        #   logger.debug(f"t_series.columns[{t}]: {t_series[t].columns}")
+        #   logger.debug(f"len(t_series[{t}]): {len(t_series[t])}")
+        #   logger.debug(f"t_series[{t}]: {t_series[t]}")
+        #   logger.debug(
+        #        f"t_series[{t}] start time, end time: {t_series[t].start_time()}, {t_series[t].end_time()}"
+        #   )
+        return t_series
+
+    def prepare_splits(self, stock_price_series: dict = None):
+        logger.info("preparing past covariates: stock splits")
+        # convert date strings to numerical representation
+        splits_df = self.splits_loaded_df.copy()
+        # logger.debug(f"self.splits_loaded_df.columns: {self.splits_loaded_df.columns}")
+        # remove label because it is simply another string format for Date,
+        # which does not add unique and useful information to the training data
+        splits_df = splits_df.drop(["label"], axis="columns")
+        # logger.debug(f"splits_df.columns {splits_df.columns}")
+        # logger.debug(f"splits_df sample: \n{splits_df}")
+        t_series = {}
+        for t, prices in stock_price_series.items():
+            try:
+                # logger.debug(f"ticker: {t}")
+                t_splits = splits_df.loc[[t]]
+                t_splits = t_splits.droplevel("Symbol")
+                t_splits.index = pd.to_datetime(t_splits.index)
+                # logger.debug(f"index type for {t}: {type(t_splits.index)}")
+                assert t_splits.index.is_unique
+                assert not t_splits.index.isnull().any()
+                # align declaration dates to the closest business days used in the target timeseries index
+                t_div = self.df_index_to_biz_days(t_splits)
+                # drop rows with duplicate datetime index values
+                t_splits = t_splits[~t_splits.index.duplicated(keep="last")]
+                # logger.debug(f"t_splits sample for {t}: {t_splits}")
+                tmp = TimeSeries.from_dataframe(
+                    t_splits, freq="B", fill_missing_dates=True
+                )
+                # logger.debug(
+                #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
+                # )
+                t_splits = tmp.pd_dataframe()
+                t_splits.ffill(inplace=True)
+                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
+                ts_padded = self.pad_covs(
+                    cov_series=ts, price_series=prices, fillna_value=0
+                )
+                assert (
+                    len(ts_padded.gaps()) == 0
+                ), f"found gaps in series: \n{ts_padded.gaps()}"
+                t_series[t] = ts_padded
+            except KeyError as e:
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+
+        return t_series
+
     def prepare_future_covariates(
-        self, stock_price_series: {} = None, min_samples=None, pred_horizon: int = None
+        self,
+        stock_price_series: dict = None,
+        min_samples=None,
+        pred_horizon: int = None,
     ):
         logger.info("Preparing future covariates")
         # add analyst estimates
@@ -719,16 +902,25 @@ class Covariates:
             stock_price_series=stock_price_series
         )
         ## Stack analyst estimates to future covariates
-        stacked_future_covariates = self.stack_covariates(
+        future_covariates = self.stack_covariates(
             old_covs=quarter_est_series,
             new_covs=annual_est_series,
             min_samples=min_samples,
         )
-        future_covariates = stacked_future_covariates
-
+        # add stock dividends covariates
+        # for some stocks there will be dividends declared prior to the forecast date
+        # with known payment dates scheduled into the future
+        dividend_series = self.prepare_dividends(stock_price_series=stock_price_series)
+        future_covariates = self.stack_covariates(
+            old_covs=future_covariates,
+            new_covs=dividend_series,
+            min_samples=min_samples,
+        )
+        # extend covars into forecast horizon future dates
         future_covariates = self.__extend_series(
             n=pred_horizon, series=future_covariates, target=stock_price_series
         )
-
+        # add holidays
         future_covariates = self.__add_holidays(future_covariates)
+        # update covs object state
         self.future_covariates = future_covariates
