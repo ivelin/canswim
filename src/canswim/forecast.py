@@ -13,6 +13,7 @@ from pandas.tseries.offsets import BDay
 from loguru import logger
 import os
 from canswim import constants
+from typing import List
 
 
 class CanswimForecaster:
@@ -109,17 +110,17 @@ class CanswimForecaster:
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
             yield pos
 
-    def save_forecast(self, forecast_list: [] = None):
+    def save_forecast(self, forecast_list: List = None):
         """Saves forecast data to local database"""
 
-        def _list_to_df(forecast_list: [] = None):
+        def _list_to_df(forecast_list: list = None):
             """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
             forecast_df = pd.DataFrame()
             for i, t in enumerate(self.canswim_model.targets_ticker_list):
                 ts = forecast_list[i]
                 pred_start = ts.start_time()
                 # logger.debug(f"Next forecast timeseries: {ts}")
-                # normalize name of target series column ("Adj Close" -> "Close")
+                # normalize name of target series column if needed (e.g. "Adj Close" -> "Close")
                 if self.canswim_model.target_column != "Close":
                     ts = ts.with_columns_renamed(
                         self.canswim_model.target_column, "Close"
