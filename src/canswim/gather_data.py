@@ -95,6 +95,7 @@ class MarketDataGatherer:
         # Prepare list of stocks for training
         all_stock_set = set()
         stock_files = [
+            # "test_stocks.csv"
             "IBD50.csv",
             "IBD250.csv",
             "ibdlive_picks.csv",
@@ -300,10 +301,8 @@ class MarketDataGatherer:
         )
 
     def gather_earnings_data(self):
-        logger.info("Gathering  earnings and sales data...")
-        earnings_all_df = (
-            None  # pd.DataFrame() -- Pandas prefers None to empty df in concat
-        )
+        logger.info("Gathering earnings and sales data...")
+        earnings_all_df = None  # Pandas prefers None to empty df in concat
         for ticker in self.stocks_ticker_set:  # ['AAON']: #
             earnings = fmpsdk.historical_earning_calendar(
                 apikey=self.FMP_API_KEY, symbol=ticker, limit=-1
@@ -346,7 +345,7 @@ class MarketDataGatherer:
 
     def gather_stock_key_metrics(self):
         logger.info("Gathering key metrics data with company fundamentals...")
-        keymetrics_all_df = pd.DataFrame()
+        keymetrics_all_df = None
         for ticker in self.stocks_ticker_set:
             kms = fmpsdk.key_metrics(
                 apikey=self.FMP_API_KEY, symbol=ticker, period="quarter", limit=-1
@@ -386,9 +385,87 @@ class MarketDataGatherer:
             f"Sanity check passed for key metrics data. Loaded OK from file: {kms_file}"
         )
 
+    def gather_stock_dividends(self):
+        logger.info("Gathering stock dividends data...")
+        all_df = None
+        for ticker in self.stocks_ticker_set:
+            logger.info(f"Gathering report for {ticker}")
+            raw = fmpsdk.historical_stock_dividend(
+                apikey=self.FMP_API_KEY, symbol=ticker
+            )
+            # skip symbols without any data
+            if raw is not None:
+                raw = raw.get("historical")
+            if raw is not None and len(raw) > 0:
+                # logger.info(f"Sample raw report for {ticker}: \n{raw}")
+                df = pd.DataFrame(raw)
+                # logger.debug(f"df for {ticker}: \n{df}")
+                df = df.dropna(how="all")
+                df["date"] = pd.to_datetime(df["date"])
+                df["symbol"] = ticker
+                df = df.set_index(["symbol", "date"])
+                all_df = pd.concat([all_df, df])
+                logger.debug(f"Total reports for {ticker}: {len(df)}")
+
+        if all_df is not None:
+            logger.debug(f"Sample report for {ticker}: \n{df}")
+            all_df.index.names = ["Symbol", "Date"]
+            all_df = all_df.sort_index()
+            logger.info(f"Total number of records for all stocks: \n{len(all_df)}")
+            logger.debug(f"all_df: \n{all_df}")
+            logger.info(f"len(all_df.index.levels[0]): \n{len(all_df.index.levels[0])}")
+            file = f"{self.data_dir}/{self.data_3rd_party}/stock_dividends.parquet"
+            all_df.to_parquet(file)
+            ### Read back data and verify it
+            tmp_df = pd.read_parquet(file)
+            logger.debug(f"tmp_df: \n{tmp_df}")
+            assert tmp_df.index.names == ["Symbol", "Date"]
+            assert len(tmp_df) == len(all_df)
+            assert sorted(tmp_df.columns) == sorted(all_df.columns)
+            logger.info(f"Sanity check passed. Data loaded OK from file: {file}")
+        logger.info("Finished gathering stock dividends data.")
+
+    def gather_stock_splits(self):
+        logger.info("Gathering stock splits data...")
+        all_df = None
+        for ticker in self.stocks_ticker_set:
+            logger.info(f"Gathering report for {ticker}")
+            raw = fmpsdk.historical_stock_split(apikey=self.FMP_API_KEY, symbol=ticker)
+            # skip symbols without any data
+            if raw is not None:
+                raw = raw.get("historical")
+            if raw is not None and len(raw) > 0:
+                # logger.debug(f"Sample raw report for {ticker}: \n{raw}")
+                df = pd.DataFrame(raw)
+                # logger.debug(f"df for {ticker}: \n{df}")
+                df = df.dropna(how="all")
+                df["date"] = pd.to_datetime(df["date"])
+                df["symbol"] = ticker
+                df = df.set_index(["symbol", "date"])
+                all_df = pd.concat([all_df, df])
+                logger.debug(f"Total reports for {ticker}: {len(df)}")
+
+        if all_df is not None:
+            logger.debug(f"Sample report for {ticker}: \n{df}")
+            all_df.index.names = ["Symbol", "Date"]
+            all_df = all_df.sort_index()
+            logger.info(f"Total number of records for all stocks: \n{len(all_df)}")
+            logger.debug(f"all_df: \n{all_df}")
+            logger.info(f"len(all_df.index.levels[0]): \n{len(all_df.index.levels[0])}")
+            file = f"{self.data_dir}/{self.data_3rd_party}/stock_splits.parquet"
+            all_df.to_parquet(file)
+            ### Read back data and verify it
+            tmp_df = pd.read_parquet(file)
+            logger.debug(f"tmp_df: \n{tmp_df}")
+            assert tmp_df.index.names == ["Symbol", "Date"]
+            assert len(tmp_df) == len(all_df)
+            assert sorted(tmp_df.columns) == sorted(all_df.columns)
+            logger.info(f"Sanity check passed. Data loaded OK from file: {file}")
+        logger.info("Finished gathering stock splits data.")
+
     def gather_institutional_stock_ownership(self):
         logger.info("Gathering institutional ownership data...")
-        inst_ownership_all_df = pd.DataFrame()
+        inst_ownership_all_df = None
         for ticker in self.stocks_ticker_set:
             inst_ownership = institutional_symbol_ownership(
                 apikey=self.FMP_API_KEY,
@@ -479,7 +556,7 @@ class MarketDataGatherer:
 
         def _fetch_estimates(period=None):
             assert period in ["quarter", "annual"]
-            estimates_all_df = pd.DataFrame()
+            estimates_all_df = None
             for ticker in self.stocks_ticker_set:  # ['ALTR']:
                 est = analyst_estimates(
                     apikey=self.FMP_API_KEY, symbol=ticker, period=period, limit=-1
@@ -537,6 +614,8 @@ def main():
     g.gather_industry_fund_data()
     g.gather_stock_tickers()
     g.gather_stock_price_data()
+    g.gather_stock_dividends()
+    g.gather_stock_splits()
     g.gather_earnings_data()
     g.gather_stock_key_metrics()
     g.gather_institutional_stock_ownership()

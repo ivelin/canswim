@@ -55,7 +55,7 @@ class CanswimModel:
         self.n_plot_samples: int = 4
         self.train_date_start: pd.Timestamp = None
         self.targets = Targets()
-        self.target_column = "Adj Close"
+        self.target_column = "Close"
         self.covariates = Covariates()
         self.hfhub = HFHub()
         # use GPU if available
@@ -330,8 +330,6 @@ class CanswimModel:
         self.n_stocks = int(
             os.getenv("n_stocks", 50)
         )  # -1 for all, otherwise a number like 300
-        if self.n_stocks == -1:
-            self.n_stocks = len(self.stock_train_list)
         logger.info("n_stocks: {ns}", ns=self.n_stocks)
 
         # model training epochs
@@ -491,7 +489,9 @@ class CanswimModel:
 
         encoders = {
             "cyclic": {"future": ["dayofweek", "month", "quarter"]},
-            "datetime_attribute": {"future": ["dayofweek", "month", "quarter", "year"]},
+            "datetime_attribute": {
+                "future": ["dayofweek", "day", "month", "quarter", "year"]
+            },
             "position": {"past": ["relative"], "future": ["relative"]},
             "custom": {
                 "future": [election_year_offset]
@@ -578,15 +578,31 @@ class CanswimModel:
         )
         assert supports_multi_ts is True
         # train model
-        # for i in range(100):
         logger.info("Starting model training...")
+        assert (
+            self.target_train_list is not None and len(self.target_train_list) > 0
+        ), "Targets train list must not be empty"
+        assert len(self.target_train_list) == len(
+            self.past_cov_list
+        ), f"""Past covs series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.past_cov_list)}
+            """
+        assert len(self.target_train_list) == len(
+            self.future_cov_list
+        ), f"""Future covs series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.future_cov_list)}
+            """
+        assert len(self.target_train_list) == len(
+            self.future_cov_list
+        ), f"""Validation series list must be the exact same length as targets list
+            {len(self.target_train_list)} != {len(self.target_val_list)}
+            """
         self.torch_model.fit(
             self.target_train_list,
             epochs=self.n_epochs,
             past_covariates=self.past_cov_list,
             future_covariates=self.future_cov_list,
             val_series=self.target_val_list,
-            ##val_past_covariates=self.past_cov_val_list,
             val_past_covariates=self.past_cov_list,
             val_future_covariates=self.future_cov_list,
             verbose=True,
@@ -672,7 +688,10 @@ class CanswimModel:
             logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop
-            self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+            if self.n_stocks > 0 and self.n_stocks < len(stock_set):
+                self.__stock_tickers = random.sample(stock_set, self.n_stocks)
+            else:
+                self.__stock_tickers = stock_set
         logger.info(
             f"Training loop stock subset has {len(self.stock_tickers)} tickers: ",
             self.stock_tickers,
@@ -868,7 +887,7 @@ class CanswimModel:
     def plot_backtest_results(
         self,
         target: TimeSeries = None,
-        backtest: [TimeSeries] = None,
+        backtest: List[TimeSeries] = None,
         start: pd.Timestamp = None,
         forecast_horizon: int = None,
     ):
