@@ -202,6 +202,7 @@ class Covariates:
                 )
                 t_iown = ts_tmp.pd_dataframe()
                 t_iown.ffill(inplace=True)
+                # use 0 as a filler for unknown ownership absolute values and deltas
                 ts = TimeSeries.from_dataframe(t_iown, fillna_value=0)
                 ts_padded = self.pad_covs(
                     cov_series=ts, price_series=prices, fillna_value=0
@@ -808,32 +809,36 @@ class Covariates:
                 ), f"Duplicate index keys found for {t}: {t_div[t_div.index.duplicated()]}"
                 # make sure we don't leak forward dividend declarations
                 # that are not known at prediction time
-                t_div.drop(
-                    index=t_div[t_div.index > prices.end_time()].index, inplace=True
-                )
-                assert (
-                    t_div.index.max() <= prices.end_time()
-                ), f"""Dividend declarations not know at prediction time must not leak into future covariates: 
-                    dividends end time {t_div.index.max} > price target end time {prices.end_time()}"""
-                # logger.debug(f"t_div sample for {t}: \n{t_div}")
-                tmp = TimeSeries.from_dataframe(
-                    t_div, freq="B", fill_missing_dates=True
-                )
-                # logger.debug(
-                #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
-                # )
-                t_div = tmp.pd_dataframe()
-                t_div.ffill(inplace=True)
-                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
-                ts_padded = self.pad_covs(
-                    cov_series=ts, price_series=prices, fillna_value=0
-                )
-                assert (
-                    len(ts_padded.gaps()) == 0
-                ), f"Found unexpected gaps in series: \n{ts_padded.gaps()}"
-                t_series[t] = ts_padded
+                if len(t_div) > 0:
+                    t_div.drop(
+                        index=t_div[t_div.index > prices.end_time()].index, inplace=True
+                    )
+                    assert (
+                        t_div.index.max() <= prices.end_time()
+                    ), f"""Dividend declarations which are not know at prediction time must not leak into future covariates: 
+                        {t} dividends end time {t_div.index.max()} > price target end time {prices.end_time()}"""
+                    # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                    tmp = TimeSeries.from_dataframe(
+                        t_div, freq="B", fill_missing_dates=True
+                    )
+                    # logger.debug(
+                    #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
+                    # )
+                    t_div = tmp.pd_dataframe()
+                    t_div.ffill(inplace=True)
+                    # Fill empty cells with -1 to indicate to the model an unknown value
+                    ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
+                    ts_padded = self.pad_covs(
+                        cov_series=ts, price_series=prices, fillna_value=-1
+                    )
+                    assert (
+                        len(ts_padded.gaps()) == 0
+                    ), f"Found unexpected gaps in series: \n{ts_padded.gaps()}"
+                    t_series[t] = ts_padded
+                else:
+                    logger.warning(f"Skipping {t} due to lack of data")
             except KeyError as e:
-                logger.exception(f"Skipping {t} due to error: {type(e)}: {e}")
+                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
 
         # if len(t_series.keys()) > 0:
         #   logger.debug(f"t_series.columns[{t}]: {t_series[t].columns}")
@@ -876,10 +881,16 @@ class Covariates:
                 #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
                 # )
                 t_splits = tmp.pd_dataframe()
-                t_splits.ffill(inplace=True)
-                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
+                # Do not interpolate splits forward, because
+                # the Date index is the date when the split occurs
+                # the model should not be confused as to when exactly
+                # a stock split takes place
+                # --> NO: t_splits.ffill(inplace=True)
+                # fill in empty numerator and denominator values with 1s,
+                # which is equivalent to no stock splits occuring on a given date
+                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=1)
                 ts_padded = self.pad_covs(
-                    cov_series=ts, price_series=prices, fillna_value=0
+                    cov_series=ts, price_series=prices, fillna_value=1
                 )
                 assert (
                     len(ts_padded.gaps()) == 0
