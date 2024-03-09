@@ -621,8 +621,8 @@ class Covariates:
 
             except KeyError as e:
                 logger.info(
-                    f"Skipping {t} from covariates series. No analyst estimates available for {t}, error:",
-                    e,
+                    f"""Skipping {t} from covariates series. 
+                        No analyst estimates available for {t}, error: {type(e)}, {e}"""
                 )
         return t_est_series
 
