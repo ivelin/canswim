@@ -175,9 +175,11 @@ class HFHub:
             data_dir = local_dir
         else:
             data_dir = self.data_dir
-        logger.info(f"Uploading data from directory: {data_dir}")
         if repo_id is None:
             repo_id = self.repo_id
+        logger.info(
+            f"Uploading data from local directory: '{data_dir}' to repo id: '{repo_id}'"
+        )
         ## Upload all gathered data from 3rd party sources to hf hub
         # prefix for HF Hub dataset repo
         # Create repo if not existing yet
