@@ -127,34 +127,11 @@ class MarketDataGatherer:
         # Almost all stocks have less than 5 characters.
         slist = [x for x in set(all_stock_set) if len(x) < 10]
         self.stocks_ticker_set = set(slist)
-        # drop known junk symbols from the data feed
-        junk_tickers = set(
-            [
-                "MSFUT",
-                "GEFB",
-                "METCV",
-                "SGAFT",
-                "NQH4",
-                "XTSLA",
-                "-",
-                "ICSUAGD",
-                "BFB",
-                "GTXI",
-                "P5N994",
-                "LGFB",
-                "MLIFT",
-                "ESH4",
-                "RTYH4",
-                "\xa0",
-                "GBP",
-                "CAD",
-                "EUR",
-                "---",
-                "1766401D",
-                "BF/A",
-                "BF/B",
-            ]
+        # drop symbols which yfinance does not like
+        junk_tickers = pd.read_csv(
+            f"{self.data_dir}/{self.data_3rd_party}/junk_tickers.csv"
         )
+        junk_tickers = set(junk_tickers["Symbol"])
         self.stocks_ticker_set = sorted(list(self.stocks_ticker_set - junk_tickers))
         stocks_df = pd.DataFrame()
         stocks_df["Symbol"] = self.stocks_ticker_set
@@ -192,9 +169,21 @@ class MarketDataGatherer:
         try:
             old_df = pd.read_parquet(data_file)
             logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
-            start_date = get_latest_date(old_df.index) - pd.Timedelta(1, "d")
-            logger.info(f"Columns: \n{old_df.columns}")
-            logger.info(f"Latest saved record is after {start_date}")
+            # check if all symbols are represented in the loaded data
+            # if not, then download all historical data from scratch
+            # otherwise, only fetch new data after latest saved date
+            new_tickers = set(tickers) - set(old_df.columns.levels[0])
+            if not new_tickers:
+                start_date = get_latest_date(old_df.index) - pd.Timedelta(1, "d")
+                logger.info(f"Columns: \n{old_df.columns}")
+                logger.info(f"Latest saved record is after {start_date}")
+            else:
+                logger.info(
+                    f"Not all tickers found in saved data. Missing: {new_tickers}"
+                )
+                logger.info(
+                    f"\nTicker set: {tickers}, \nTickers with saved data: {set(old_df.columns.levels[0])}"
+                )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
         new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d")
@@ -222,9 +211,19 @@ class MarketDataGatherer:
         ## Prepare data for broad market indicies
         # Capture S&P500, NASDAQ100 and Russell 200 indexes and their equal weighted counter parts
         # As well as VIX volatility index, DYX US Dollar index, TNX US 12 Weeks Treasury Yield, 5 Years Treasury Yield and 10 Year Treasuries Yield
-        broad_market_indicies = (
-            "^SPX ^SPXEW ^NDX ^NDXE ^RUT ^R2ESC ^VIX DX-Y.NYB ^IRX ^FVX ^TNX"
-        )
+        broad_market_indicies = [
+            "^SPX",
+            "^SPXEW",
+            "^NDX",
+            "^NDXE",
+            "^RUT",
+            "^R2ESC",
+            "^VIX",
+            "DX-Y.NYB",
+            "^IRX",
+            "^FVX",
+            "^TNX",
+        ]
         data_file = "data/data-3rd-party/broad_market.parquet"
         self._gather_yfdata_date_index(
             data_file=data_file, tickers=broad_market_indicies
@@ -232,7 +231,7 @@ class MarketDataGatherer:
 
     def gather_sectors_data(self):
         """Gather historic price and volume data for key market sectors"""
-        sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60"
+        sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60".split()
         data_file = "data/data-3rd-party/sectors.parquet"
         self._gather_yfdata_date_index(data_file=data_file, tickers=sector_indicies)
 
@@ -255,13 +254,27 @@ class MarketDataGatherer:
         try:
             old_df = pd.read_parquet(data_file)
             logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
-            start_date = get_latest_date(
-                old_df.index.get_level_values("Date")
-            ) - pd.Timedelta(1, "d")
-            logger.info(f"Columns: \n{old_df.columns}")
-            logger.info(f"Latest saved record is after {start_date}")
+            # check if all symbols are represented in the loaded data
+            # if not, then download all historical data from scratch
+            # otherwise, only fetch new data after latest saved date
+            all_tickers = set(self.stocks_ticker_set)
+            old_tickers = set(old_df.index.get_level_values("Symbol"))
+            new_tickers = all_tickers - old_tickers
+            if not new_tickers:
+                start_date = get_latest_date(
+                    old_df.index.get_level_values("Date")
+                ) - pd.Timedelta(1, "d")
+                logger.info(f"Columns: \n{old_df.columns}")
+                logger.info(f"Latest saved record is after {start_date}")
+            else:
+                logger.info(
+                    f"Not all tickers found in saved data. Missing: {new_tickers}"
+                )
+                logger.info(
+                    f"\nTicker set: {all_tickers}, \nTickers with saved data: {old_tickers}"
+                )
         except Exception as e:
-            logger.exception(f"Could not load data from file: {data_file}. Error: {e}")
+            logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
         new_df = yf.download(
             self.stocks_ticker_set, start=start_date, group_by="tickers"
         )
@@ -285,12 +298,11 @@ class MarketDataGatherer:
         # df=merged_df.loc[merged_df.index.get_level_values("Symbol") == 'TEAM'])
         assert merged_df.index.is_unique
         merged_df.to_parquet(data_file)
-        logger.info(f"Saved broad market data to {data_file}")
+        logger.info(f"Saved data to {data_file}")
+        logger.info(f"Verifing saved data...")
         _bm = pd.read_parquet(data_file)
         pd.testing.assert_frame_equal(_bm, merged_df)
-        logger.info(
-            f"Sanity check passed for broad market data. Loaded OK from {data_file}"
-        )
+        logger.info(f"Sanity check passed. Loaded OK from {data_file}")
 
     def gather_earnings_data(self):
         logger.info("Gathering earnings and sales data...")
