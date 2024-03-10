@@ -737,6 +737,18 @@ class Covariates:
         return new_series
 
     def prepare_dividends(self, stock_price_series: dict = None):
+
+        def no_dividends_stock(start_date: pd.Timestamp):
+            """Prepare placeholder dataframe for a stock without any historical dividends"""
+            return pd.DataFrame(
+                {
+                    "dividend": [0],
+                    "recordDate": [start_date],
+                    "paymentDate": [start_date],
+                    "declarationDate": [start_date],
+                }
+            )
+
         logger.info("preparing future covariates: stock dividends")
         # convert date strings to numerical representation
         div_df = self.dividends_loaded_df.copy()
@@ -745,37 +757,42 @@ class Covariates:
         # remove adjDividend because it cannot be used as a future covariate
         # remove label because it is simply another string format for Date,
         # which does not add unique and useful information to the training data
-        div_df = div_df.drop(["adjDividend", "label"], axis="columns")
+        div_df.drop(["adjDividend", "label"], axis="columns", inplace=True)
+        # convert date columns from string to pd.Timestamp
+        for c in ["declarationDate", "paymentDate", "recordDate"]:
+            div_df[c] = pd.to_datetime(div_df[c])
+        # drop rows with null / unknown declarationDate, paymentDate or dividend
+        div_df.dropna(
+            subset=["declarationDate", "paymentDate", "dividend"],
+            how="any",
+            inplace=True,
+        )
         t_series = {}
         for t, prices in stock_price_series.items():
             try:
                 # logger.debug(f"ticker: {t}")
-                t_div = div_df.loc[[t]]
+                try:
+                    t_div = div_df.loc[[t]]
+                except KeyError as e:
+                    # no dividends information available for ticker
+                    # assume stock has never issued dividends
+                    t_div = no_dividends_stock(start_date=prices.start_time())
                 # logger.debug(f"t_div sample for {t}: \n{t_div}")
-                t_div["declarationDate"] = pd.to_datetime(t_div["declarationDate"])
-                # replace Date index with declarationDate
-                t_div = t_div.set_index("declarationDate")
+                # replace ["Symbol", "Date"] index with declarationDate
+                # simultaneously drop previous ["Symbol", "Date"] multiindex columns
+                t_div = t_div.set_index("declarationDate", drop=True)
                 # logger.debug(f"t_div.columns: {t_div.columns}")
                 # logger.debug(f"t_div sample for {t}: \n{t_div}")
                 t_div.index.name = "Date"
-                # t_div.drop(columns="Date", inplace=True)
-                # make declaration date the default index date
-                # logger.debug(f"t_div.columns: {t_div.columns}")
                 # logger.debug(f"t_div sample for {t}: \n{t_div}")
-                # logger.debug(f"t_div.columns: {t_div.columns}")
-                # drop rows with null index values (incomplete data samples)
-                t_div = t_div[~t_div.index.isnull()]
-                # logger.debug(f"t_div.columns: {t_div.columns}")
                 # logger.debug(
-                #     f"t_div sample for {t}: \n{t_div.loc[t_div.index == pd.Timestamp('2007-05-04')]}"
+                #     f"t_div  {t} samples with null index: \n{t_div[t_div.index.isnull()]}"
                 # )
                 assert not t_div.index.isnull().any()
-                # logger.debug(f"t_div sample for {t}: \n{t_div}")
-                # logger.debug(f"t_div.columns: {t_div.columns}")
-                # logger.debug(f"t_div.index: {t_div.index}")
                 date_col_names = ["paymentDate", "recordDate"]
                 for date_col_name in date_col_names:
-                    date_col = pd.to_datetime(t_div[date_col_name])
+                    date_col = t_div[date_col_name]
+                    # date_col = pd.to_datetime(t_div[date_col_name])
                     date_col_year = date_col.dt.year
                     date_col_month = date_col.dt.month
                     date_col_day = date_col.dt.day
@@ -809,36 +826,38 @@ class Covariates:
                 ), f"Duplicate index keys found for {t}: {t_div[t_div.index.duplicated()]}"
                 # make sure we don't leak forward dividend declarations
                 # that are not known at prediction time
-                if len(t_div) > 0:
-                    t_div.drop(
-                        index=t_div[t_div.index > prices.end_time()].index, inplace=True
-                    )
-                    assert (
-                        t_div.index.max() <= prices.end_time()
-                    ), f"""Dividend declarations which are not know at prediction time must not leak into future covariates: 
-                        {t} dividends end time {t_div.index.max()} > price target end time {prices.end_time()}"""
-                    # logger.debug(f"t_div sample for {t}: \n{t_div}")
-                    tmp = TimeSeries.from_dataframe(
-                        t_div, freq="B", fill_missing_dates=True
-                    )
-                    # logger.debug(
-                    #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
-                    # )
-                    t_div = tmp.pd_dataframe()
-                    t_div.ffill(inplace=True)
-                    # Fill empty cells with -1 to indicate to the model an unknown value
-                    ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=-1)
-                    ts_padded = self.pad_covs(
-                        cov_series=ts, price_series=prices, fillna_value=-1
-                    )
-                    assert (
-                        len(ts_padded.gaps()) == 0
-                    ), f"Found unexpected gaps in series: \n{ts_padded.gaps()}"
-                    t_series[t] = ts_padded
-                else:
-                    logger.warning(f"Skipping {t} due to lack of data")
-            except KeyError as e:
-                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+                t_div.drop(
+                    index=t_div[t_div.index > prices.end_time()].index, inplace=True
+                )
+                assert not t_div.empty
+                assert (
+                    t_div.index.max() <= prices.end_time()
+                ), f"""Dividend declarations which are not know at prediction time must not leak into future covariates: 
+                    {t} dividends end time {t_div.index.max()} > price target end time {prices.end_time()}"""
+                # logger.debug(f"t_div sample for {t}: \n{t_div}")
+                tmp = TimeSeries.from_dataframe(
+                    t_div, freq="B", fill_missing_dates=True
+                )
+                # logger.debug(
+                #     f"tmp series start time, end time: {tmp.start_time()}, {tmp.end_time()}"
+                # )
+                t_div = tmp.pd_dataframe()
+                t_div.ffill(inplace=True)
+                # Fill empty cells with 0 to indicate to the model unknown dividend
+                ts = TimeSeries.from_dataframe(t_div, freq="B", fillna_value=0)
+                ts_padded = self.pad_covs(
+                    cov_series=ts, price_series=prices, fillna_value=0
+                )
+                assert (
+                    len(ts_padded.gaps()) == 0
+                ), f"Found unexpected gaps in series: \n{ts_padded.gaps()}"
+                # logger.debug(f"ts_padded sample for {t}: \n{ts_padded.pd_dataframe()}")
+                # logger.debug(
+                #     f"ts_padded series start time, end time: {ts_padded.start_time()}, {ts_padded.end_time()}"
+                # )
+                t_series[t] = ts_padded
+            except (KeyError, ValueError, AssertionError) as e:
+                logger.exception(f"Skipping {t} due to error: {type(e)}: {e}")
 
         # if len(t_series.keys()) > 0:
         #   logger.debug(f"t_series.columns[{t}]: {t_series[t].columns}")
@@ -850,6 +869,21 @@ class Covariates:
         return t_series
 
     def prepare_splits(self, stock_price_series: dict = None):
+
+        def no_splits_stock(start_date: pd.Timestamp):
+            """Prepare placeholder dataframe for a stock without any historical splits"""
+            df = pd.DataFrame(
+                {
+                    "Symbol": ["any"],
+                    "Date": [start_date],
+                    "numerator": [1],
+                    "denominator": [1],
+                }
+            )
+            df = df.set_index(keys=["Symbol", "Date"], drop=True)
+            # logger.debug(f"df: \n{df}")
+            return df
+
         logger.info("preparing past covariates: stock splits")
         # convert date strings to numerical representation
         splits_df = self.splits_loaded_df.copy()
@@ -863,9 +897,16 @@ class Covariates:
         for t, prices in stock_price_series.items():
             try:
                 # logger.debug(f"ticker: {t}")
-                t_splits = splits_df.loc[[t]]
+                try:
+                    t_splits = splits_df.loc[[t]]
+                except KeyError as e:
+                    # no dividends information available for ticker
+                    # assume stock has never issued dividends
+                    t_splits = no_splits_stock(start_date=prices.start_time())
+
+                # logger.debug(f"t_splits sample: \n{t_splits}")
                 t_splits = t_splits.droplevel("Symbol")
-                t_splits.index = pd.to_datetime(t_splits.index)
+                # t_splits.index = pd.to_datetime(t_splits.index)
                 # logger.debug(f"index type for {t}: {type(t_splits.index)}")
                 assert t_splits.index.is_unique
                 assert not t_splits.index.isnull().any()
@@ -895,9 +936,10 @@ class Covariates:
                 assert (
                     len(ts_padded.gaps()) == 0
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
+                # logger.debug(f"ts_padded sample for {t}: {ts_padded.pd_dataframe()}")
                 t_series[t] = ts_padded
-            except KeyError as e:
-                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+            except (KeyError, ValueError, AssertionError) as e:
+                logger.exception(f"Skipping {t} due to error: {type(e)}: {e}")
 
         return t_series
 
