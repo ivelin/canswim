@@ -14,6 +14,7 @@ from loguru import logger
 import os
 from canswim import constants
 from typing import List
+import duckdb
 
 
 class CanswimForecaster:
@@ -25,7 +26,7 @@ class CanswimForecaster:
         self.n_stocks = int(os.getenv("n_stocks", 50))
         logger.info(f"n_stocks: {self.n_stocks}")
         self.forecast_subdir = os.getenv("forecast_subdir", "forecast/")
-        logger.info(f"Forecast data file: {self.forecast_subdir}")
+        logger.info(f"Forecast data path: {self.forecast_subdir}")
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
 
@@ -89,14 +90,59 @@ class CanswimForecaster:
         logger.info("Forecast finished.")
         return canswim_forecast
 
-    def prep_next_stock_group(self):
+    def _get_stocks_without_forecast(self, stocks_df=None, forecast_start_date=None):
+        if forecast_start_date is not None:
+            dt = pd.Timestamp(forecast_start_date)
+        else:
+            dt = pd.Timestamp.now()
+        # align date to closest business day
+        # leave as is if dt is a business day,
+        # otherwise move forward to next business day
+        bd = dt + 0 * BDay()
+        y = bd.year
+        m = bd.month
+        d = bd.day
+        logger.debug(f"Forecast start date, year, month, day: {bd}, {y}, {m}, {d}")
+        logger.debug(f"len(stocks_df): {len(stocks_df)}")
+        logger.debug(f"stocks_df: {stocks_df}")
+        df = duckdb.sql(
+            f"""--sql
+            CREATE OR REPLACE TABLE stock_group AS SELECT Symbol from stocks_df;
+            SELECT symbol, count(*), forecast_start_year, forecast_start_month, forecast_start_day
+            FROM read_parquet('{self.data_dir}/{self.forecast_subdir}**/*.parquet', hive_partitioning = 1) as f
+            SEMI JOIN stock_group
+            ON f.symbol = stock_group.symbol
+            GROUP BY f.symbol, forecast_start_year, forecast_start_month, forecast_start_day
+            HAVING 
+                forecast_start_year={y} AND
+                forecast_start_month={m} AND
+                forecast_start_day={d} AND
+                count(date) = {self.canswim_model.pred_horizon}
+            """
+        ).df()
+        logger.debug(f"sql result: {df}")
+        stocks_with_saved_forecast = set(df["symbol"])
+        logger.debug(
+            f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
+        )
+        stocks_without_forecast = set(stocks_df["Symbol"]) - stocks_with_saved_forecast
+        stocks_without_forecast = sorted(list(stocks_without_forecast))
+        return stocks_without_forecast
+
+    def prep_next_stock_group(self, forecast_start_date=None):
         """Generator which iterates over all stocks and prepares them in groups."""
         stocks_file = f"{self.data_dir}/{self.data_3rd_party}/{self.stock_tickers_list}"
-        logger.info(f"Loading stock tickers from {stocks_file}")
+        logger.info(f"Loading stock tickers from {stocks_file}.")
         all_stock_tickers = pd.read_csv(stocks_file)
         logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
-        stock_list = list(set(all_stock_tickers["Symbol"]))
-        if self.n_stocks == -1:
+        stock_list = self._get_stocks_without_forecast(
+            stocks_df=all_stock_tickers, forecast_start_date=forecast_start_date
+        )
+        logger.info(
+            f"{len(all_stock_tickers)-len(stock_list)} stock already have forecast saved."
+        )
+        logger.info(f"{len(stock_list)} stock tickers candidates for new forecast.")
+        if self.n_stocks < 0 or self.n_stocks > len(stock_list):
             self.n_stocks = len(stock_list)
         # group tickers in workable sample sizes for each forecast pass
         # credit ref: https://stackoverflow.com/questions/434287/how-to-iterate-over-a-list-in-chunks
@@ -171,7 +217,7 @@ def main(forecast_start_date: str = None):
     cf.download_data()
     ## loop in groups over all stocks
     # next(cf.prep_next_stock_group())
-    for pos in cf.prep_next_stock_group():
+    for pos in cf.prep_next_stock_group(forecast_start_date=forecast_start_date):
         forecast = cf.get_forecast(forecast_start_date=forecast_start_date)
         ## save new or update existing data file
         cf.save_forecast(forecast)
