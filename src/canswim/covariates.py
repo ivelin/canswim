@@ -238,11 +238,16 @@ class Covariates:
                 old_sliced = covs.slice_intersect(new_covs[t])
                 new_sliced = new_covs[t].slice_intersect(old_sliced)
                 stacked = old_sliced.stack(new_sliced)
-                # logger.info(f'past covariates for {t} including earnings calendar: {len(new_past_covs[t].components)}')
-                # logger.info(f'past covariates for {t} start time: {new_past_covs[t].start_time()}, end time: {new_past_covs[t].end_time()}')
-                # logger.info(f'past covariates for {t} sample: \n{new_past_covs[t][0].pd_dataframe()}')
+                # logger.debug(
+                #     f"covariates for {t} start time: {stacked.start_time()}, end time: {stacked.end_time()}"
+                # )
+                # logger.debug(f"covariates for {t} sample: \n{stacked.pd_dataframe()}")
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
+                else:
+                    logger.debug(
+                        f"Skipping {t} due to lack of min {min_samples} samples. Only {len(stacked)} samples available in covs stack."
+                    )
             except KeyError as e:
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
         if len(stacked_covs.keys()) > 0:
@@ -770,7 +775,7 @@ class Covariates:
         t_series = {}
         for t, prices in stock_price_series.items():
             try:
-                # logger.debug(f"ticker: {t}")
+                logger.debug(f"ticker: {t}")
                 try:
                     t_div = div_df.loc[[t]]
                 except KeyError as e:
@@ -786,7 +791,7 @@ class Covariates:
                 t_div.index.name = "Date"
                 # logger.debug(f"t_div sample for {t}: \n{t_div}")
                 # logger.debug(
-                #     f"t_div  {t} samples with null index: \n{t_div[t_div.index.isnull()]}"
+                # f"t_div  {t} samples with null index: \n{t_div[t_div.index.isnull()]}"
                 # )
                 assert not t_div.index.isnull().any()
                 date_col_names = ["paymentDate", "recordDate"]
@@ -860,12 +865,12 @@ class Covariates:
                 logger.exception(f"Skipping {t} due to error: {type(e)}: {e}")
 
         # if len(t_series.keys()) > 0:
-        #   logger.debug(f"t_series.columns[{t}]: {t_series[t].columns}")
-        #   logger.debug(f"len(t_series[{t}]): {len(t_series[t])}")
-        #   logger.debug(f"t_series[{t}]: {t_series[t]}")
-        #   logger.debug(
-        #        f"t_series[{t}] start time, end time: {t_series[t].start_time()}, {t_series[t].end_time()}"
-        #   )
+        #     logger.debug(f"t_series.columns[{t}]: {t_series[t].columns}")
+        #     logger.debug(f"len(t_series[{t}]): {len(t_series[t])}")
+        #     logger.debug(f"t_series[{t}]: {t_series[t]}")
+        #     logger.debug(
+        #         f"t_series[{t}] start time, end time: {t_series[t].start_time()}, {t_series[t].end_time()}"
+        #     )
         return t_series
 
     def prepare_splits(self, stock_price_series: dict = None):

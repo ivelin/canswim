@@ -49,11 +49,11 @@ class CanswimForecaster:
         # load raw data from hf hub
         self.start_date = pd.Timestamp.now() - BDay(
             # min_samples is not sufficient as it does not account for all market days without price data
-            # such as holidays. Apparently there are about 15 non-weekend days when the market is off
-            # and price data is not available on such days.
+            # such as holidays. Also for some sparse data sets such as analyst estimates, there are periods of
+            # 2 or more years without data.
             # Add a sufficiently big sample pad to include all market off days.
             n=self.canswim_model.min_samples
-            + self.canswim_model.train_history
+            * 2
         )
 
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
@@ -102,9 +102,9 @@ class CanswimForecaster:
         y = bd.year
         m = bd.month
         d = bd.day
-        logger.debug(f"Forecast start date, year, month, day: {bd}, {y}, {m}, {d}")
-        logger.debug(f"len(stocks_df): {len(stocks_df)}")
-        logger.debug(f"stocks_df: {stocks_df}")
+        # logger.debug(f"Forecast start date, year, month, day: {bd}, {y}, {m}, {d}")
+        # logger.debug(f"len(stocks_df): {len(stocks_df)}")
+        # logger.debug(f"stocks_df: {stocks_df}")
         df = duckdb.sql(
             f"""--sql
             CREATE OR REPLACE TABLE stock_group AS SELECT Symbol from stocks_df;
@@ -120,11 +120,11 @@ class CanswimForecaster:
                 count(date) = {self.canswim_model.pred_horizon}
             """
         ).df()
-        logger.debug(f"sql result: {df}")
+        # logger.debug(f"sql result: {df}")
         stocks_with_saved_forecast = set(df["symbol"])
-        logger.debug(
-            f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
-        )
+        # logger.debug(
+        #     f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
+        # )
         stocks_without_forecast = set(stocks_df["Symbol"]) - stocks_with_saved_forecast
         stocks_without_forecast = sorted(list(stocks_without_forecast))
         return stocks_without_forecast
