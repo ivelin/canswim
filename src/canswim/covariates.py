@@ -775,7 +775,7 @@ class Covariates:
         t_series = {}
         for t, prices in stock_price_series.items():
             try:
-                logger.debug(f"ticker: {t}")
+                # logger.debug(f"ticker: {t}")
                 try:
                     t_div = div_df.loc[[t]]
                 except KeyError as e:
