@@ -106,8 +106,11 @@ class CanswimModel:
         self.targets.target_series = target_series_ok
         # drop tickers that do not have full data sets for training targets, past and future covariates
         target_set = set(self.targets.target_series.keys())
+        # logger.debug(f"Tickers with complete target data: {target_set} ")
         future_set = set(self.covariates.future_covariates.keys())
+        # logger.debug(f"Tickers with complete future covs data: {future_set} ")
         past_set = set(self.covariates.past_covariates.keys())
+        # logger.debug(f"Tickers with complete past covs data: {past_set} ")
         tickers_with_complete_data = target_set & future_set & past_set
         tickers_without_complete_data = (
             target_set | future_set | past_set
