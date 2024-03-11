@@ -82,13 +82,19 @@ class CanswimForecaster:
                     logger.exception(
                         f"Skipping {tickers_list[i]} due to error: {type(e)}: {e}"
                     )
-        canswim_forecast = self.canswim_model.predict(
-            target=self.canswim_model.targets_list,
-            past_covariates=self.canswim_model.past_cov_list,
-            future_covariates=self.canswim_model.future_cov_list,
-        )
-        logger.info("Forecast finished.")
-        return canswim_forecast
+        if len(self.canswim_model.targets_list) > 0:
+            canswim_forecast = self.canswim_model.predict(
+                target=self.canswim_model.targets_list,
+                past_covariates=self.canswim_model.past_cov_list,
+                future_covariates=self.canswim_model.future_cov_list,
+            )
+            return canswim_forecast
+            logger.info("Forecast finished.")
+        else:
+            logger.warning(
+                "No stocks have enough data in this batch. Skipping forecast."
+            )
+            return None
 
     def _get_stocks_without_forecast(self, stocks_df=None, forecast_start_date=None):
         if forecast_start_date is not None:
@@ -220,7 +226,8 @@ def main(forecast_start_date: str = None):
     for pos in cf.prep_next_stock_group(forecast_start_date=forecast_start_date):
         forecast = cf.get_forecast(forecast_start_date=forecast_start_date)
         ## save new or update existing data file
-        cf.save_forecast(forecast)
+        if forecast:
+            cf.save_forecast(forecast)
     cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
