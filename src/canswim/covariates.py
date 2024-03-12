@@ -211,17 +211,13 @@ class Covariates:
                     len(ts_padded.gaps()) == 0
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
                 t_inst_ownership_series[t] = ts_padded
-            except Exception as e:
-                # df1 = (
-                #    t_iown.groupby(t_iown.columns.tolist())
-                #    .apply(lambda x: tuple(x.index))
-                #   .reset_index(name="date")
-                # )
+            except KeyError as e:
+                logger.info(
+                    f"""Skipping {t} from covariates series. 
+                        No institutional ownership data available for {t}, error: {type(e)}, {e}"""
+                )
+            except AssertionError as e:
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
-                # logger.info(
-                #    f"Duplicated index rows: \n {t_iown.loc[t_iown.index == pd.Timestamp('1987-03-31')]}"
-                #
-                # return t_iown
 
         return t_inst_ownership_series
 
@@ -245,7 +241,7 @@ class Covariates:
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
                 else:
-                    logger.debug(
+                    logger.info(
                         f"Skipping {t} due to lack of min {min_samples} samples. Only {len(stacked)} samples available in covs stack."
                     )
             except KeyError as e:

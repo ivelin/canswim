@@ -116,7 +116,9 @@ class CanswimModel:
             target_set | future_set | past_set
         ) - tickers_with_complete_data
         logger.info(
-            f"Removing time series for tickers with incomplete data sets: {tickers_without_complete_data}. Keeping {tickers_with_complete_data} "
+            f"""Removing time series for tickers with incomplete data sets: 
+                \n{tickers_without_complete_data}
+                \nKeeping {tickers_with_complete_data}"""
         )
         new_target_series = {}
         new_future_covariates = {}
