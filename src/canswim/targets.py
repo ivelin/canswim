@@ -97,7 +97,9 @@ class Targets:
 
     def prepare_stock_price_series(self, train_date_start: pd.Timestamp = None):
         loaded_tickers = self.stock_price_dict.keys()
-        logger.info(f"Preparing ticker series for {len(loaded_tickers)} stocks.")
+        logger.info(
+            f"Preparing ticker series for {len(loaded_tickers)} stocks: \n{loaded_tickers}"
+        )
         stock_price_series = {
             t: TimeSeries.from_dataframe(self.stock_price_dict[t], freq="B")
             for t in loaded_tickers
