@@ -227,7 +227,7 @@ class ChartTab:
 
             if len(central_series) > 1:
                 p = ax.plot(
-                    df.index.values, central_series.values, "-", *args, **kwargs
+                    df.index.values, central_series.values, "--", *args, **kwargs
                 )
             # empty TimeSeries
             elif len(central_series) == 0:
