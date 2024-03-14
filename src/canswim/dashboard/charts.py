@@ -344,6 +344,7 @@ class ChartTab:
         logger.info(f"df column types: \n{df.dtypes}")
         # logger.debug(f"df row sample: {df}")
         df = df.drop(columns=["symbol"])
+        df.sort_index(ascending=True, inplace=True)
         df_list = []
         for y in df["forecast_start_year"].unique():
             for m in df.loc[df["forecast_start_year"] == y][
@@ -365,6 +366,8 @@ class ChartTab:
                         ]
                     )
                     if not single_forecast.empty:
-                        single_forecast = single_forecast.sort_index()
                         df_list.append(single_forecast)
+                        logger.info(
+                            f"Loaded forecast series with start date: {y}/{m}/{d}"
+                        )
         return df_list
