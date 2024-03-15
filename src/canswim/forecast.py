@@ -58,38 +58,51 @@ class CanswimForecaster:
 
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
         logger.info("Forecast start. Calling model predict().")
-        target_sliced_list = self.canswim_model.targets_list
+        forecasted_tickers = []
+        target_sliced_list = []
+        past_cov_list = []
+        future_cov_list = []
         tickers_list = self.canswim_model.targets_ticker_list
         # trim end of targets to specified forecast start date
         if forecast_start_date is not None:
             logger.debug(
                 f"Dropping target samples after forecast start date, included: {forecast_start_date}"
             )
-            for i, t in enumerate(target_sliced_list):
+            for i, ts in enumerate(self.canswim_model.targets_list):
                 try:
                     logger.debug(
-                        f"Target {tickers_list[i]} start date, end date, sample count: {t.start_time()}, {t.end_time()}, {len(t)}"
+                        f"Target {tickers_list[i]} start date, end date, sample count: {ts.start_time()}, {ts.end_time()}, {len(ts)}"
                     )
                     # if forecast start date is after the end of the target time series,
                     # then we can still forecast if the target series ends on the business day before the forecast start date
-                    if forecast_start_date == target_sliced_list[i].end_time() + BDay(
-                        n=1
-                    ):
-                        target_sliced_list[i] = t
+                    cutoff_forecast_start_date = ts.end_time() + BDay(n=1)
+                    if forecast_start_date == cutoff_forecast_start_date:
+                        target_sliced = ts
+                    if forecast_start_date < cutoff_forecast_start_date:
+                        target_sliced = ts.drop_after(forecast_start_date)
+                    # if forecast start date is too far into the future, then we can not provide a forecast
+                    if forecast_start_date <= cutoff_forecast_start_date:
+                        forecasted_tickers.append(tickers_list[i])
+                        target_sliced_list.append(target_sliced)
+                        past_cov_list.append(self.canswim_model.past_cov_list[i])
+                        future_cov_list.append(self.canswim_model.future_cov_list[i])
                     else:
-                        target_sliced_list[i] = t.drop_after(forecast_start_date)
+                        logger.info(
+                            f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to lack of historical data."
+                        )
                 except ValueError as e:
-                    logger.exception(
-                        f"Skipping {tickers_list[i]} due to error: {type(e)}: {e}"
+                    logger.warning(
+                        f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to error: {type(e)}: {e}"
                     )
-        if len(self.canswim_model.targets_list) > 0:
+        if len(target_sliced_list) > 0:
             canswim_forecast = self.canswim_model.predict(
-                target=self.canswim_model.targets_list,
-                past_covariates=self.canswim_model.past_cov_list,
-                future_covariates=self.canswim_model.future_cov_list,
+                target=target_sliced_list,
+                past_covariates=past_cov_list,
+                future_covariates=future_cov_list,
             )
-            return canswim_forecast
             logger.info("Forecast finished.")
+            forecasts = dict(zip(forecasted_tickers, canswim_forecast))
+            return forecasts
         else:
             logger.warning(
                 "No stocks have enough data in this batch. Skipping forecast."
@@ -123,16 +136,19 @@ class CanswimForecaster:
                 forecast_start_year={y} AND
                 forecast_start_month={m} AND
                 forecast_start_day={d} AND
-                count(date) = {self.canswim_model.pred_horizon}
+                count(*) >= {self.canswim_model.pred_horizon}
             """
         ).df()
         # logger.debug(f"sql result: {df}")
         stocks_with_saved_forecast = set(df["symbol"])
-        # logger.debug(
-        #     f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
-        # )
+        logger.debug(
+            f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
+        )
         stocks_without_forecast = set(stocks_df["Symbol"]) - stocks_with_saved_forecast
         stocks_without_forecast = sorted(list(stocks_without_forecast))
+        logger.debug(
+            f"""These stocks do not have a saved forecast yet: {stocks_without_forecast}"""
+        )
         return stocks_without_forecast
 
     def prep_next_stock_group(self, forecast_start_date=None):
@@ -162,14 +178,13 @@ class CanswimForecaster:
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
             yield pos
 
-    def save_forecast(self, forecast_list: List = None):
+    def save_forecast(self, forecasts: dict = None):
         """Saves forecast data to local database"""
 
-        def _list_to_df(forecast_list: list = None):
+        def _list_to_df(forecasts: dict = None):
             """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
             forecast_df = pd.DataFrame()
-            for i, t in enumerate(self.canswim_model.targets_ticker_list):
-                ts = forecast_list[i]
+            for t, ts in forecasts.items():
                 pred_start = ts.start_time()
                 # logger.debug(f"Next forecast timeseries: {ts}")
                 # normalize name of target series column if needed (e.g. "Adj Close" -> "Close")
@@ -192,8 +207,8 @@ class CanswimForecaster:
                 forecast_df = pd.concat([forecast_df, df])
             return forecast_df
 
-        assert forecast_list is not None and len(forecast_list) > 0
-        forecast_df = _list_to_df(forecast_list)
+        assert forecasts is not None and len(forecasts) > 0
+        forecast_df = _list_to_df(forecasts)
         logger.info(
             f"Saving forecast_df with {len(forecast_df.columns)} columns, {len(forecast_df)} rows: {forecast_df}"
         )
@@ -224,10 +239,10 @@ def main(forecast_start_date: str = None):
     ## loop in groups over all stocks
     # next(cf.prep_next_stock_group())
     for pos in cf.prep_next_stock_group(forecast_start_date=forecast_start_date):
-        forecast = cf.get_forecast(forecast_start_date=forecast_start_date)
+        forecasts = cf.get_forecast(forecast_start_date=forecast_start_date)
         ## save new or update existing data file
-        if forecast:
-            cf.save_forecast(forecast)
+        if forecasts:
+            cf.save_forecast(forecasts)
     cf.upload_data()
     logger.info("Finished forecast and uploaded results to HF Hub.")
 
