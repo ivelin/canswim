@@ -380,10 +380,16 @@ class CanswimModel:
         self.past_cov_list = []
         self.future_cov_list = []
         for t in sorted(self.targets.target_series.keys()):
-            self.targets_ticker_list.append(t)
-            self.targets_list.append(self.targets.target_series[t])
-            self.past_cov_list.append(self.covariates.past_covariates[t])
-            self.future_cov_list.append(self.covariates.future_covariates[t])
+            n_target_samples = len(self.targets.target_series[t])
+            if n_target_samples >= self.min_samples:
+                self.targets_ticker_list.append(t)
+                self.targets_list.append(self.targets.target_series[t])
+                self.past_cov_list.append(self.covariates.past_covariates[t])
+                self.future_cov_list.append(self.covariates.future_covariates[t])
+            else:
+                logger.info(
+                    f"Skipping {t} due to lack of data. Only {n_target_samples} available"
+                )
         if self.targets_list is not None and len(self.targets_list) > 0:
             logger.info(
                 f"Sample targets columns count: {len(self.targets_list[0].columns)}, {self.targets_list[0].columns}"
