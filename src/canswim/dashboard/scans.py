@@ -45,7 +45,7 @@ class ScanTab:
         lq = (100 - lowq) / 100
         low_quantile_col = f"close_quantile_{lq}"
         mean_col = "close_quantile_0.5"
-        df = duckdb.sql(
+        sql_result = duckdb.sql(
             f"""--sql
             SELECT 
                 f.symbol, 
@@ -63,7 +63,9 @@ class ScanTab:
             HAVING prior_close_date < forecast_start_date AND forecast_close_high > prior_close_price 
                 AND reward_risk> {rr} AND reward_percent >= {reward}
             """
-        ).df()
+        )
+        logger.debug(f"SQL Result: \n{sql_result}")
+        df = sql_result.df()
         dateformat = lambda d: d.strftime("%d %b, %Y")
         df_styler = df.style.format(
             {"prior_close_date": dateformat, "forecast_start_date": dateformat},

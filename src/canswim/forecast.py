@@ -80,8 +80,13 @@ class CanswimForecaster:
                         target_sliced = ts
                     if forecast_start_date < cutoff_forecast_start_date:
                         target_sliced = ts.drop_after(forecast_start_date)
-                    # if forecast start date is too far into the future, then we can not provide a forecast
-                    if forecast_start_date <= cutoff_forecast_start_date:
+                    # we can only provide forecasts
+                    # when forecast start date is immediately after target series end date
+                    # and there are sufficient number of historical data samples
+                    if (
+                        forecast_start_date <= cutoff_forecast_start_date
+                        and len(ts) >= self.canswim_model.min_samples
+                    ):
                         forecasted_tickers.append(tickers_list[i])
                         target_sliced_list.append(target_sliced)
                         past_cov_list.append(self.canswim_model.past_cov_list[i])
