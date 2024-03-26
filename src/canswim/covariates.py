@@ -508,6 +508,8 @@ class Covariates:
             logger.info(f"Loading data from: {est_file}")
             # est_loaded_df = pd.read_csv(est_file)
             est_loaded_df = pd.read_parquet(est_file, filters=self.pyarrow_filters)
+            # drop duplicate index rows
+            est_loaded_df = est_loaded_df[~est_loaded_df.index.duplicated(keep="last")]
             assert est_loaded_df.index.is_unique
             est_loaded_df = est_loaded_df.drop_duplicates()
             assert not est_loaded_df.duplicated().any()
