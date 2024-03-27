@@ -65,7 +65,10 @@ class AdvancedTab:
         try:
             # only run select queries
             if query.strip().upper().startswith("SELECT"):
-                return duckdb.sql(query).df()
+                sql_result = duckdb.sql(query)
+                logger.debug(f"SQL Result: \n{sql_result}")
+                df = sql_result.df()
+                return df
         except Exception as e:
             gr.Error("An error occurred while running the query:", e)
             return None

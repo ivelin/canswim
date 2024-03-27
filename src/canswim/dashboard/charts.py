@@ -88,7 +88,7 @@ class ChartTab:
         mean_col = "close_quantile_0.5"
         rr = 1.01  # minimum reward/risk ratio
         reward = 1  # minimum reward percent
-        df = duckdb.sql(
+        sql_result = duckdb.sql(
             f"""--sql
             SELECT 
                 f.symbol, 
@@ -100,13 +100,17 @@ class ChartTab:
                 (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
                 max(e.mal_error) as backtest_error,
                 max(c.date) as prior_close_date, 
-            FROM forecast f, close_price c, backtest_error as e
-            WHERE f.symbol = '{ticker}' AND f.symbol = c.symbol AND f.symbol = e.symbol
-            GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol
-            HAVING prior_close_date < forecast_start_date AND forecast_close_high > prior_close_price 
-            AND reward_risk> {rr} AND reward_percent >= {reward}                
+            FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
+            WHERE f.symbol = '{ticker}' AND f.symbol = lf.symbol AND 
+                f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
+            GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol, lf.symbol, lf.date
+            HAVING forecast_close_high > prior_close_price AND
+                make_date(f.forecast_start_year, f.forecast_start_month, f.forecast_start_day) = lf.date AND
+                reward_risk> {rr} AND reward_percent >= {reward}                
             """
-        ).df()
+        )
+        logger.debug(f"sqlresult: \n{sql_result}")
+        df = sql_result.df()
         logger.info(f"rr table df: {df}")
         dateformat = lambda d: d.strftime("%d %b, %Y")
         df_styler = df.style.format(
