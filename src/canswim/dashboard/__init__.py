@@ -70,8 +70,17 @@ class CanswimPlayground:
             """
         )
         duckdb.sql(
-            f"""
-            CREATE VIEW close_price 
+            f"""--sql
+            CREATE TABLE latest_forecast AS
+                SELECT symbol, max(make_date(forecast_start_year, forecast_start_month, forecast_start_day)) as date
+                FROM forecast
+                GROUP BY symbol
+                ;
+            """
+        )
+        duckdb.sql(
+            f"""--sql
+            CREATE VIEW close_price
             AS SELECT Date, Symbol, "{self.canswim_model.target_column}" as Close
             FROM read_parquet('{self.stocks_price_path}') as cp
             SEMI JOIN stock_tickers
@@ -79,7 +88,7 @@ class CanswimPlayground:
             """
         )
         duckdb.sql(
-            f"""
+            f"""--sql
             CREATE VIEW backtest_error 
             AS SELECT f.symbol, mean(abs(log(greatest(f."close_quantile_0.5", 0.01)/cp.Close))) as mal_error
             FROM forecast as f, close_price as cp
