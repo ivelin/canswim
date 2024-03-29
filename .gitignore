@@ -8,3 +8,5 @@ tmp/**
 canswim_model.pt*
 build/**
 dist/**
+data/
+forecast/
