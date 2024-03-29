@@ -104,6 +104,8 @@ class MarketDataGatherer:
             "nasdaq100_cndx_holdings.csv",
             "watchlist.csv",
             "vti_total_market_stocks.csv",
+            "ITB_holdings.csv",
+            "IYM_holdings.csv",
             self.all_stocks_file,
         ]
         logger.info(
