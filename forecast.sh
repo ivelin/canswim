@@ -15,3 +15,4 @@ set -exv
 #./canswim.sh forecast --forecast_start_date "2024-03-11"
 #./canswim.sh forecast --forecast_start_date "2024-03-18"
 #./canswim.sh forecast --forecast_start_date "2024-03-25"
+#./canswim.sh forecast --forecast_start_date "2024-04-01"
