@@ -114,6 +114,7 @@ class MarketDataGatherer:
         for f in stock_files:
             fp = f"data/data-3rd-party/{f}"
             if Path(fp).is_file():
+                logger.info(f"loading symbols from {fp}...")
                 stocks = pd.read_csv(fp)
                 logger.info(f"loaded {len(stocks)} symbols from {fp}")
                 stock_set = set(stocks["Symbol"])
@@ -127,7 +128,7 @@ class MarketDataGatherer:
         # logger.info(f"All stocks set: {all_stock_set}")
         # Drop invalid symbols with more than 10 ticker characters.
         # Almost all stocks have less than 5 characters.
-        slist = [x for x in set(all_stock_set) if len(x) < 10]
+        slist = [x for x in set(all_stock_set) if isinstance(x, str) and len(x) < 10]
         self.stocks_ticker_set = set(slist)
         # drop symbols which yfinance does not like
         junk_tickers = pd.read_csv(
