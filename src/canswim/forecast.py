@@ -249,7 +249,7 @@ def main(forecast_start_date: str = None):
         if forecasts:
             cf.save_forecast(forecasts)
     cf.upload_data()
-    logger.info("Finished forecast and uploaded results to HF Hub.")
+    logger.info("Finished forecast task.")
 
 
 if __name__ == "__main__":
