@@ -282,7 +282,7 @@ class ChartTab:
         )
         self.canswim_model.load_data(stock_tickers=[ticker], start_date=load_start_date)
         # prepare timeseries for forecast
-        self.canswim_model.prepare_forecast_data(start_date=load_start_date)
+        self.canswim_model.prepare_stock_price_data(start_date=load_start_date)
         fig, axes = plt.subplots(figsize=(20, 12))
         target = self.get_target(ticker)
         # reward risk df
