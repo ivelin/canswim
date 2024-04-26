@@ -350,9 +350,7 @@ class CanswimModel:
             os.getenv("train_date_start", "1991-01-01")
         )
 
-    def prepare_forecast_data(self, start_date: pd.Timestamp = None):
-        # prepare stock price time series
-        ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
+    def prepare_stock_price_data(self, start_date: pd.Timestamp = None):
         self.stock_price_series = self.targets.prepare_stock_price_series(
             train_date_start=start_date
         )
@@ -363,6 +361,11 @@ class CanswimModel:
             target_columns=self.target_column,
         )
         logger.info(f"Prepared {len(self.targets.target_series)} stock targets")
+
+    def prepare_forecast_data(self, start_date: pd.Timestamp = None):
+        # prepare stock price time series
+        ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
+        self.prepare_stock_price_data(start_date=start_date)
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
             target_columns=self.target_column,
