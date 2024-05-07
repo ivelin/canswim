@@ -313,7 +313,8 @@ class ChartTab:
                 if latest_forecast_df is not None and not latest_forecast_df.empty:
                     lowq_df = latest_forecast_df.quantile(q=lq, axis=1)
                     # logger.debug(f"lowq_df: {lowq_df}")
-                    lowq_min = lowq_df.min()
+                    # 0 is the lowest theoretical minimum for a stock price
+                    lowq_min = max(lowq_df.min(), 0)
                     rr_df = self.get_rr(ticker=ticker, lowq_min=lowq_min)
             # Set the locator
             major_locator = mdates.YearLocator()  # every year
