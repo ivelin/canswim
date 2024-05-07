@@ -112,9 +112,11 @@ class ChartTab:
         logger.debug(f"sqlresult: \n{sql_result}")
         df = sql_result.df()
         logger.info(f"rr table df: {df}")
-        dateformat = lambda d: d.strftime("%d %b, %Y")
+        df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
+        df["forecast_start_date"] = df["forecast_start_date"].dt.strftime("%Y-%m-%d")
+        # dateformat = lambda d: d.strftime("%d %b, %Y")
         df_styler = df.style.format(
-            {"prior_close_date": dateformat, "forecast_start_date": dateformat},
+            # {"prior_close_date": dateformat, "forecast_start_date": dateformat},
             precision=2,
             thousands=",",
             decimal=".",
