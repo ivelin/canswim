@@ -114,6 +114,7 @@ class ChartTab:
         logger.info(f"rr table df: {df}")
         df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
         df["forecast_start_date"] = df["forecast_start_date"].dt.strftime("%Y-%m-%d")
+        logger.debug(f"df types: {df.dtypes}")
         # dateformat = lambda d: d.strftime("%d %b, %Y")
         df_styler = df.style.format(
             # {"prior_close_date": dateformat, "forecast_start_date": dateformat},
