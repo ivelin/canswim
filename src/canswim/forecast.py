@@ -158,6 +158,8 @@ class CanswimForecaster:
         stocks_file = f"{self.data_dir}/{self.data_3rd_party}/{self.stock_tickers_list}"
         logger.info(f"Loading stock tickers from {stocks_file}.")
         all_stock_tickers = pd.read_csv(stocks_file)
+        # trim any duplicate tickers
+        all_stock_tickers.index = all_stock_tickers.index.drop_duplicates()
         logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
         stock_list = self._get_stocks_without_forecast(
             stocks_df=all_stock_tickers, forecast_start_date=forecast_start_date
