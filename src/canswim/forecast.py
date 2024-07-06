@@ -5,10 +5,7 @@ Forecast stock price movement and upload results to HF Hub
 import pandas as pd
 from loguru import logger
 from canswim.model import CanswimModel
-import pandas as pd
-from pandas import DataFrame
 from canswim.hfhub import HFHub
-from matplotlib import pyplot
 from pandas.tseries.offsets import BDay
 from loguru import logger
 import os
