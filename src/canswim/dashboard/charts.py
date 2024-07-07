@@ -52,9 +52,14 @@ class ChartTab:
 
     def get_tickers(self):
         logger.info(f"Loading stock tickers from stock_tickers table")
-        tickers_df = duckdb.sql("SELECT symbol from stock_tickers ORDER BY symbol").df()
+        tickers_df = duckdb.sql(
+            "SELECT symbol from stock_tickers WHERE symbol IS NOT NULL ORDER BY symbol"
+        ).df()
         logger.info(f"Loaded {len(tickers_df)} symbols in total")
         stock_list = list(set(tickers_df["Symbol"]))
+        logger.info(f"Loaded symbols: {stock_list}")
+        stock_list = sorted(stock_list)
+        logger.info(f"Sorted symbols: {stock_list}")
         return stock_list
 
     def get_target(self, ticker):

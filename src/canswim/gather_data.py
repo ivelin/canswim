@@ -139,8 +139,11 @@ class MarketDataGatherer:
         stocks_df = pd.DataFrame()
         stocks_df["Symbol"] = self.stocks_ticker_set
         stocks_df = stocks_df.set_index(["Symbol"])
+        # drop any duplicate symbols
         stocks_df.index = stocks_df.index.drop_duplicates()
-        stocks_df
+        # drop any empty symbols/tickers
+        stocks_df.index = stocks_df.index.dropna()
+        # stocks_df
         stocks_file = f"data/data-3rd-party/{self.all_stocks_file}"
         stocks_df.to_csv(stocks_file)
         logger.info(f"Saved stock set to {stocks_file}")

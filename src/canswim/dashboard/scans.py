@@ -63,7 +63,8 @@ class ScanTab:
             GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol, lf.symbol, lf.date
             HAVING forecast_close_high > prior_close_price AND
                 make_date(f.forecast_start_year, f.forecast_start_month, f.forecast_start_day) = lf.date AND
-                reward_risk> {rr} AND reward_percent >= {reward}                
+                reward_risk> {rr} AND reward_percent >= {reward}
+                and forecast_start_date = max(lf.date)
             """
         )
         logger.debug(f"SQL Result: \n{sql_result}")
