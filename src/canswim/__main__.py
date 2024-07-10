@@ -76,6 +76,14 @@ parser.add_argument(
     help="""Optional argument for the `train` task. Whether to train a newly created model or continue training an existing pre-trained model.""",
 )
 
+parser.add_argument(
+    "--same_data",
+    type=bool,
+    required=False,
+    default=False,
+    help="""Optional argument for the `dashboard` task. Whether to reuse previously created search database (faster start time) or update with new forecast data (slower start time).""",
+)
+
 args = parser.parse_args()
 
 logging_dir = os.getenv("logging_dir", "tmp")
@@ -107,7 +115,7 @@ signal.signal(signal.SIGINT, signal_handler)
 
 match args.task:
     case "dashboard":
-        dashboard.main()
+        dashboard.main(same_data=args.same_data)
     case "modelsearch":
         model_search.main()
     case "gatherdata":
