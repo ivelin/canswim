@@ -87,9 +87,10 @@ class ChartTab:
         )
         return future_covariates
 
-    def get_rr(self, ticker=None, lowq_min=None):
+    def get_rr(self, ticker=None, lq=None):
         assert ticker is not None
-        assert lowq_min is not None and lowq_min >= 0
+        assert lq is not None and lq >= 0
+        low_quantile_col = f"close_quantile_{lq}"
         # logger.debug(f"lowq_min: {lowq_min}")
         mean_col = "close_quantile_0.5"
         rr = 1.01  # minimum reward/risk ratio
@@ -99,8 +100,8 @@ class ChartTab:
             SELECT 
                 f.symbol, 
                 f.start_date as forecast_start_date, 
-                arg_max(c.close, c.date) as prior_close_price, 
-                $lowq_min as forecast_close_low, 
+                arg_max(c.close, c.date) as prior_close_price,
+                min("{low_quantile_col}") as forecast_close_low, 
                 max("{mean_col}") as forecast_close_high, 
                 100*(forecast_close_high / prior_close_price - 1) as reward_percent, 
                 (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
@@ -115,7 +116,6 @@ class ChartTab:
                 reward_risk> $rr AND reward_percent >= $reward
             """,
             params={
-                "lowq_min": lowq_min,
                 "ticker": ticker,
                 "rr": rr,
                 "reward": reward,
@@ -329,12 +329,7 @@ class ChartTab:
                 # fetch Reward Risk data for latest forecast
                 latest_forecast_df = saved_forecast_df_list[-1]
                 if latest_forecast_df is not None and not latest_forecast_df.empty:
-                    # lowq_df = latest_forecast_df.quantile(q=lq, axis=1)
-                    lowq_df = latest_forecast_df[f"close_quantile_{lq}"]
-                    # logger.debug(f"lowq_df: {lowq_df}")
-                    # 0 is the lowest theoretical minimum for a stock price
-                    lowq_min = max(lowq_df.min(), 0)
-                    rr_df = self.get_rr(ticker=ticker, lowq_min=lowq_min)
+                    rr_df = self.get_rr(ticker=ticker, lq=lq)
             # Set the locator
             major_locator = mdates.YearLocator()  # every year
             minor_locator = mdates.MonthLocator()  # every month

@@ -72,7 +72,7 @@ class ScanTab:
                 "reward": reward,
             },
         )
-        logger.debug(f"SQL Result: \n{sql_result}")
+        logger.info(f"SQL Result: \n{sql_result}")
         df = sql_result.df()
         df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
         df["forecast_start_date"] = df["forecast_start_date"].dt.strftime("%Y-%m-%d")
