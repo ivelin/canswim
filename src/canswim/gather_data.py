@@ -139,6 +139,8 @@ class MarketDataGatherer:
         stocks_df = pd.DataFrame()
         stocks_df["Symbol"] = self.stocks_ticker_set
         stocks_df = stocks_df.set_index(["Symbol"])
+        # convert all tickers to uppercase
+        stocks_df.index = stocks_df.index.str.upper()
         # drop any duplicate symbols
         stocks_df.index = stocks_df.index.drop_duplicates()
         # drop any empty symbols/tickers
