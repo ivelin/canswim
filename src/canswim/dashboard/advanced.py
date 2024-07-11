@@ -13,15 +13,16 @@ Methods:
 from loguru import logger
 from canswim.model import CanswimModel
 import gradio as gr
+import duckdb
 
 
 class AdvancedTab:
 
-    def __init__(self, canswim_model: CanswimModel = None, db_con=None):
+    def __init__(self, canswim_model: CanswimModel = None, db_path=None):
         assert canswim_model is not None
-        assert db_con is not None
+        assert db_path is not None
         self.canswim_model = canswim_model
-        self.db_con = db_con
+        self.db_path = db_path
         with gr.Row():
             self.queryBox = gr.TextArea(
                 value="""SELECT 
@@ -70,14 +71,17 @@ class AdvancedTab:
         try:
             # only run select queries
             if query.strip().upper().startswith("SELECT"):
-                sql_result = self.db_con.sql(query)
-                logger.info(f"SQL Result: \n{sql_result}")
-                df = sql_result.df()
-                df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
-                df["forecast_start_date"] = df["forecast_start_date"].dt.strftime(
-                    "%Y-%m-%d"
-                )
-                return df
+                with duckdb.connect(self.db_path) as db_con:
+                    sql_result = db_con.sql(query)
+                    logger.info(f"SQL Result: \n{sql_result}")
+                    df = sql_result.df()
+                    df["prior_close_date"] = df["prior_close_date"].dt.strftime(
+                        "%Y-%m-%d"
+                    )
+                    df["forecast_start_date"] = df["forecast_start_date"].dt.strftime(
+                        "%Y-%m-%d"
+                    )
+                    return df
         except Exception as e:
             gr.Error("An error occurred while running the query:", e)
             return None
