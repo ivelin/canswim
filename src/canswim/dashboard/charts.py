@@ -29,12 +29,11 @@ class ChartTab:
                 label="Stock Symbol",
                 value=random.sample(sorted_tickers, 1)[0],
             )
-            self.lowq = gr.Slider(
-                minimum=50,
-                maximum=99,
+            self.lowq = gr.Radio(
+                choices=[80, 95, 99],
                 value=80,
                 label="Confidence level for lowest close price",
-                info="Choose from 50% to 99%",
+                info="Choose low price confidence percentage",
             )
         with gr.Row():
             self.rrTable = gr.Dataframe(
