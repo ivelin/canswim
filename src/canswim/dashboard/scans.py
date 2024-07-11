@@ -1,14 +1,15 @@
 from loguru import logger
 from canswim.model import CanswimModel
 import gradio as gr
-import duckdb
 
 
 class ScanTab:
 
-    def __init__(self, canswim_model: CanswimModel = None):
+    def __init__(self, canswim_model: CanswimModel = None, db_con=None):
+        assert canswim_model is not None
+        assert db_con is not None
         self.canswim_model = canswim_model
-
+        self.db_con = db_con
         with gr.Row():
             self.lowq = gr.Radio(
                 choices=[80, 95, 99],
@@ -45,28 +46,33 @@ class ScanTab:
         lq = (100 - lowq) / 100
         low_quantile_col = f"close_quantile_{lq}"
         mean_col = "close_quantile_0.5"
-        sql_result = duckdb.sql(
+        sql_result = self.db_con.sql(
             f"""--sql
             SELECT 
                 f.symbol, 
-                min(f.date) as forecast_start_date, 
+                f.start_date as forecast_start_date, 
                 arg_max(c.close, c.date) as prior_close_price, 
                 min("{low_quantile_col}") as forecast_close_low, 
-                max("{mean_col}") as forecast_close_high, 
-                100*(forecast_close_high / prior_close_price - 1) as reward_percent, 
+                max("{mean_col}") as forecast_close_high,
+                100*(forecast_close_high / prior_close_price - 1) as reward_percent,
                 (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
                 max(e.mal_error) as backtest_error,
-                max(c.date) as prior_close_date, 
+                max(c.date) as prior_close_date,
             FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
-            WHERE f.symbol = lf.symbol AND 
+            WHERE f.symbol = lf.symbol AND
                 f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
-            GROUP BY f.symbol, f.forecast_start_year, f.forecast_start_month, f.forecast_start_day, c.symbol, e.symbol, lf.symbol, lf.date
+            GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, lf.symbol, lf.date
             HAVING forecast_close_high > prior_close_price AND
-                make_date(f.forecast_start_year, f.forecast_start_month, f.forecast_start_day) = lf.date AND
-                reward_risk> {rr} AND reward_percent >= {reward}                
-            """
+                f.start_date = lf.date AND
+                reward_risk> $rr AND reward_percent >= $reward
+                and forecast_start_date = max(lf.date)
+            """,
+            params={
+                "rr": rr,
+                "reward": reward,
+            },
         )
-        logger.debug(f"SQL Result: \n{sql_result}")
+        logger.info(f"SQL Result: \n{sql_result}")
         df = sql_result.df()
         df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
         df["forecast_start_date"] = df["forecast_start_date"].dt.strftime("%Y-%m-%d")

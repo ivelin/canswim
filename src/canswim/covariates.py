@@ -605,6 +605,9 @@ class Covariates:
                 # logger.info(f'{t} estimates columns: \n{est_df.columns}')
                 # align dates to business days
                 est_df = self.df_index_to_biz_days(est_df)
+                # there should be no duplicate rows
+                est_df = est_df[~est_df.index.duplicated(keep="first")]
+                assert not est_df.index.duplicated().any()
                 # expand date index to match target price series dates and pad data
                 est_series_tmp = TimeSeries.from_dataframe(
                     est_df, freq="B", fill_missing_dates=True
