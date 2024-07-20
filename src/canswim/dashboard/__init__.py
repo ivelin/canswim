@@ -82,7 +82,12 @@ class CanswimPlayground:
                     CREATE UNIQUE INDEX stock_tickers_sym_idx ON stock_tickers (symbol)
                     """
                 )
-                logger.info("Creating forecast table")
+                logger.info(
+                    """
+                    Creating forecast tables optimized for search. May take a few minutes.\n
+                    Use --help to see dashboard launch options.
+                    """
+                )
                 db_con.sql(
                     f"""--sql
                     CREATE OR REPLACE TABLE forecast 
