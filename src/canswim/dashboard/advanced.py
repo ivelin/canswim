@@ -42,7 +42,7 @@ class AdvancedTab:
                 HAVING forecast_close_high > prior_close_price AND
                     f.start_date = lf.date AND
                     reward_risk> 3 AND reward_percent >= 20
-                    and forecast_start_date = max(lf.date)
+                    AND forecast_start_date = (select max(date) from latest_forecast)
             """
             )
 
