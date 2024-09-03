@@ -1,6 +1,7 @@
 # canswim
 Developer toolkit for CANSLIM investment style practitioners
 
+For a brief introduction read [this blog post](https://medium.com/@ivelin.atanasoff.ivanov/canswim-a-deep-learning-tool-for-canslim-practitioners-2c9740bb0d3d).
 
 # Setup
 
