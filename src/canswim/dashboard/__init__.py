@@ -84,8 +84,8 @@ class CanswimPlayground:
                 )
                 logger.info(
                     """
-                    Creating forecast tables optimized for search. May take a few minutes.\n
-                    Use --help to see dashboard launch options.
+                    Creating forecast tables optimized for search. May take a few minutes.
+                    Use --help to see all dashboard launch options.
                     """
                 )
                 db_con.sql(

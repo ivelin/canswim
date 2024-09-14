@@ -74,6 +74,9 @@ class ScanTab:
                     "reward": reward,
                 },
             )
+            logger.info(
+                f"Scan params: Confidence {lowq}%, Reward: {reward}%, Risk/Reward: {rr}"
+            )
             logger.info(f"SQL Result: \n{sql_result}")
             df = sql_result.df()
             df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
