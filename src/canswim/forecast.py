@@ -24,7 +24,7 @@ class CanswimForecaster:
         logger.info(f"n_stocks: {self.n_stocks}")
         self.forecast_subdir = os.getenv("forecast_subdir", "forecast/")
         logger.info(f"Forecast data path: {self.forecast_subdir}")
-        self.canswim_model = CanswimModel()
+        self.canswim_model = CanswimModel(forecast_only=True)
         self.hfhub = HFHub()
 
     def download_model(self):

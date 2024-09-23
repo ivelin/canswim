@@ -39,7 +39,8 @@ def optuna_print_callback(study, trial):
 
 
 class CanswimModel:
-    def __init__(self):
+    def __init__(self, forecast_only=False):
+        self.forecast_only = forecast_only
         self.n_stocks: int = 50
         self.n_epochs: int = 10
         self.train_series = {}
@@ -76,7 +77,12 @@ class CanswimModel:
     def min_samples(self):
         # minimum amount of historical data required to train on a stock series
         # stocks that are too new off IPOs, are not a good fit for training this model
-        m = self.n_test_range_days * 3
+        # m = self.n_test_range_days * 3
+        # update Sep 11, 2024:
+        # min required samples for training and forecast encompasses the lookback history window plus val prediction window plus test prediction window
+        m = self.train_history + self.pred_horizon + self.pred_horizon
+        if not self.forecast_only:
+            m += self.train_history
         return m
 
     @property
