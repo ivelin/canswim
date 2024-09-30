@@ -57,7 +57,7 @@ jobs:
               </svg>" > .github/badges/coverage.svg
     
     - name: Upload coverage badge
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: coverage-badge
         path: .github/badges/coverage.svg
