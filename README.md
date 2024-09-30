@@ -1,6 +1,9 @@
 # canswim
 Developer toolkit for CANSLIM investment style practitioners
 
+[![Test and Coverage](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml/badge.svg)](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml)
+![Coverage](https://raw.githubusercontent.com/your-username/canswim/website/.github/badges/coverage.svg)
+
 For a brief introduction read [this blog post](https://medium.com/@ivelin.atanasoff.ivanov/canswim-a-deep-learning-tool-for-canslim-practitioners-2c9740bb0d3d).
 
 # Setup
@@ -42,3 +45,13 @@ options:
 
 NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.
 ```
+
+```
+# CANSWIM
+
+[![Test and Coverage](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml/badge.svg)](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml)
+![Coverage](https://raw.githubusercontent.com/your-username/canswim/website/.github/badges/coverage.svg)
+
+Developer toolkit for CANSLIM investment style practitioners
+
+// ... rest of the README content ...
