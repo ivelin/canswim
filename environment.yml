@@ -1,7 +1,0 @@
-name: canswim
-channels:
-  - anaconda
-  - conda-forge
-  - defaults
-dependencies:
-  - python=3.10
