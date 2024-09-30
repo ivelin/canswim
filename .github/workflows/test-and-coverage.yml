@@ -14,24 +14,33 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     
-    - name: Set up Python
-      uses: actions/setup-python@v2
+    - name: Set up Conda
+      uses: conda-incubator/setup-miniconda@v2
       with:
+        activate-environment: canswim
+        environment-file: environment.yml
         python-version: '3.10'
+        auto-activate-base: false
     
     - name: Install dependencies
+      shell: bash -l {0}
       run: |
+        conda activate canswim
         python -m pip install --upgrade pip
         pip install -e .[test]
     
     - name: Run tests with coverage
+      shell: bash -l {0}
       run: |
+        conda activate canswim
         coverage run -m pytest
         coverage xml
         coverage report > coverage_report.txt
     
     - name: Generate coverage badge
+      shell: bash -l {0}
       run: |
+        conda activate canswim
         COVERAGE=$(grep "TOTAL" coverage_report.txt | awk '{print $NF}' | sed 's/%//')
         echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
         mkdir -p .github/badges
