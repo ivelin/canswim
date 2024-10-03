@@ -42,13 +42,3 @@ options:
 
 NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.
 ```
-
-```
-# CANSWIM
-
-[![Test and Coverage](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml/badge.svg)](https://github.com/your-username/canswim/actions/workflows/test-and-coverage.yml)
-![Coverage](https://raw.githubusercontent.com/your-username/canswim/website/.github/badges/coverage.svg)
-
-Developer toolkit for CANSLIM investment style practitioners
-
-// ... rest of the README content ...
