@@ -204,7 +204,7 @@ class CanswimModel:
             self.test_start[t] = target.end_time() - BDay(n=self.n_test_range_days)
             self.val_start[t] = self.test_start[t] - BDay(n=self.pred_horizon)
             if (
-                len(target) > self.min_samples
+                len(target) >= self.min_samples
                 and t in self.covariates.past_covariates.keys()
                 and t in self.covariates.future_covariates.keys()
             ):
@@ -263,7 +263,7 @@ class CanswimModel:
                     logger.exception(f"Skipping {t} from data splits due to error: ", e)
             else:
                 logger.info(
-                    f"Removing {t} from train set. Not enough samples. Minimum {self.min_samples} needed, but only {len(target)} available"
+                    f"Removing {t} from train set. Either not enough historic samples or not enough covariates data. Minimum {self.min_samples} samples needed; {len(target)} samples available."
                 )
         self.targets_list = []
         self.target_train_list = []
