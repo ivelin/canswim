@@ -3,6 +3,10 @@ Gather stock market data from 3rd party sources
 """
 
 import yfinance as yf
+from requests import Session
+from requests_cache import CacheMixin, SQLiteCache
+from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
+from pyrate_limiter import Duration, RequestRate, Limiter
 import pandas as pd
 from dotenv import load_dotenv
 from loguru import logger
@@ -20,6 +24,9 @@ import typing
 from fmpsdk.url_methods import __return_json_v3, __validate_period
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
 
+
+class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
+   pass
 
 def get_latest_date(datetime_col):
     """Return the latest datetime value in a datetime formatted dataframe column"""
@@ -194,7 +201,12 @@ class MarketDataGatherer:
                 )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
-        new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d")
+        session = CachedLimiterSession(
+            limiter=Limiter(RequestRate(2, Duration.SECOND*5)),  # max 2 requests per 5 seconds
+            bucket_class=MemoryQueueBucket,
+            backend=SQLiteCache("yfinance.cache"),
+        )
+        new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d", session=session)
         new_df = new_df.dropna(how="all")
         logger.info("New data gathered. Sample: \n{bm}", bm=new_df)
         logger.info(f"Columns: \n{new_df.columns}")
@@ -283,8 +295,13 @@ class MarketDataGatherer:
                 )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
+        session = CachedLimiterSession(
+            limiter=Limiter(RequestRate(2, Duration.SECOND*5)),  # max 2 requests per 5 seconds
+            bucket_class=MemoryQueueBucket,
+            backend=SQLiteCache("yfinance.cache"),
+        )
         new_df = yf.download(
-            self.stocks_ticker_set, start=start_date, group_by="tickers"
+            self.stocks_ticker_set, start=start_date, group_by="tickers", session=session
         )
         new_df = new_df.dropna(how="all")
         new_df = new_df.stack(level=0)
