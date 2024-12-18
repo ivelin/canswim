@@ -162,7 +162,7 @@ class CanswimPlayground:
         self.download_model()
         self.download_data()
         self.initdb()
-        with gr.Blocks(theme=gr.themes.Soft()) as demo:
+        with gr.Blocks(theme=gr.themes.Soft(), title="CANSWIM") as demo:
             gr.Markdown(
                 """
             CANSWIM Playground for CANSLIM style investors.
