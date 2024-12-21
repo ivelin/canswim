@@ -12,6 +12,8 @@ import os
 from canswim import constants
 from typing import List
 import duckdb
+from datetime import datetime, timedelta
+import pandas_market_calendars as mcal
 
 
 class CanswimForecaster:
@@ -233,12 +235,44 @@ class CanswimForecaster:
         self.hfhub.upload_data()
 
 
+
+def get_next_open_market_day():
+    # Get calendar for NYSE
+    nyse = mcal.get_calendar('NYSE')
+    
+    # Get today's date
+    today = datetime.now().date()
+    
+    # Look for the next valid trading day within a reasonably big window of 30 days
+    valid_days = nyse.valid_days(start_date=today, end_date=today + timedelta(days=30))
+    
+    next_trading_day = None
+
+    if valid_days is not None and len(valid_days) > 0:
+        next_trading_day = valid_days[0]
+
+    if next_trading_day is not None:
+        logger.info(f"The next open stock market date is: {next_trading_day}")
+    else:
+        logger.warning("No open market day found within the next 30 days.")
+
+    # If we can't find a next valid day within 30 days (which shouldn't happen for NYSE), return None
+    return next_trading_day
+
+
 # main function
 def main(forecast_start_date: str = None):
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
     if forecast_start_date is not None:
         logger.info(f"forecast_start_date: {forecast_start_date}")
         forecast_start_date = pd.Timestamp(forecast_start_date)
+    else:
+        # get next open stock market date
+        # Example usage
+        forecast_start_date = get_next_open_market_day()
+
+    logger.info(f"Forecast start date set to: {forecast_start_date}")
+
     cf = CanswimForecaster()
     cf.download_model()
     cf.download_data()
