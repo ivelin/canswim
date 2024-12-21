@@ -1,9 +1,12 @@
 #!/usr/bin/bash
+# Use this script to run forecast for multiple periods
+# with custom forecast start dates
 echo "Running forecast for multiple periods"
 set -exv
 
-
+# without setting a specific forecast start date, forecast will start from the next open market date
 #./canswim.sh forecast
+
 #./canswim.sh forecast --forecast_start_date "2023-11-20"
 #./canswim.sh forecast --forecast_start_date "2023-12-04"
 #./canswim.sh forecast --forecast_start_date "2023-12-18"
@@ -50,4 +53,5 @@ set -exv
 #./canswim.sh forecast --forecast_start_date "2024-11-25"
 #./canswim.sh forecast --forecast_start_date "2024-12-02"
 #./canswim.sh forecast --forecast_start_date "2024-12-09"
-./canswim.sh forecast --forecast_start_date "2024-12-16"
+#./canswim.sh forecast --forecast_start_date "2024-12-16"
+#./canswim.sh forecast --forecast_start_date "2024-12-23"
