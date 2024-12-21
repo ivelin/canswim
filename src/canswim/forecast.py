@@ -244,7 +244,7 @@ def get_next_open_market_day():
     today = datetime.now().date()
     
     # Look for the next valid trading day within a reasonably big window of 30 days
-    valid_days = nyse.valid_days(start_date=today, end_date=today + timedelta(days=30))
+    valid_days = nyse.valid_days(start_date=today, end_date=today + timedelta(days=30), tz="US/Eastern")
     
     next_trading_day = None
 
@@ -265,7 +265,7 @@ def main(forecast_start_date: str = None):
     logger.info("Running forecast on stocks and uploading results to HF Hub...")
     if forecast_start_date is not None:
         logger.info(f"forecast_start_date: {forecast_start_date}")
-        forecast_start_date = pd.Timestamp(forecast_start_date)
+        forecast_start_date = pd.Timestamp(forecast_start_date, tz="US/Eastern")
     else:
         # get next open stock market date
         # Example usage
