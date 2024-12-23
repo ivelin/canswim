@@ -318,7 +318,7 @@ class ChartTab:
                 self.canswim_model.train_history
             )
             visible_target = target.drop_before(plot_start_date)
-            saved_forecast_df_list = self.get_saved_forecasts(ticker=ticker)
+            saved_forecast_df_list = self.get_saved_forecasts(ticker=ticker, start_date=plot_start_date)
             lq = (100 - lowq) / 100
             visible_target.plot(label=f"{ticker} Close actual")
             # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
@@ -352,19 +352,19 @@ class ChartTab:
             plt.legend()
         return {self.plotComponent: fig, self.rrTable: rr_df}
 
-    def get_saved_forecasts(self, ticker: str = None):
+    def get_saved_forecasts(self, ticker: str = None, start_date = None):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
         # load parquet partition for stock
-        logger.info(f"Loading saved forecast for {ticker}")
+        logger.info(f"Loading saved forecast for {ticker} starting after: {start_date}")
         with duckdb.connect(self.db_path) as db_con:
             sql_result = db_con.sql(
                 f"""--sql
                 SELECT *
                 FROM forecast as f
-                WHERE f.symbol = $ticker
+                WHERE f.symbol = $ticker AND f.start_date >= $start_date
                 ORDER BY f.symbol, f.start_date, f.date
                 """,
-                params={"ticker": ticker},
+                params={"ticker": ticker, "start_date": start_date},
             )
             df = sql_result.df()
             # filters = [("symbol", "=", ticker)]
