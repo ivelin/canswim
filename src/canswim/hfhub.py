@@ -10,6 +10,7 @@ from huggingface_hub import snapshot_download, upload_folder, create_repo
 import torch
 import tarfile
 import os.path
+from pathlib import Path
 
 
 class HFHub:
@@ -159,6 +160,7 @@ class HFHub:
             f"Downloading hf data from {repo_id} to data dir:\n",
             os.listdir(data_dir),
         )
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
         snapshot_download(
             repo_id=repo_id,
             repo_type="dataset",
