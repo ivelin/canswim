@@ -156,11 +156,11 @@ class HFHub:
             data_dir = self.data_dir
         if repo_id is None:
             repo_id = self.repo_id
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
         logger.info(
             f"Downloading hf data from {repo_id} to data dir:\n",
             os.listdir(data_dir),
         )
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
         snapshot_download(
             repo_id=repo_id,
             repo_type="dataset",
