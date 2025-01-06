@@ -18,6 +18,7 @@
 import signal
 import sys
 from dotenv import load_dotenv
+from importlib import metadata
 
 # load os env vars before loguru import
 # otherwise it won't pickup LOGURU_LEVEL
@@ -84,8 +85,6 @@ parser.add_argument(
     help="""Optional argument for the `dashboard` task. Whether to reuse previously created search database (faster start time) or update with new forecast data (slower start time).""",
 )
 
-args = parser.parse_args()
-
 logging_dir = os.getenv("logging_dir", "tmp")
 logging_path = f"{logging_dir}/canswim.log"
 rot = "24 hours"
@@ -98,6 +97,11 @@ logger.info(
     rot=rot,
     ret=ret,
 )
+
+version = metadata.version('canswim')
+logger.info(f"canswim version: {version}")
+
+args = parser.parse_args()
 
 logger.info("command line args: {args}", args=args)
 
