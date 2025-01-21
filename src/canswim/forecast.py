@@ -73,8 +73,8 @@ class CanswimForecaster:
                         f"Target {tickers_list[i]} start date, end date, sample count: {ts.start_time()}, {ts.end_time()}, {len(ts)}"
                     )
                     # if forecast start date is after the end of the target time series,
-                    # then we can still forecast if the target series ends on the business day before the forecast start date
-                    cutoff_forecast_start_date = ts.end_time() + BDay(n=1)
+                    # then we can still forecast if the target series ends on the open market business day before the forecast start date
+                    cutoff_forecast_start_date = get_next_open_market_day(after_date=ts.end_time())
                     if forecast_start_date == cutoff_forecast_start_date:
                         target_sliced = ts
                     if forecast_start_date < cutoff_forecast_start_date:
@@ -92,7 +92,7 @@ class CanswimForecaster:
                         future_cov_list.append(self.canswim_model.future_cov_list[i])
                     else:
                         logger.info(
-                            f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to lack of historical data."
+                            f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to lack of historical data. Min {self.canswim_model.min_samples} samples needed. Historical timeseries has {len(ts)} samples and ends on {ts.end_time()}."
                         )
                 except ValueError as e:
                     logger.warning(
@@ -234,17 +234,18 @@ class CanswimForecaster:
     def upload_data(self):
         self.hfhub.upload_data()
 
-
-
-def get_next_open_market_day():
+def get_next_open_market_day(after_date=None):
+    """Get the date of the next open market day after a given date: after_date when provided or after today otherwise."""
     # Get calendar for NYSE
     nyse = mcal.get_calendar('NYSE')
     
-    # Get today's date
-    today = datetime.now().date()
+    if after_date is None:
+        # Get today's date
+        today = datetime.now().date()
+        after_date = today
     
-    # Look for the next valid trading day within a reasonably big window of 30 days
-    valid_days = nyse.valid_days(start_date=today, end_date=today + timedelta(days=30), tz=None)
+    # Look for the next valid trading day within a reasonably big window of 20 regular business days
+    valid_days = nyse.valid_days(start_date=after_date+BDay(1), end_date=after_date + BDay(20), tz=None)
     
     next_trading_day = None
 
@@ -252,9 +253,9 @@ def get_next_open_market_day():
         next_trading_day = valid_days[0]
 
     if next_trading_day is not None:
-        logger.info(f"The next open stock market date is: {next_trading_day}")
+        logger.debug(f"The next open stock market date is: {next_trading_day}")
     else:
-        logger.warning("No open market day found within the next 30 days.")
+        logger.info("No open market day found within the next 30 days.")
 
     # If we can't find a next valid day within 30 days (which shouldn't happen for NYSE), return None
     return next_trading_day
