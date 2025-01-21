@@ -10,6 +10,7 @@ from huggingface_hub import snapshot_download, upload_folder, create_repo
 import torch
 import tarfile
 import os.path
+from pathlib import Path
 
 
 class HFHub:
@@ -155,6 +156,7 @@ class HFHub:
             data_dir = self.data_dir
         if repo_id is None:
             repo_id = self.repo_id
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
         logger.info(
             f"Downloading hf data from {repo_id} to data dir:\n",
             os.listdir(data_dir),
