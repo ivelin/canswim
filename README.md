@@ -5,6 +5,11 @@ For a brief introduction read [this blog post](https://medium.com/@ivelin.atanas
 
 [Here is also a video recording](https://www.youtube.com/watch?v=GfC-H0uxXvk&ab_channel=AustinPythonMeetup) of a CANSWIM presentation for the [Python Austin Meetup](https://www.meetup.com/austinpython/).
 
+Example forecast chart below:
+
+![image](https://github.com/user-attachments/assets/7235004c-e92e-4731-85bf-03d67c12b2d9)
+
+
 # Setup
 
 
