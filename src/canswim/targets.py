@@ -3,7 +3,11 @@ from loguru import logger
 from darts import TimeSeries
 import pandas as pd
 
-from canswim.eligibility import filter_eligible_price_dict, price_history_is_eligible
+from canswim.eligibility import (
+    filter_eligible_price_dict,
+    price_history_is_eligible,
+    timeseries_from_observed_df,
+)
 
 
 class Targets:
@@ -109,33 +113,11 @@ class Targets:
             self.stock_price_dict, min_samples=max(self.min_samples, 1)
         )
         stock_price_series = {}
-        # NYSE trading-day frequency: no Mon–Fri holiday placeholders / invented bars
-        try:
-            import pandas_market_calendars as mcal
-
-            _holidays = mcal.get_calendar("NYSE").holidays().holidays
-            trading_freq = pd.offsets.CustomBusinessDay(holidays=_holidays)
-        except Exception as e:
-            logger.warning(f"NYSE CustomBusinessDay unavailable ({e}); using 'B'")
-            trading_freq = "B"
-
         for t, df in self.stock_price_dict.items():
             try:
-                # Eligibility already required complete OHLCV on NYSE sessions.
-                # Use exchange calendar freq so darts does not invent holiday bars
-                # via MissingValuesFiller / naive 'B' reindex.
-                series = TimeSeries.from_dataframe(
-                    df.sort_index(),
-                    fill_missing_dates=True,
-                    freq=trading_freq,
-                )
-                # Any remaining NaNs mean a missing true session → exclude (no fill)
-                if series.pd_dataframe().isna().any().any():
-                    logger.info(
-                        f"Skipping {t}: nulls after calendar align; "
-                        "refusing to invent missing market bars"
-                    )
-                    continue
+                # Observed bars only: freq holidays = Mon–Fri absent from data
+                # (never invent OHLC for special closures / mcal false-opens)
+                series = timeseries_from_observed_df(df)
                 if train_date_start is not None:
                     series = series.slice(train_date_start, series.end_time())
                 if len(series) < self.min_samples:
@@ -149,6 +131,6 @@ class Targets:
                 logger.warning(f"Skipping {t} while building TimeSeries: {type(e)}: {e}")
         logger.info(
             f"Prepared {len(stock_price_series)} ground-truth price series "
-            f"(no MissingValuesFiller / no synthetic OHLC)."
+            f"(observed trading-day freq; no MissingValuesFiller / no synthetic OHLC)."
         )
         return stock_price_series

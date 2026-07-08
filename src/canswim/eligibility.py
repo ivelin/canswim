@@ -126,3 +126,36 @@ def assert_no_invented_ohlc(price_df: pd.DataFrame) -> None:
 
 class GroundTruthDataError(RuntimeError):
     """Raised when train/forecast cannot proceed without inventing market data."""
+
+
+def observed_trading_day_freq(index: pd.DatetimeIndex) -> pd.offsets.CustomBusinessDay:
+    """Build a darts-compatible freq from *observed* bars only.
+
+    Treat every Mon–Fri date absent from ``index`` as a holiday so
+    ``TimeSeries.from_dataframe(..., fill_missing_dates=True, freq=...)``
+    does **not** invent timestamps/NaNs for special closures (e.g. 2025-01-09)
+    that calendar packages may still mark as open.
+    """
+    idx = pd.DatetimeIndex(pd.to_datetime(index)).normalize().unique().sort_values()
+    if len(idx) == 0:
+        raise ValueError("empty index for observed_trading_day_freq")
+    mon_fri = pd.bdate_range(idx.min(), idx.max())
+    holidays = mon_fri.difference(idx)
+    return pd.offsets.CustomBusinessDay(holidays=holidays)
+
+
+def timeseries_from_observed_df(df: pd.DataFrame):
+    """Create a darts TimeSeries from complete observed rows (no synthetic bars)."""
+    from darts import TimeSeries
+
+    out = df.copy()
+    out.index = pd.DatetimeIndex(pd.to_datetime(out.index)).normalize()
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    out = out.dropna(how="any")
+    if out.empty:
+        raise ValueError("no complete rows for TimeSeries")
+    freq = observed_trading_day_freq(out.index)
+    series = TimeSeries.from_dataframe(out, fill_missing_dates=True, freq=freq)
+    if series.pd_dataframe().isna().any().any():
+        raise ValueError("TimeSeries contains nulls after observed-freq align")
+    return series

@@ -335,43 +335,22 @@ class Covariates:
     def _price_covariate_series_from_df(self, df: pd.DataFrame, train_date_start=None):
         """Build a price-index TimeSeries without inventing OHLC via MissingValuesFiller.
 
-        Drops all-null columns and rows with any null remaining values so only
-        observed market bars remain. Uses NYSE CustomBusinessDay frequency.
+        Uses only observed complete rows; darts freq is derived from those
+        timestamps (Mon–Fri absences marked holidays) so special closures
+        never become synthetic NaN bars.
         """
+        from canswim.eligibility import timeseries_from_observed_df
+
         out = df.copy()
         out.index = pd.to_datetime(out.index)
         out = out.sort_index()
-        # Drop columns that are empty in-window
         out = out.dropna(axis=1, how="all")
         if train_date_start is not None:
             out = out.loc[out.index >= pd.Timestamp(train_date_start)]
-        # Keep only timestamps with complete observed values (no interpolation)
         out = out.dropna(how="any")
         if out.empty:
             raise ValueError("no complete price-covariate rows after dropping nulls")
-        try:
-            import pandas_market_calendars as mcal
-
-            holidays = mcal.get_calendar("NYSE").holidays().holidays
-            trading_freq = pd.offsets.CustomBusinessDay(holidays=holidays)
-        except Exception:
-            trading_freq = "B"
-        series = TimeSeries.from_dataframe(
-            out, fill_missing_dates=True, freq=trading_freq
-        )
-        # Any residual NaNs mean a calendar hole without ground truth → drop those times
-        sdf = series.pd_dataframe()
-        if sdf.isna().any().any():
-            sdf = sdf.dropna(how="any")
-            series = TimeSeries.from_dataframe(
-                sdf, fill_missing_dates=True, freq=trading_freq
-            )
-        if series.pd_dataframe().isna().any().any():
-            raise ValueError(
-                "price covariate series still contains nulls after drop; "
-                "refusing MissingValuesFiller interpolation"
-            )
-        return series
+        return timeseries_from_observed_df(out)
 
     def prepare_broad_market_series(self, train_date_start=None):
         logger.info("preparing past covariates: broad market indexes")

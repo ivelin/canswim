@@ -135,6 +135,48 @@ def test_prepare_stock_price_series_skips_large_gap():
     assert len(series["AAA"]) >= 50
 
 
+def test_prepare_stock_price_series_real_aapl_parquet():
+    """Shipped path must produce non-empty AAPL series on real parquet (Carter day)."""
+    from canswim.targets import Targets
+
+    path = Path("data/data-3rd-party/all_stocks_price_hist_1d.parquet")
+    if not path.is_file():
+        pytest.skip("no local price parquet")
+    px = pd.read_parquet(path)
+    try:
+        df = px.xs("AAPL", level="Symbol")
+    except KeyError:
+        pytest.skip("AAPL not in local parquet")
+    if "Adj Close" in df.columns:
+        df = df.drop(columns=["Adj Close"])
+    df.index = pd.to_datetime(df.index)
+    t = Targets()
+    t.min_samples = 252
+    t.stock_price_dict = {"AAPL": df}
+    series = t.prepare_stock_price_series(train_date_start=None)
+    assert "AAPL" in series, "AAPL dropped despite ground-truth OHLCV"
+    assert len(series["AAPL"]) >= 252
+    assert not series["AAPL"].pd_dataframe().isna().any().any()
+    # special closure must not appear as a NaN-invented bar
+    times = series["AAPL"].time_index
+    assert pd.Timestamp("2025-01-09") not in times
+
+
+def test_price_covariate_series_real_broad_market():
+    from canswim.covariates import Covariates
+
+    path = Path("data/data-3rd-party/broad_market.parquet")
+    if not path.is_file():
+        pytest.skip("no broad_market parquet")
+    bm = pd.read_parquet(path)
+    if isinstance(bm.columns, pd.MultiIndex):
+        bm.columns = [f"{i}_{j}" for i, j in bm.columns]
+    cov = Covariates()
+    series = cov._price_covariate_series_from_df(bm, train_date_start=pd.Timestamp("2020-01-01"))
+    assert len(series) > 100
+    assert not series.pd_dataframe().isna().any().any()
+
+
 def test_train_ground_truth_error_exits():
     """Bare Exception handler must not swallow GroundTruthDataError."""
     import canswim.train as train_mod
