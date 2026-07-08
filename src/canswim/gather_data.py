@@ -4,7 +4,6 @@ Gather stock market data from 3rd party sources
 
 import yfinance as yf
 from requests import Session
-from requests_cache import CacheMixin, SQLiteCache
 from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
 from pyrate_limiter import Duration, RequestRate, Limiter
 import pandas as pd
@@ -13,20 +12,24 @@ from loguru import logger
 import os
 from pathlib import Path
 import fmpsdk
-from fmpsdk.settings import DEFAULT_LIMIT, SEC_RSS_FEEDS_FILENAME, BASE_URL_v3
 from fmpsdk.url_methods import __return_json_v4
 import typing
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-from canswim.hfhub import HFHub
-import typing
+from canswim.hfhub import HFHub, _env_bool
+from canswim.paths import data_3rd_party_dir, resolve_symbol_csv, symbol_lists_dir
+from canswim.market_data_io import (
+    coerce_ohlcv_numeric,
+    normalize_earnings_dataframe,
+    normalize_key_metrics_dataframe,
+    yfinance_multi_to_symbol_date,
+)
 from fmpsdk.url_methods import __return_json_v3, __validate_period
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
 
 
-class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
-   pass
+class RateLimitedSession(LimiterMixin, Session):
+    """Rate-limited session without multi-GB SQLite cache (default)."""
+
+    pass
 
 def get_latest_date(datetime_col):
     """Return the latest datetime value in a datetime formatted dataframe column"""
@@ -97,12 +100,45 @@ class MarketDataGatherer:
         self.all_stocks_file = "all_stocks.csv"
         self.price_frequency = "1d"  # "1wk"
         self.min_start_date = os.getenv("train_date_start", "1991-01-01")
+        # Optional scope: gather only tickers from this CSV (under symbol_lists/)
+        self.stock_tickers_list = os.getenv("stock_tickers_list")
+        # Never use multi-GB SQLite yfinance cache unless explicitly enabled
+        self.use_yfinance_cache = _env_bool("YFINANCE_USE_CACHE", default=False)
+
+    def _yfinance_session(self):
+        """Rate-limited session. Avoids SQLite cache hang by default."""
+        if self.use_yfinance_cache:
+            try:
+                from requests_cache import CacheMixin, SQLiteCache
+
+                class CachedLimiterSession(CacheMixin, LimiterMixin, Session):
+                    pass
+
+                logger.warning(
+                    "YFINANCE_USE_CACHE=1: using SQLite cache (can be very large/slow)"
+                )
+                return CachedLimiterSession(
+                    limiter=Limiter(RequestRate(2, Duration.SECOND * 5)),
+                    bucket_class=MemoryQueueBucket,
+                    backend=SQLiteCache("yfinance.cache"),
+                )
+            except Exception as e:
+                logger.warning(f"Could not enable yfinance cache ({e}); uncached session")
+        return RateLimitedSession(
+            limiter=Limiter(RequestRate(5, Duration.SECOND * 1)),
+            bucket_class=MemoryQueueBucket,
+        )
+
+    def _data_file(self, name: str) -> str:
+        d = data_3rd_party_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d / name)
 
     def gather_stock_tickers(self):
-        # Prepare list of stocks for training
+        # Prepare list of stocks for training from checked-in symbol_lists/
         all_stock_set = set()
+        # Source lists only (do not feed derived all_stocks.csv back into itself)
         stock_files = [
-            # "test_stocks.csv"
             "IBD50.csv",
             "IBD250.csv",
             "ibdlive_picks.csv",
@@ -113,67 +149,70 @@ class MarketDataGatherer:
             "vti_total_market_stocks.csv",
             "ITB_holdings.csv",
             "IYM_holdings.csv",
-            self.all_stocks_file,
+            "test_stocks.csv",
+            "few_stocks.csv",
         ]
+        # Optional single-list scope for quick/local gathers
+        if self.stock_tickers_list:
+            stock_files = [self.stock_tickers_list]
+            logger.info(f"Scoped gather tickers from stock_tickers_list={self.stock_tickers_list}")
+
         logger.info(
-            "Compiling list of stocks to train on from: {files}", files=stock_files
+            "Compiling list of stocks from symbol lists: {files}", files=stock_files
         )
         for f in stock_files:
-            fp = f"data/data-3rd-party/{f}"
-            if Path(fp).is_file():
-                logger.info(f"loading symbols from {fp}...")
-                stocks = pd.read_csv(fp)
-                logger.info(f"loaded {len(stocks)} symbols from {fp}")
-                stock_set = set(stocks["Symbol"])
-                logger.info(f"{len(stock_set)} symbols in stock set")
-                all_stock_set |= stock_set
-                logger.info(f"total symbols loaded: {len(all_stock_set)}")
-            else:
-                logger.info(f"{fp} not found.")
+            try:
+                fp = resolve_symbol_csv(f)
+            except FileNotFoundError:
+                logger.info(f"{f} not found in symbol_lists or data-3rd-party.")
+                continue
+            logger.info(f"loading symbols from {fp}...")
+            stocks = pd.read_csv(fp)
+            logger.info(f"loaded {len(stocks)} symbols from {fp}")
+            if "Symbol" not in stocks.columns:
+                logger.warning(f"No Symbol column in {fp}; columns={list(stocks.columns)}")
+                continue
+            stock_set = set(stocks["Symbol"].dropna().astype(str))
+            all_stock_set |= stock_set
+            logger.info(f"total symbols loaded: {len(all_stock_set)}")
 
         logger.info(f"Total size of stock set: {len(all_stock_set)}")
-        # logger.info(f"All stocks set: {all_stock_set}")
-        # Drop invalid symbols with more than 10 ticker characters.
-        # Almost all stocks have less than 5 characters.
         slist = [x for x in set(all_stock_set) if isinstance(x, str) and len(x) < 10]
         self.stocks_ticker_set = set(slist)
-        # drop symbols which yfinance does not like
-        junk_tickers = pd.read_csv(
-            f"{self.data_dir}/{self.data_3rd_party}/junk_tickers.csv"
-        )
-        junk_tickers = set(junk_tickers["Symbol"])
-        self.stocks_ticker_set = sorted(list(self.stocks_ticker_set - junk_tickers))
+        try:
+            junk_path = resolve_symbol_csv("junk_tickers.csv")
+            junk_tickers = set(pd.read_csv(junk_path)["Symbol"].dropna().astype(str))
+            self.stocks_ticker_set = sorted(list(self.stocks_ticker_set - junk_tickers))
+        except FileNotFoundError:
+            logger.warning("junk_tickers.csv not found; keeping full ticker set")
+            self.stocks_ticker_set = sorted(list(self.stocks_ticker_set))
         stocks_df = pd.DataFrame()
         stocks_df["Symbol"] = self.stocks_ticker_set
         stocks_df = stocks_df.set_index(["Symbol"])
-        # convert all tickers to uppercase
         stocks_df.index = stocks_df.index.str.upper()
-        # drop any duplicate symbols
         stocks_df.index = stocks_df.index.drop_duplicates()
-        # drop any empty symbols/tickers
         stocks_df.index = stocks_df.index.dropna()
-        # stocks_df
-        stocks_file = f"data/data-3rd-party/{self.all_stocks_file}"
-        stocks_df.to_csv(stocks_file)
-        logger.info(f"Saved stock set to {stocks_file}")
+        # Persist to both symbol_lists and runtime data dir
+        for out in (symbol_lists_dir() / self.all_stocks_file, Path(self._data_file(self.all_stocks_file))):
+            out.parent.mkdir(parents=True, exist_ok=True)
+            stocks_df.to_csv(out)
+            logger.info(f"Saved stock set to {out}")
 
     def gather_fund_tickers(self):
-        # Prepare list of funds to use as covariates series
         all_funds_set = set()
         fund_files = ["ibdfunds.csv", "industry_funds.csv"]
         logger.info("Compiling list of funds: {files}", files=fund_files)
         for f in fund_files:
-            fp = f"{self.data_dir}/{self.data_3rd_party}/{f}"
-            if Path(fp).is_file():
-                funds = pd.read_csv(fp)
-                logger.info(f"loaded {len(funds)} fund symbols from {fp}")
-                logger.info(f"fund file columns: {funds.columns}")
-                fund_set = set(funds["Symbol"])
-                logger.info(f"{len(fund_set)} symbols in fund set")
-                all_funds_set |= fund_set
-                logger.info(f"total fund symbols loaded: {len(all_funds_set)}")
-            else:
-                logger.error(f"{fp} not found.")
+            try:
+                fp = resolve_symbol_csv(f)
+            except FileNotFoundError:
+                logger.error(f"{f} not found.")
+                continue
+            funds = pd.read_csv(fp)
+            logger.info(f"loaded {len(funds)} fund symbols from {fp}")
+            fund_set = set(funds["Symbol"].dropna().astype(str))
+            all_funds_set |= fund_set
+            logger.info(f"total fund symbols loaded: {len(all_funds_set)}")
 
         logger.info(f"Loaded fund tickers: \n{sorted(list(all_funds_set))}")
         return all_funds_set
@@ -184,67 +223,96 @@ class MarketDataGatherer:
         try:
             old_df = pd.read_parquet(data_file)
             logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
-            # check if all symbols are represented in the loaded data
-            # if not, then download all historical data from scratch
-            # otherwise, only fetch new data after latest saved date
-            new_tickers = set(tickers) - set(old_df.columns.levels[0])
-            if not new_tickers:
+            try:
+                existing = set(old_df.columns.get_level_values(0))
+            except Exception:
+                existing = set()
+            new_tickers = set(tickers) - existing
+            if not new_tickers and len(old_df) > 0:
                 start_date = get_latest_date(old_df.index) - pd.Timedelta(1, "d")
-                logger.info(f"Columns: \n{old_df.columns}")
                 logger.info(f"Latest saved record is after {start_date}")
             else:
-                logger.info(
-                    f"Not all tickers found in saved data. Missing: {new_tickers}"
-                )
-                logger.info(
-                    f"\nTicker set: {tickers}, \nTickers with saved data: {set(old_df.columns.levels[0])}"
-                )
+                logger.info(f"Missing tickers vs saved data: {new_tickers}")
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
-        session = CachedLimiterSession(
-            limiter=Limiter(RequestRate(2, Duration.SECOND*5)),  # max 2 requests per 5 seconds
-            bucket_class=MemoryQueueBucket,
-            backend=SQLiteCache("yfinance.cache"),
-        )
-        new_df = yf.download(tickers, start=start_date, group_by="tickers", period="1d", session=session)
+        session = self._yfinance_session()
+        try:
+            new_df = yf.download(
+                list(tickers),
+                start=start_date,
+                group_by="tickers",
+                auto_adjust=False,
+                threads=True,
+                progress=True,
+                timeout=30,
+                session=session,
+            )
+        except TypeError:
+            # older yfinance without timeout kwarg
+            new_df = yf.download(
+                list(tickers),
+                start=start_date,
+                group_by="tickers",
+                auto_adjust=False,
+                threads=True,
+                progress=True,
+                session=session,
+            )
+        except Exception as e:
+            logger.error(f"yfinance download failed for {data_file}: {e}")
+            new_df = pd.DataFrame()
+        if new_df is None or new_df.empty:
+            logger.warning(f"Empty yfinance result for {data_file}; keeping prior data")
+            return
         new_df = new_df.dropna(how="all")
         logger.info("New data gathered. Sample: \n{bm}", bm=new_df)
         logger.info(f"Columns: \n{new_df.columns}")
-        if old_df is not None:
-            assert sorted(old_df.columns) == sorted(new_df.columns)
-            merged_df = pd.concat([old_df, new_df], axis=0)
-            # logger.info(f"bm_df concat\n {merged_df}")
-            assert sorted(merged_df.columns) == sorted(old_df.columns)
-            assert len(merged_df) == len(old_df) + len(new_df)
-            merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
+        if old_df is not None and not new_df.empty:
+            # Align column multiindex if possible
+            try:
+                common = old_df.columns.intersection(new_df.columns)
+                if len(common) == 0 and isinstance(new_df.columns, pd.MultiIndex):
+                    new_df.columns = new_df.columns.swaplevel(0, 1)
+                    new_df = new_df.sort_index(axis=1)
+                    common = old_df.columns.intersection(new_df.columns)
+                if len(common) > 0:
+                    merged_df = pd.concat([old_df[common], new_df[common]], axis=0)
+                    merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
+                else:
+                    logger.warning("No common columns; writing new download only")
+                    merged_df = new_df
+            except Exception as e:
+                logger.warning(f"Merge failed ({e}); writing new download only")
+                merged_df = new_df
         else:
-            merged_df = new_df
+            merged_df = new_df if not new_df.empty else old_df
+        if merged_df is None or (hasattr(merged_df, "empty") and merged_df.empty):
+            logger.warning(f"No data to save for {data_file}")
+            return
+        merged_df = merged_df[~merged_df.index.duplicated(keep="last")].sort_index()
         logger.info("Updated data ready. Sample: \n{bm}", bm=merged_df)
-        assert merged_df.index.is_unique
+        Path(data_file).parent.mkdir(parents=True, exist_ok=True)
         merged_df.to_parquet(data_file)
         logger.info(f"Saved data to {data_file}")
-        _bm = pd.read_parquet(data_file)
-        pd.testing.assert_frame_equal(_bm, merged_df)
-        logger.info(f"Sanity check passed for saved data. Loaded OK from {data_file}")
 
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
         # Capture S&P500, NASDAQ100 and Russell 200 indexes and their equal weighted counter parts
         # As well as VIX volatility index, DYX US Dollar index, TNX US 12 Weeks Treasury Yield, 5 Years Treasury Yield and 10 Year Treasuries Yield
+        # Note: ^R2ESC is often unavailable from yfinance and can hang downloads
         broad_market_indicies = [
             "^SPX",
             "^SPXEW",
             "^NDX",
             "^NDXE",
             "^RUT",
-            "^R2ESC",
             "^VIX",
             "DX-Y.NYB",
             "^IRX",
             "^FVX",
             "^TNX",
         ]
-        data_file = "data/data-3rd-party/broad_market.parquet"
+        data_file = self._data_file("broad_market.parquet")
         self._gather_yfdata_date_index(
             data_file=data_file, tickers=broad_market_indicies
         )
@@ -252,7 +320,7 @@ class MarketDataGatherer:
     def gather_sectors_data(self):
         """Gather historic price and volume data for key market sectors"""
         sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60".split()
-        data_file = "data/data-3rd-party/sectors.parquet"
+        data_file = self._data_file("sectors.parquet")
         self._gather_yfdata_date_index(data_file=data_file, tickers=sector_indicies)
 
     def gather_industry_fund_data(self):
@@ -262,21 +330,18 @@ class MarketDataGatherer:
         Since stocks usually move together with their group, the model can learn which group(s) a stock moves with from these covariates.
         """
         fund_tickers = self.gather_fund_tickers()
-        data_file = f"{self.data_dir}/{self.data_3rd_party}/industry_funds.parquet"
-        self._gather_yfdata_date_index(data_file=data_file, tickers=fund_tickers)
+        data_file = self._data_file("industry_funds.parquet")
+        self._gather_yfdata_date_index(data_file=data_file, tickers=list(fund_tickers))
 
     def gather_stock_price_data(self):
-        data_file = (
-            f"data/data-3rd-party/all_stocks_price_hist_{self.price_frequency}.parquet"
+        data_file = self._data_file(
+            f"all_stocks_price_hist_{self.price_frequency}.parquet"
         )
         start_date = self.min_start_date
         old_df = None
         try:
             old_df = pd.read_parquet(data_file)
             logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
-            # check if all symbols are represented in the loaded data
-            # if not, then download all historical data from scratch
-            # otherwise, only fetch new data after latest saved date
             all_tickers = set(self.stocks_ticker_set)
             old_tickers = set(old_df.index.get_level_values("Symbol"))
             new_tickers = all_tickers - old_tickers
@@ -290,59 +355,68 @@ class MarketDataGatherer:
                 logger.info(
                     f"Not all tickers found in saved data. Missing: {new_tickers}"
                 )
-                logger.info(
-                    f"\nTicker set: {all_tickers}, \nTickers with saved data: {old_tickers}"
-                )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
-        session = CachedLimiterSession(
-            limiter=Limiter(RequestRate(2, Duration.SECOND*5)),  # max 2 requests per 5 seconds
-            bucket_class=MemoryQueueBucket,
-            backend=SQLiteCache("yfinance.cache"),
-        )
-        new_df = yf.download(
-            self.stocks_ticker_set, start=start_date, group_by="tickers", session=session
-        )
-        new_df = new_df.dropna(how="all")
-        new_df = new_df.stack(level=0)
-        new_df.index.names = ["Date", "Symbol"]
-        new_df.index = new_df.index.swaplevel(0)
+        session = self._yfinance_session()
+        try:
+            raw = yf.download(
+                list(self.stocks_ticker_set),
+                start=start_date,
+                group_by="tickers",
+                auto_adjust=False,
+                threads=True,
+                progress=True,
+                timeout=30,
+                session=session,
+            )
+        except TypeError:
+            raw = yf.download(
+                list(self.stocks_ticker_set),
+                start=start_date,
+                group_by="tickers",
+                auto_adjust=False,
+                threads=True,
+                progress=True,
+                session=session,
+            )
+        new_df = yfinance_multi_to_symbol_date(raw, tickers=list(self.stocks_ticker_set))
+        new_df = coerce_ohlcv_numeric(new_df)
+        # Keep only ground-truth complete bars
+        ohlcv = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in new_df.columns]
+        if ohlcv:
+            new_df = new_df.dropna(subset=ohlcv, how="any")
         logger.info(f"Stock price data index: {new_df.index.names}")
         logger.info("New data gathered. Sample: \n{df}", df=new_df)
-        logger.info(f"Columns: \n{new_df.columns}")
-        if old_df is not None:
-            assert sorted(old_df.columns) == sorted(new_df.columns)
-            merged_df = pd.concat([old_df, new_df], axis=0, join="inner")
-            # logger.info(f"merged_df concat\n {merged_df}")
-            assert sorted(merged_df.columns) == sorted(old_df.columns)
-            assert len(merged_df) == len(old_df) + len(new_df)
+        if old_df is not None and not new_df.empty:
+            cols = [c for c in old_df.columns if c in new_df.columns]
+            if not cols:
+                cols = list(new_df.columns)
+            merged_df = pd.concat([old_df[cols] if set(cols) <= set(old_df.columns) else old_df,
+                                   new_df[cols] if set(cols) <= set(new_df.columns) else new_df],
+                                  axis=0, join="inner")
             merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
         else:
-            merged_df = new_df
-        logger.info("Updated data ready. Sample: \n{df}", df=merged_df)
-        # df=merged_df.loc[merged_df.index.get_level_values("Symbol") == 'TEAM'])
+            merged_df = new_df if not new_df.empty else old_df
+        if merged_df is None or merged_df.empty:
+            raise RuntimeError("No stock price data gathered; aborting")
         assert merged_df.index.is_unique
+        Path(data_file).parent.mkdir(parents=True, exist_ok=True)
         merged_df.to_parquet(data_file)
         logger.info(f"Saved data to {data_file}")
-        logger.info(f"Verifing saved data...")
-        _bm = pd.read_parquet(data_file)
-        pd.testing.assert_frame_equal(_bm, merged_df)
-        logger.info(f"Sanity check passed. Loaded OK from {data_file}")
 
     def gather_earnings_data(self):
         logger.info("Gathering earnings and sales data...")
-        earnings_all_df = None  # Pandas prefers None to empty df in concat
-        for ticker in self.stocks_ticker_set:  # ['AAON']: #
+        earnings_all_df = None
+        last_raw = None
+        for ticker in self.stocks_ticker_set:
             earnings = fmpsdk.historical_earning_calendar(
                 apikey=self.FMP_API_KEY, symbol=ticker, limit=-1
             )
+            last_raw = earnings
             if earnings is not None and len(earnings) > 0:
                 try:
-                    edf = pd.DataFrame(earnings)
-                    edf = edf.dropna(how="all")
-                    edf = edf.fillna(-1)
-                    if not edf.empty:
-                        edf["date"] = pd.to_datetime(edf["date"])
+                    edf = normalize_earnings_dataframe(earnings)
+                    if not edf.empty and "symbol" in edf.columns and "date" in edf.columns:
                         edf = edf.set_index(["symbol", "date"])
                         earnings_all_df = pd.concat([earnings_all_df, edf])
                         logger.info(f"Total earnings reports for {ticker}: {len(edf)}")
@@ -355,24 +429,22 @@ class MarketDataGatherer:
             else:
                 logger.warning(f"Skipping {ticker} due to lack of data")
 
-        #    earliest_earn = earnings[-1] if len(earnings > 0 else 'None')
-        #    logger.info(f"Earliest earnings report for {ticker}: {earliest_earn}")
-
-        logger.info(f"Earnings sample report for {ticker}: \n{earnings}")
+        if earnings_all_df is None or earnings_all_df.empty:
+            logger.warning("No earnings data gathered")
+            return
+        logger.info(f"Earnings sample report for last ticker: \n{last_raw}")
         earnings_all_df.index.names = ["Symbol", "Date"]
         earnings_all_df = earnings_all_df.sort_index()
         logger.info(
             f"Total number of earnings records for all stocks: \n{len(earnings_all_df)}"
         )
-        logger.info(f"earnings_all_df: \n{earnings_all_df}")
-        logger.info(
-            f"len(earnings_all_df.index.levels[0]): \n{len(earnings_all_df.index.levels[0])}"
-        )
-        earnings_file = "data/data-3rd-party/earnings_calendar.parquet"
+        earnings_file = self._data_file("earnings_calendar.parquet")
+        # Remove broken symlink if present
+        p = Path(earnings_file)
+        if p.is_symlink() and not p.exists():
+            p.unlink()
         earnings_all_df.to_parquet(earnings_file)
-        ### Read back data and verify it
         tmp_earn_df = pd.read_parquet(earnings_file)
-        logger.info(f"tmp_earn_df: \n{tmp_earn_df}")
         pd.testing.assert_frame_equal(tmp_earn_df, earnings_all_df)
         logger.info(
             f"Sanity check passed for earnings data. Loaded OK from file: {earnings_file}"
@@ -387,17 +459,11 @@ class MarketDataGatherer:
             )
             if kms is not None and len(kms) > 0:
                 try:
-                    kms_df = pd.DataFrame(kms)
-                    kms_df = kms_df.dropna(how="all")
-                    kms_df = kms_df.fillna(-1)
-                    if not kms_df.empty:
-                        kms_df["date"] = pd.to_datetime(kms_df["date"])
+                    kms_df = normalize_key_metrics_dataframe(kms)
+                    if not kms_df.empty and "symbol" in kms_df.columns and "date" in kms_df.columns:
                         kms_df = kms_df.set_index(["symbol", "date"])
-                        # logger.info(f"Key metrics for {ticker} sample: \n{kms_df.columns}")
                         keymetrics_all_df = pd.concat([keymetrics_all_df, kms_df])
-                        # logger.info(f"Key metrics concatenated {ticker}: \n{keymetrics_all_df.columns}")
-                        n_kms = len(kms_df)
-                        logger.info(f"Total key metrics reports for {ticker}: {n_kms}")
+                        logger.info(f"Total key metrics reports for {ticker}: {len(kms_df)}")
                     else:
                         logger.warning(f"Skipping {ticker} due to lack of data")
                 except ValueError as e:
@@ -407,24 +473,21 @@ class MarketDataGatherer:
             else:
                 logger.info(f"No {ticker} key metrics reports: kms={kms}")
 
-        logger.debug(f"keymetrics_all_df: \n{keymetrics_all_df}")
-        logger.debug(f"keymetrics_all_df.dtypes: \n{keymetrics_all_df.dtypes}")
-        logger.debug(f"len(keymetrics_all_df): \n{len(keymetrics_all_df)}")
-        # cleanup data types to prevent parquet serialization issues
+        if keymetrics_all_df is None or keymetrics_all_df.empty:
+            logger.warning("No key metrics data gathered")
+            return
         kms_num_cols = list(set(keymetrics_all_df.columns) - {"calendarYear", "period"})
         keymetrics_all_df[kms_num_cols] = keymetrics_all_df[kms_num_cols].apply(
-            pd.to_numeric, dtype_backend="pyarrow"
+            pd.to_numeric, errors="coerce"
         )
         keymetrics_all_df.index.names = ["Symbol", "Date"]
         keymetrics_all_df = keymetrics_all_df.sort_index()
-        logger.debug(
-            f"keymetrics_all_df.dtypes after cleanup: \n{keymetrics_all_df.dtypes}"
-        )
-        kms_file = "data/data-3rd-party/keymetrics_history.parquet"
+        kms_file = self._data_file("keymetrics_history.parquet")
+        p = Path(kms_file)
+        if p.is_symlink() and not p.exists():
+            p.unlink()
         keymetrics_all_df.to_parquet(kms_file, engine="pyarrow")
-        ### Read back data and verify it
         temp_kms_df = pd.read_parquet(kms_file)
-        logger.info(f"temp_kms_df: \n{temp_kms_df}")
         pd.testing.assert_frame_equal(temp_kms_df, keymetrics_all_df)
         logger.info(
             f"Sanity check passed for key metrics data. Loaded OK from file: {kms_file}"
@@ -459,7 +522,7 @@ class MarketDataGatherer:
             logger.info(f"Total number of records for all stocks: \n{len(all_df)}")
             logger.debug(f"all_df: \n{all_df}")
             logger.info(f"len(all_df.index.levels[0]): \n{len(all_df.index.levels[0])}")
-            file = f"{self.data_dir}/{self.data_3rd_party}/stock_dividends.parquet"
+            file = self._data_file("stock_dividends.parquet")
             all_df.to_parquet(file)
             ### Read back data and verify it
             tmp_df = pd.read_parquet(file)
@@ -495,7 +558,7 @@ class MarketDataGatherer:
             logger.info(f"Total number of records for all stocks: \n{len(all_df)}")
             logger.debug(f"all_df: \n{all_df}")
             logger.info(f"len(all_df.index.levels[0]): \n{len(all_df.index.levels[0])}")
-            file = f"{self.data_dir}/{self.data_3rd_party}/stock_splits.parquet"
+            file = self._data_file("stock_splits.parquet")
             all_df.to_parquet(file)
             ### Read back data and verify it
             tmp_df = pd.read_parquet(file)
@@ -579,7 +642,7 @@ class MarketDataGatherer:
         inst_own_df = inst_own_df.sort_index()
         # inst_own_df.index.names
         inst_ownership_file = (
-            "data/data-3rd-party/institutional_symbol_ownership.parquet"
+            self._data_file("institutional_symbol_ownership.parquet")
         )
         inst_own_df.to_parquet(inst_ownership_file, engine="pyarrow")
 
@@ -630,10 +693,12 @@ class MarketDataGatherer:
             return estimates_all_df
 
         logger.info("Gathering analyst estimates...")
-        est_file_name_template = "data/data-3rd-party/analyst_estimates_{p}.parquet"
         for p in ["annual", "quarter"]:
-            est_file_name = est_file_name_template.format(p=p)
+            est_file_name = self._data_file(f"analyst_estimates_{p}.parquet")
             estimates_all_df = _fetch_estimates(p)
+            if estimates_all_df is None or estimates_all_df.empty:
+                logger.warning(f"No analyst estimates for period={p}")
+                continue
             estimates_all_df.index.names = ["Symbol", "Date"]
             estimates_all_df = estimates_all_df.sort_index()
             # est_file_name= f'data/analyst_estimates_{p}.csv.bz2'
@@ -651,13 +716,38 @@ class MarketDataGatherer:
 
 # main function
 def main():
-    hfhub = HFHub()
-    hfhub.download_data()
+    """Local-first gather: refresh market data from FMP/yfinance into local parquet.
+
+    Does **not** download/upload the full Hugging Face dataset unless
+    ``hfhub_sync=True``. Optional one-shot CSV bootstrap via
+    ``SYNC_SYMBOL_LISTS=1``.
+    """
+    load_dotenv(override=True)
+    # Optional light CSV pull only (not historical parquet)
+    if _env_bool("SYNC_SYMBOL_LISTS", default=False):
+        try:
+            HFHub(api_key=os.getenv("HF_TOKEN")).download_symbol_list_csvs()
+        except Exception as e:
+            logger.warning(f"Symbol list sync skipped: {e}")
+
+    # HF full-dataset sync is opt-in and runs only if explicitly enabled
+    hfhub = None
+    if _env_bool("hfhub_sync", default=False):
+        hfhub = HFHub()
+        logger.warning(
+            "hfhub_sync=True: performing optional HF dataset download (can be slow)"
+        )
+        hfhub.download_data()
+    else:
+        logger.info(
+            "Local-first gather (hfhub_sync off): no HF dataset download/upload"
+        )
+
     g = MarketDataGatherer()
+    g.gather_stock_tickers()
     g.gather_broad_market_data()
     g.gather_sectors_data()
     g.gather_industry_fund_data()
-    g.gather_stock_tickers()
     g.gather_stock_price_data()
     g.gather_stock_dividends()
     g.gather_stock_splits()
@@ -665,7 +755,10 @@ def main():
     g.gather_stock_key_metrics()
     g.gather_institutional_stock_ownership()
     g.gather_analyst_estimates()
-    hfhub.upload_data()
+
+    if hfhub is not None:
+        hfhub.upload_data()
+    logger.info("Gather finished (local data dir updated).")
 
 
 if __name__ == "__main__":

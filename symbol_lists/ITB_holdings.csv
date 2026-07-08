@@ -1,0 +1,51 @@
+﻿Symbol,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Shares,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date
+DHI,D R HORTON INC,Consumer Discretionary,Equity,479,298,113.55,14.36,479,298,113.55,2,912,781.00,164.55,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+LEN,LENNAR A CORP,Consumer Discretionary,Equity,414,598,549.26,12.42,414,598,549.26,2,410,737.00,171.98,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+NVR,NVR INC,Consumer Discretionary,Equity,252,410,953.52,7.56,252,410,953.52,31,162.00,8,099.96,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+PHM,PULTEGROUP INC,Consumer Discretionary,Equity,249,546,496.30,7.48,249,546,496.30,2,068,865.00,120.62,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+LOW,LOWES COMPANIES INC,Consumer Discretionary,Equity,148,833,389.67,4.46,148,833,389.67,584,279.00,254.73,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+SHW,SHERWIN WILLIAMS,Materials,Equity,145,420,471.73,4.36,145,420,471.73,418,681.00,347.33,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+HD,HOME DEPOT INC,Consumer Discretionary,Equity,143,181,001.60,4.29,143,181,001.60,373,256.00,383.60,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+BLD,TOPBUILD CORP,Consumer Discretionary,Equity,135,856,344.69,4.07,135,856,344.69,308,253.00,440.73,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+TOL,TOLL BROTHERS INC,Consumer Discretionary,Equity,131,594,775.89,3.94,131,594,775.89,1,017,197.00,129.37,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+BLDR,BUILDERS FIRSTSOURCE INC,Industrials,Equity,104,820,775.35,3.14,104,820,775.35,502,617.00,208.55,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MAS,MASCO CORP,Industrials,Equity,70,637,118.88,2.12,70,637,118.88,895,501.00,78.88,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+TMHC,TAYLOR MORRISON HOME CORP,Consumer Discretionary,Equity,65,155,154.72,1.95,65,155,154.72,1,048,016.00,62.17,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+LII,LENNOX INTERNATIONAL INC,Industrials,Equity,63,779,758.68,1.91,63,779,758.68,130,493.00,488.76,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MTH,MERITAGE CORP,Consumer Discretionary,Equity,62,379,363.74,1.87,62,379,363.74,355,519.00,175.46,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+OC,OWENS CORNING,Industrials,Equity,60,406,620.00,1.81,60,406,620.00,362,150.00,166.80,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+IBP,INSTALLED BUILDING PRODUCTS INC,Consumer Discretionary,Equity,59,160,684.34,1.77,59,160,684.34,228,658.00,258.73,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+FND,FLOOR DECOR HOLDINGS INC CLASS A,Consumer Discretionary,Equity,56,287,744.24,1.69,56,287,744.24,434,252.00,129.62,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+KBH,KB HOME,Consumer Discretionary,Equity,50,805,579.04,1.52,50,805,579.04,716,783.00,70.88,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+SKY,SKYLINE CHAMPION CORP,Consumer Discretionary,Equity,44,535,293.83,1.33,44,535,293.83,523,883.00,85.01,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+TREX,TREX INC,Industrials,Equity,44,139,574.50,1.32,44,139,574.50,442,502.00,99.75,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+FBIN,FORTUNE BRANDS INNOVATIONS INC,Industrials,Equity,43,504,462.04,1.30,43,504,462.04,513,812.00,84.67,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+EXP,EAGLE MATERIALS INC,Materials,Equity,38,147,993.25,1.14,38,147,993.25,140,379.00,271.75,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MHO,M I HOMES INC,Consumer Discretionary,Equity,37,020,725.28,1.11,37,020,725.28,271,632.00,136.29,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MDC,MDC HOLDINGS INC,Consumer Discretionary,Equity,36,649,541.61,1.10,36,649,541.61,582,571.00,62.91,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+TPH,TRI POINTE HOMES INC,Consumer Discretionary,Equity,36,595,865.28,1.10,36,595,865.28,946,608.00,38.66,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+SSD,SIMPSON MANUFACTURING INC,Industrials,Equity,35,677,724.30,1.07,35,677,724.30,173,885.00,205.18,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+UFPI,UFP INDUSTRIES INC,Industrials,Equity,30,983,020.74,0.93,30,983,020.74,251,874.00,123.01,United States,NASDAQ,USD,1.00,USD,-
+CVCO,CAVCO INDUSTRIES INC,Consumer Discretionary,Equity,30,213,630.72,0.91,30,213,630.72,75,712.00,399.06,United States,NASDAQ,USD,1.00,USD,-
+AZEK,AZEK COMPANY INC CLASS A,Industrials,Equity,29,840,774.22,0.89,29,840,774.22,594,201.00,50.22,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MHK,MOHAWK INDUSTRIES INC,Consumer Discretionary,Equity,28,186,245.27,0.84,28,186,245.27,215,343.00,130.89,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+CCS,CENTURY COMMUNITIES INC,Consumer Discretionary,Equity,26,611,129.50,0.80,26,611,129.50,275,763.00,96.50,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+BECN,BEACON ROOFING SUPPLY INC,Industrials,Equity,25,303,863.00,0.76,25,303,863.00,258,150.00,98.02,United States,NASDAQ,USD,1.00,USD,-
+LGIH,LGI HOMES INC,Consumer Discretionary,Equity,23,260,966.56,0.70,23,260,966.56,199,888.00,116.37,United States,NASDAQ,USD,1.00,USD,-
+LENB,LENNAR CORP CLASS B,Consumer Discretionary,Equity,19,219,924.62,0.58,19,219,924.62,124,659.00,154.18,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+GRBK,GREEN BRICK PARTNERS INC,Consumer Discretionary,Equity,14,910,960.41,0.45,14,910,960.41,247,567.00,60.23,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+DOOR,MASONITE INTERNATIONAL CORP,Industrials,Equity,11,683,670.35,0.35,11,683,670.35,88,883.00,131.45,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+USD,USD CASH,Cash and/or Derivatives,Cash,10,555,148.85,0.32,10,555,148.85,10,555,149.00,100.00,United States,-,USD,1.00,USD,-
+LEG,LEGGETT & PLATT INC,Consumer Discretionary,Equity,10,420,759.75,0.31,10,420,759.75,544,165.00,19.15,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+MBC,MASTERBRAND INC,Industrials,Equity,9,690,210.38,0.29,9,690,210.38,517,087.00,18.74,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+DFH,DREAM FINDERS HOMES INC CLASS A,Consumer Discretionary,Equity,9,687,944.20,0.29,9,687,944.20,221,540.00,43.73,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+BZH,BEAZER HOMES INC,Consumer Discretionary,Equity,9,127,616.80,0.27,9,127,616.80,278,281.00,32.80,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+HAYW,HAYWARD HOLDINGS INC,Industrials,Equity,7,874,116.72,0.24,7,874,116.72,514,312.00,15.31,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+JELD,JELD WEN HOLDING INC,Industrials,Equity,7,379,441.85,0.22,7,379,441.85,347,595.00,21.23,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+AMWD,AMERICAN WOODMARK CORP,Industrials,Equity,6,644,802.58,0.20,6,644,802.58,65,363.00,101.66,United States,NASDAQ,USD,1.00,USD,-
+NX,QUANEX BUILDING PRODUCTS CORP,Industrials,Equity,5,189,126.04,0.16,5,189,126.04,135,028.00,38.43,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+XTSLA,BLK CSH FND TREASURY SL AGENCY,Cash and/or Derivatives,Money Market,3,634,409.60,0.11,3,634,409.60,3,634,410.00,1.00,United States,-,USD,1.00,USD,-
+ETD,ETHAN ALLEN INTERIORS INC,Consumer Discretionary,Equity,3,223,721.64,0.10,3,223,721.64,93,252.00,34.57,United States,New York Stock Exchange Inc.,USD,1.00,USD,-
+ARHS,ARHAUS INC CLASS A,Consumer Discretionary,Equity,2,570,068.44,0.08,2,570,068.44,166,996.00,15.39,United States,NASDAQ,USD,1.00,USD,-
+SGAFT,CASH COLLATERAL USD SGAFT,Cash and/or Derivatives,Cash Collateral and Margins,235,000.00,0.01,235,000.00,235,000.00,100.00,United States,-,USD,1.00,USD,Sep 01, 2016
+FAM4,S&P MID 400 EMINI JUN 24,Cash and/or Derivatives,Futures,0.00,0.00,14,156,040.00,46.00,3,077.40,-,Index And Options Market,USD,1.00,USD,-

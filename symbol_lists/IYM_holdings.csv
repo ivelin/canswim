@@ -1,0 +1,44 @@
+Symbol,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Shares,Price,Location,Exchange,Currency,FX Rate,Market Currency,Accrual Date
+LIN,LINDE PLC,Materials,Equity,129054958.08,20.56,129054958.08,277944,464.32,United States,NASDAQ,USD,1,USD,-
+FCX,FREEPORT MCMORAN INC,Materials,Equity,44047771.76,7.02,44047771.76,936788,47.02,United States,New York Stock Exchange Inc.,USD,1,USD,-
+ECL,ECOLAB INC,Materials,Equity,37496543.7,5.97,37496543.7,162393,230.9,United States,New York Stock Exchange Inc.,USD,1,USD,-
+APD,AIR PRODUCTS AND CHEMICALS INC,Materials,Equity,35298981.27,5.62,35298981.27,145701,242.27,United States,New York Stock Exchange Inc.,USD,1,USD,-
+NUE,NUCOR CORP,Materials,Equity,32936892.8,5.25,32936892.8,166432,197.9,United States,New York Stock Exchange Inc.,USD,1,USD,-
+FAST,FASTENAL,Industrials,Equity,27717250.54,4.41,27717250.54,359311,77.14,United States,NASDAQ,USD,1,USD,-
+NEM,NEWMONT,Materials,Equity,26849894.4,4.28,26849894.4,749160,35.84,United States,New York Stock Exchange Inc.,USD,1,USD,-
+DOW,DOW INC,Materials,Equity,26277337.65,4.19,26277337.65,453605,57.93,United States,New York Stock Exchange Inc.,USD,1,USD,-
+LYB,LYONDELLBASELL INDUSTRIES NV CLASS,Materials,Equity,20266270.6,3.23,20266270.6,198145,102.28,United States,New York Stock Exchange Inc.,USD,1,USD,-
+STLD,STEEL DYNAMICS INC,Materials,Equity,19666859.94,3.13,19666859.94,132678,148.23,United States,NASDAQ,USD,1,USD,-
+IFF,INTERNATIONAL FLAVORS & FRAGRANCES,Materials,Equity,19119188.58,3.05,19119188.58,222342,85.99,United States,New York Stock Exchange Inc.,USD,1,USD,-
+RS,RELIANCE STEEL & ALUMINUM,Materials,Equity,16615095.42,2.65,16615095.42,49719,334.18,United States,New York Stock Exchange Inc.,USD,1,USD,-
+AVY,AVERY DENNISON CORP,Materials,Equity,15693582,2.5,15693582,70296,223.25,United States,New York Stock Exchange Inc.,USD,1,USD,-
+CE,CELANESE CORP,Materials,Equity,14786490.68,2.36,14786490.68,86038,171.86,United States,New York Stock Exchange Inc.,USD,1,USD,-
+CF,CF INDUSTRIES HOLDINGS INC,Materials,Equity,13945247.11,2.22,13945247.11,167591,83.21,United States,New York Stock Exchange Inc.,USD,1,USD,-
+ALB,ALBEMARLE CORP,Materials,Equity,13430629.52,2.14,13430629.52,101948,131.74,United States,New York Stock Exchange Inc.,USD,1,USD,-
+IP,INTERNATIONAL PAPER,Materials,Equity,11764725.1,1.87,11764725.1,301505,39.02,United States,New York Stock Exchange Inc.,USD,1,USD,-
+EMN,EASTMAN CHEMICAL,Materials,Equity,10344407.74,1.65,10344407.74,103217,100.22,United States,New York Stock Exchange Inc.,USD,1,USD,-
+CLF,CLEVELAND CLIFFS INC,Materials,Equity,9859859.34,1.57,9859859.34,433591,22.74,United States,New York Stock Exchange Inc.,USD,1,USD,-
+MOS,MOSAIC,Materials,Equity,9203805.78,1.47,9203805.78,283543,32.46,United States,New York Stock Exchange Inc.,USD,1,USD,-
+SCCO,SOUTHERN COPPER CORP,Materials,Equity,7908470.88,1.26,7908470.88,74244,106.52,Peru,New York Stock Exchange Inc.,USD,1,USD,-
+X,US STEEL CORP,Materials,Equity,7860915.92,1.25,7860915.92,192764,40.78,United States,New York Stock Exchange Inc.,USD,1,USD,-
+RGLD,ROYAL GOLD INC,Materials,Equity,6951696.7,1.11,6951696.7,57070,121.81,United States,NASDAQ,USD,1,USD,-
+FMC,FMC CORP,Materials,Equity,6924699.6,1.1,6924699.6,108708,63.7,United States,New York Stock Exchange Inc.,USD,1,USD,-
+RBC,RBC BEARINGS INC,Industrials,Equity,6651961.75,1.06,6651961.75,24605,270.35,United States,New York Stock Exchange Inc.,USD,1,USD,-
+OLN,OLIN CORP,Materials,Equity,6144776.4,0.98,6144776.4,104503,58.8,United States,New York Stock Exchange Inc.,USD,1,USD,-
+HXL,HEXCEL CORP,Industrials,Equity,5343547.5,0.85,5343547.5,73350,72.85,United States,New York Stock Exchange Inc.,USD,1,USD,-
+AA,ALCOA CORP,Materials,Equity,5228563.23,0.83,5228563.23,154737,33.79,United States,New York Stock Exchange Inc.,USD,1,USD,-
+VVV,VALVOLINE INC,Consumer Discretionary,Equity,5033245.53,0.8,5033245.53,112929,44.57,United States,New York Stock Exchange Inc.,USD,1,USD,-
+ESI,ELEMENT SOLUTIONS INC,Materials,Equity,4852514.88,0.77,4852514.88,194256,24.98,United States,New York Stock Exchange Inc.,USD,1,USD,-
+TKR,TIMKEN,Industrials,Equity,4652150.3,0.74,4652150.3,53210,87.43,United States,New York Stock Exchange Inc.,USD,1,USD,-
+WLK,WESTLAKE CORP,Materials,Equity,4303459.2,0.69,4303459.2,28164,152.8,United States,New York Stock Exchange Inc.,USD,1,USD,-
+ASH,ASHLAND INC,Materials,Equity,4229850.17,0.67,4229850.17,43441,97.37,United States,New York Stock Exchange Inc.,USD,1,USD,-
+HUN,HUNTSMAN CORP,Materials,Equity,3753916.45,0.6,3753916.45,144215,26.03,United States,New York Stock Exchange Inc.,USD,1,USD,-
+NEU,NEWMARKET CORP,Materials,Equity,3440275.02,0.55,3440275.02,5421,634.62,United States,New York Stock Exchange Inc.,USD,1,USD,-
+CC,CHEMOURS,Materials,Equity,3397492.54,0.54,3397492.54,129379,26.26,United States,New York Stock Exchange Inc.,USD,1,USD,-
+SMG,SCOTTS MIRACLE GRO,Materials,Equity,2714777.64,0.43,2714777.64,36396,74.59,United States,New York Stock Exchange Inc.,USD,1,USD,-
+MP,MP MATERIALS CORP CLASS A,Materials,Equity,1293363.5,0.21,1293363.5,90445,14.3,United States,New York Stock Exchange Inc.,USD,1,USD,-
+USD,USD CASH,Cash and/or Derivatives,Cash,1266487.14,0.2,1266487.14,1266487,100,United States,-,USD,1,USD,-
+SSRM,SSR MINING INC,Materials,Equity,791922.06,0.13,791922.06,177561,4.46,Canada,NASDAQ,USD,1,USD,-
+XTSLA,BLK CSH FND TREASURY SL AGENCY,Cash and/or Derivatives,Money Market,646776.24,0.1,646776.24,646776,1,United States,-,USD,1,USD,-
+WFFUT,CASH COLLATERAL USD WFFUT,Cash and/or Derivatives,Cash Collateral and Margins,67000,0.01,67000,67000,100,United States,-,USD,1,USD,"Aug 23, 2017"
+IXDM4,E-MINI MATERIALS SELECT SECTOR JUN,Cash and/or Derivatives,Futures,0,0,1892970,19,996.3,-,Chicago Mercantile Exchange,USD,1,USD,-

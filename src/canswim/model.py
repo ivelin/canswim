@@ -702,9 +702,9 @@ class CanswimModel:
         if stock_tickers:
             self.__stock_tickers = stock_tickers
         else:
-            all_stock_tickers = pd.read_csv(
-                f"data/data-3rd-party/{self.stock_train_list}"
-            )
+            from canswim.paths import resolve_symbol_csv
+
+            all_stock_tickers = pd.read_csv(resolve_symbol_csv(self.stock_train_list))
             logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop

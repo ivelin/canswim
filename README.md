@@ -24,6 +24,33 @@ pip install canswim
 pip install -e ./
 ```
 
+## Local-first market data (gather)
+
+By default **`gatherdata` does not download or upload the full Hugging Face dataset**.
+That HF snapshot step is slow and was a common reason the CLI “hung”. Instead:
+
+1. Use **local** parquet under `data/data-3rd-party/` (created/updated by gather).
+2. Refresh from **FMP / yfinance** APIs as needed.
+3. Resolve ticker universes from checked-in **`symbol_lists/*.csv`** (light reference files).
+
+```bash
+# typical local gather (no HF dataset sync)
+hfhub_sync=False python -m canswim gatherdata
+
+# optional: only a few symbols
+stock_tickers_list=few_stocks.csv hfhub_sync=False python -m canswim gatherdata
+```
+
+Optional HF:
+
+| Env | Default | Meaning |
+|-----|---------|---------|
+| `hfhub_sync` | `False` | Full dataset/model sync off |
+| `SYNC_SYMBOL_LISTS` | `False` | If `True`, fetch only light CSVs from the HF dataset once |
+| `YFINANCE_USE_CACHE` | `False` | Avoid multi‑GB SQLite cache hang |
+
+Train/forecast **skip tickers without complete ground-truth OHLCV** (no synthetic price fill).
+
 ## Command line interface
 
 ```

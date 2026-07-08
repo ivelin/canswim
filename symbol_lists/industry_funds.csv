@@ -1,0 +1,81 @@
+Symbol,ETF Name,,Asset Class,Total Assets ($MM),YTD Price Change,Avg. Daily Share Volume (3mo),Previous Closing Price,
+ARKG,ARK Genomic Revolution ETF,,Equity,"$1,801",-4.24%,"3,136,660",$31.42,
+ARKK,ARK Innovation ETF,,Equity,"$7,787",-4.37%,"17,598,420",$50.08,
+ARKW,ARK Next Generation Internet ETF,,Equity,"$1,623",1.70%,"312,289",$77.19,
+BIZD,VanEck BDC Income ETF,,Equity,$932,2.06%,"567,884",$16.37,
+CIBR,First Trust NASDAQ Cybersecurity ETF,,Equity,"$6,644",5.52%,"687,410",$56.81,
+CQQQ,Invesco China Technology ETF,,Equity,$609,-11.93%,"309,468",$31.66,
+DAPP,VanEck Digital Transformation ETF,,Equity,$88,3.21%,"344,433",$10.61,
+EMLP,First Trust North American Energy Infrastructure Fund,,Equity,"$2,348",0.22%,"279,786",$27.75,
+EUFN,iShares MSCI Europe Financials ETF,,Equity,"$1,230",0.38%,"519,513",$21.04,
+FCG,First Trust Natural Gas ETF,,Equity,$416,1.48%,"275,100",$24.65,
+FDN,First Trust Dow Jones Internet Index Fund,,Equity,"$6,304",7.25%,"668,819",$200.07,
+GDX,VanEck Gold Miners ETF,,Equity,"$11,032",-15.35%,"23,423,432",$26.25,
+GNR,SPDR S&P Global Natural Resources ETF,,Equity,"$3,430",-6.04%,"429,878",$53.23,
+IAT,iShares U.S. Regional Banks ETF,,Equity,$615,-5.33%,"360,308",$39.61,
+IBB,iShares Biotechnology ETF,,Equity,"$7,608",2.44%,"1,769,606",$139.16,
+ICLN,iShares Global Clean Energy ETF,,Equity,"$2,450",-12.07%,"4,298,805",$13.69,
+IEV,iShares Europe ETF,,Equity,"$1,644",1.84%,"308,897",$53.83,
+IEZ,iShares U.S. Oil Equipment & Services ETF,,Equity,$288,-4.11%,"314,606",$21.02,
+IFRA,iShares U.S. Infrastructure ETF,,Equity,"$2,243",-0.92%,"278,549",$39.90,
+IGF,iShares Global Infrastructure ETF,,Equity,"$3,513",-4.02%,"451,859",$45.16,
+IGV,iShares Expanded Tech-Software Sector ETF,,Equity,"$7,600",5.38%,"632,387",$427.48,
+IHI,iShares U.S. Medical Devices ETF,,Equity,"$5,649",6.26%,"1,212,006",$57.35,
+ITA,iShares U.S. Aerospace & Defense ETF,,Equity,"$5,931",-0.29%,"447,949",$126.23,
+ITB,iShares U.S. Home Construction ETF,,Equity,"$2,760",3.92%,"2,194,138",$105.72,
+IXC,iShares Global Energy ETF,,Equity,"$3,008",1.15%,"772,908",$39.56,
+IXN,iShares Global Tech ETF,,Equity,"$4,449",7.25%,"345,727",$73.12,
+KBE,SPDR S&P Bank ETF,,Equity,"$1,605",-5.02%,"2,612,963",$43.71,
+KIE,SPDR S&P Insurance ETF,,Equity,$737,8.76%,"944,005",$49.18,
+OIH,VanEck Oil Services ETF,,Equity,"$1,968",-3.09%,"456,714",$299.96,
+SMH,VanEck Semiconductor ETF,,Equity,"$15,639",20.29%,"7,816,489",$210.35,
+TAN,Invesco Solar ETF,,Equity,"$1,256",-21.31%,"1,492,813",$41.98,
+WGMI,Valkyrie Bitcoin Miners ETF,,Equity,$102,10.56%,"568,571",$19.90,
+XME,SPDR S&P Metals & Mining ETF,,Equity,"$1,603",-5.70%,"2,969,627",$56.42,
+XOP,SPDR S&P Oil & Gas Exploration & Production ETF,,Equity,"$3,555",1.84%,"3,821,738",$139.43,
+XRT,SPDR S&P Retail ETF,,Equity,$403,3.42%,"6,709,018",$74.79,
+IBIT,iShares Bitcoin ETF,,,,,,,
+PHO,Invesco Water Resources ETF,,Water,"$2,026.22",4.37%,"76,084",$63.52,0.08%
+FXR,First Trust Industrials/Producer Durables AlphaDEX Fund,,Broad Industrials,"$1,835.87",5.03%,"87,962",$68.12,-0.25%
+JETS,U.S. Global Jets ETF,,Airlines,"$1,400.43",5.78%,"5,063,540",$20.13,-0.05%
+IYT,iShares US Transportation ETF,,Transportation,"$1,026.05",6.59%,"127,735",$279.73,-0.53%
+AIRR,First Trust RBA American Industrial Renaissance ETF,,Broad Industrials,$704.99,5.90%,"79,865",$61.25,1.27%
+ARKX,ARK Space Exploration & Innovation ETF,,Aerospace & Defense,$249.37,-5.71%,"56,325",$14.53,0.90%
+MOO,VanEck Agribusiness ETF,,Materials,$823.10,-4.71%,"74,362",$72.59,-0.26%
+WCLD,WisdomTree Cloud Computing Fund,,Technology,$727.21,0.89%,"490,570",$35.26,0.54%
+GRID,First Trust Nasdaq Clean Edge Smart GRID Infrastructure Index,,Materials,$869.05,2.90%,"51,308",$107.75,0.22%
+PBJ,Invesco Food & Beverage ETF,,Consumer Staples,$128.76,0.26%,"33,003",$45.97,0.37%
+ESPO,VanEck Video Gaming and eSports ETF,,Consumer Discretionary,$255.67,8.50%,"17,116",$61.55,0.07%
+PEJ,Invesco Leisure and Entertainment ETF,,Consumer Discretionary,$325.27,3.39%,"82,367",$43.35,-0.34%
+LIT,Global X Lithium & Battery Tech ETF,,Materials,"$1,606.03",-14.53%,"626,986",$43.54,1.19%
+REM,iShares Mortgage Real Estate ETF,,Real Estate,$586.51,-6.99%,"389,521",$21.94,-0.63%
+IHE,iShares U.S. Pharmaceuticals ETF,,Healthcare,$687.98,12.28%,"20,511",$208.17,-0.23%
+URA,Global X Uranium ETF,,Materials,"$2,660.62",-0.54%,"2,763,224",$27.54,2.08%
+FAN,First Trust Global Wind Energy ETF,,Energy,$187.26,-9.47%,"47,424",$14.92,-0.20%
+EVX,Environmental Services,,,,,,,
+NLR,Nuclear,,,,,,,
+IBUY,Online Retail,,,,,,,
+PEJ,Liesure & Entertainment,,,,,,,
+PXJ,Oil & Gas Equip. & Services,,,,,,,
+IAI,Broker Dealers,,,,,,,
+KBWP,Property & Casualty Insurance,,,,,,,
+KCE,Capital Markets,,,,,,,
+KBWB,Banks,,,,,,,
+PSP,Private Equity,,,,,,,
+IHF,Healthcare Providers,,,,,,,
+XHE,Medical Equipment,,,,,,,
+CNCR,Cancer,,,,,,,
+SEA,Shipping,,,,,,,
+CARZ,Auto Manufacturers,,,,,,,
+IDRV,Autonomous Vehicles,,,,,,,
+HAP,Hard Assets Producers,,,,,,,
+SLX,Steel Production,,,,,,,
+SIL,Silver Miners,,,,,,,
+WOOD,Timber,,,,,,,
+COPX,Copper Producers,,,,,,,
+NXTG,Smartphones,,,,,,,
+SOCL,Social Media,,,,,,,
+ROBO,Robotics,,,,,,,
+BLOK,Blockchain Technology,,,,,,,
+AIQ,Big Data,,,,,,,
+GRID,Smart Grid,,,,,,,

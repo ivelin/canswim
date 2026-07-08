@@ -113,10 +113,20 @@ def main(new_model: bool = False):
     while i < n_outer_train_loop:
         logger.info(f"Outer train loop: {i}")
         try:
-            # load a new data sample from local storage
+            # load a new data sample from local storage (ground-truth filters applied)
             trainer.canswim_model.load_data()
+            n_prices = len(getattr(trainer.canswim_model.targets, "stock_price_dict", {}) or {})
+            if n_prices == 0:
+                raise RuntimeError(
+                    "Train aborted for this loop: no tickers with complete ground-truth "
+                    "OHLCV (refusing synthetic/interpolated prices)."
+                )
             # prepare timeseries for training
             trainer.canswim_model.prepare_data()
+            if not trainer.canswim_model.targets_list:
+                raise RuntimeError(
+                    "Train aborted: no eligible target series after ground-truth checks."
+                )
             # train model
             trainer.canswim_model.train()
         except Exception as e:

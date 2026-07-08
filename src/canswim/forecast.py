@@ -263,27 +263,54 @@ def get_next_open_market_day(after_date=None):
 
 # main function
 def main(forecast_start_date: str = None):
-    logger.info("Running forecast on stocks and uploading results to HF Hub...")
+    logger.info("Running forecast on stocks (local data; HF upload only if hfhub_sync)...")
     if forecast_start_date is not None:
         logger.info(f"forecast_start_date: {forecast_start_date}")
         forecast_start_date = pd.Timestamp(forecast_start_date, tz=None)
     else:
-        # get next open stock market date
-        # Example usage
         forecast_start_date = get_next_open_market_day()
 
     logger.info(f"Forecast start date set to: {forecast_start_date}")
 
     cf = CanswimForecaster()
     cf.download_model()
+    # Local-first: download_data is a no-op unless hfhub_sync=True
     cf.download_data()
-    ## loop in groups over all stocks
-    # next(cf.prep_next_stock_group())
+    any_saved = False
+    any_group = False
     for pos in cf.prep_next_stock_group(forecast_start_date=forecast_start_date):
+        any_group = True
         forecasts = cf.get_forecast(forecast_start_date=forecast_start_date)
-        ## save new or update existing data file
         if forecasts:
-            cf.save_forecast(forecasts)
+            # Drop any all-NaN probabilistic outputs (not ground-truth usable)
+            clean = {}
+            for t, ts in forecasts.items():
+                try:
+                    qdf = ts.quantile_df(0.5) if hasattr(ts, "quantile_df") else ts.pd_dataframe()
+                    if qdf.isna().all().all():
+                        logger.warning(
+                            f"Skipping save for {t}: forecast quantiles are all NaN"
+                        )
+                        continue
+                except Exception:
+                    pass
+                clean[t] = ts
+            if clean:
+                cf.save_forecast(clean)
+                any_saved = True
+        else:
+            logger.warning(
+                "No eligible tickers with complete ground-truth history in this batch"
+            )
+    if not any_group:
+        raise RuntimeError(
+            "Forecast aborted: no stock groups prepared. Check stock list and local price data."
+        )
+    if not any_saved:
+        raise RuntimeError(
+            "Forecast aborted: no forecasts saved. Missing ground-truth market data "
+            "for requested symbols/window (no synthetic prices used)."
+        )
     cf.upload_data()
     logger.info("Finished forecast task.")
 
