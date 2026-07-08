@@ -332,69 +332,75 @@ class Covariates:
         # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
 
+    def _price_covariate_series_from_df(self, df: pd.DataFrame, train_date_start=None):
+        """Build a price-index TimeSeries without inventing OHLC via MissingValuesFiller.
+
+        Drops all-null columns and rows with any null remaining values so only
+        observed market bars remain. Uses NYSE CustomBusinessDay frequency.
+        """
+        out = df.copy()
+        out.index = pd.to_datetime(out.index)
+        out = out.sort_index()
+        # Drop columns that are empty in-window
+        out = out.dropna(axis=1, how="all")
+        if train_date_start is not None:
+            out = out.loc[out.index >= pd.Timestamp(train_date_start)]
+        # Keep only timestamps with complete observed values (no interpolation)
+        out = out.dropna(how="any")
+        if out.empty:
+            raise ValueError("no complete price-covariate rows after dropping nulls")
+        try:
+            import pandas_market_calendars as mcal
+
+            holidays = mcal.get_calendar("NYSE").holidays().holidays
+            trading_freq = pd.offsets.CustomBusinessDay(holidays=holidays)
+        except Exception:
+            trading_freq = "B"
+        series = TimeSeries.from_dataframe(
+            out, fill_missing_dates=True, freq=trading_freq
+        )
+        # Any residual NaNs mean a calendar hole without ground truth → drop those times
+        sdf = series.pd_dataframe()
+        if sdf.isna().any().any():
+            sdf = sdf.dropna(how="any")
+            series = TimeSeries.from_dataframe(
+                sdf, fill_missing_dates=True, freq=trading_freq
+            )
+        if series.pd_dataframe().isna().any().any():
+            raise ValueError(
+                "price covariate series still contains nulls after drop; "
+                "refusing MissingValuesFiller interpolation"
+            )
+        return series
+
     def prepare_broad_market_series(self, train_date_start=None):
         logger.info("preparing past covariates: broad market indexes")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
         # CBOE VIX volatility, DYX USD and TNT 10Y Treasury indices do not have meaningful values for Volume
-        broad_market_df = broad_market_df.drop(
-            columns=["^VIX_Volume", "DX-Y.NYB_Volume", "^TNX_Volume"]
+        for col in ["^VIX_Volume", "DX-Y.NYB_Volume", "^TNX_Volume"]:
+            if col in broad_market_df.columns:
+                broad_market_df = broad_market_df.drop(columns=[col])
+        return self._price_covariate_series_from_df(
+            broad_market_df, train_date_start=train_date_start
         )
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        broad_market_df.index = pd.to_datetime(broad_market_df.index)
-        broad_market_series = TimeSeries.from_dataframe(broad_market_df, freq="B")
-        broad_market_series = broad_market_series.slice(
-            train_date_start, broad_market_series.end_time()
-        )
-        filler = MissingValuesFiller(n_jobs=-1)
-        series_filled = filler.transform(broad_market_series)
-        assert len(series_filled.gaps()) == 0
-        broad_market_series = series_filled
-        return broad_market_series
 
     def prepare_sectors_series(self, train_date_start=None):
         logger.info("preparing past covariates: market sectors")
         sectors_df = self.sectors_df.copy()
-        # flatten column hierarchy so Darts can use as covariate series
         sectors_df.columns = [f"{i}_{j}" for i, j in sectors_df.columns]
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        sectors_df.index = pd.to_datetime(sectors_df.index)
-        sectors_series = TimeSeries.from_dataframe(sectors_df, freq="B")
-        sectors_series = sectors_series.slice(
-            train_date_start, sectors_series.end_time()
+        return self._price_covariate_series_from_df(
+            sectors_df, train_date_start=train_date_start
         )
-        filler = MissingValuesFiller(n_jobs=-1)
-        series_filled = filler.transform(sectors_series)
-        assert len(series_filled.gaps()) == 0
-        sectors_series = series_filled
-        # logger.debug(
-        #     f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
-        # )
-        return sectors_series
 
     def prepare_industry_fund_series(self, train_date_start=None):
         logger.info("preparing past covariates: industry funds")
         industry_funds_df = self.industry_funds_df.copy()
-        # flatten column hierarchy so Darts can use as covariate series
         industry_funds_df.columns = [f"{i}_{j}" for i, j in industry_funds_df.columns]
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        industry_funds_df.index = pd.to_datetime(industry_funds_df.index)
-        industry_funds_series = TimeSeries.from_dataframe(industry_funds_df, freq="B")
-        industry_funds_series = industry_funds_series.slice(
-            train_date_start, industry_funds_series.end_time()
+        return self._price_covariate_series_from_df(
+            industry_funds_df, train_date_start=train_date_start
         )
-        filler = MissingValuesFiller(n_jobs=-1)
-        industry_funds_filled = filler.transform(industry_funds_series)
-        assert len(industry_funds_filled.gaps()) == 0
-        industry_funds_series = industry_funds_filled
-        # logger.debug(
-        #     f"Finished preparing past covariates: industry funds. {len(industry_funds_series.columns)} columns, {len(industry_funds_series)} records,  \ncolumns: \n{industry_funds_series.columns}"
-        # )
-        return industry_funds_series
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date

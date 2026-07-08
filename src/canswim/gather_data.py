@@ -16,6 +16,7 @@ from fmpsdk.url_methods import __return_json_v4
 import typing
 from canswim.hfhub import HFHub, _env_bool
 from canswim.paths import data_3rd_party_dir, resolve_symbol_csv, symbol_lists_dir
+from canswim.eligibility import is_valid_ticker_symbol
 from canswim.market_data_io import (
     coerce_ohlcv_numeric,
     normalize_earnings_dataframe,
@@ -167,17 +168,32 @@ class MarketDataGatherer:
                 logger.info(f"{f} not found in symbol_lists or data-3rd-party.")
                 continue
             logger.info(f"loading symbols from {fp}...")
-            stocks = pd.read_csv(fp)
-            logger.info(f"loaded {len(stocks)} symbols from {fp}")
+            try:
+                stocks = pd.read_csv(fp, dtype=str, encoding="utf-8-sig")
+            except Exception as e:
+                logger.warning(f"Failed to read {fp}: {e}")
+                continue
+            logger.info(f"loaded {len(stocks)} rows from {fp}")
             if "Symbol" not in stocks.columns:
                 logger.warning(f"No Symbol column in {fp}; columns={list(stocks.columns)}")
                 continue
-            stock_set = set(stocks["Symbol"].dropna().astype(str))
+            raw = stocks["Symbol"].dropna().astype(str).tolist()
+            stock_set = {s.strip().upper() for s in raw if is_valid_ticker_symbol(s)}
+            dropped = len(raw) - len(stock_set)
+            if dropped:
+                logger.warning(
+                    f"{fp}: dropped {dropped} invalid Symbol values "
+                    f"(numeric/price residue from unquoted CSV fields)"
+                )
             all_stock_set |= stock_set
             logger.info(f"total symbols loaded: {len(all_stock_set)}")
 
         logger.info(f"Total size of stock set: {len(all_stock_set)}")
-        slist = [x for x in set(all_stock_set) if isinstance(x, str) and len(x) < 10]
+        slist = [
+            x
+            for x in set(all_stock_set)
+            if is_valid_ticker_symbol(x) and len(str(x)) < 10
+        ]
         self.stocks_ticker_set = set(slist)
         try:
             junk_path = resolve_symbol_csv("junk_tickers.csv")

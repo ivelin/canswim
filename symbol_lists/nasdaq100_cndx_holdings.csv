@@ -1,111 +1,109 @@
-﻿Symbol,Name,Sector,Asset Class,Market Value,Weight (%),Notional Value,Shares,Price,Location,Exchange,Market Currency
-"AAPL","APPLE INC","Information Technology","Equity","1,125,625,907.56","8.89","1,125,625,907.56","5,876,101.00","191.56","United States","NASDAQ","USD"
-"MSFT","MICROSOFT CORP","Information Technology","Equity","1,119,478,516.11","8.84","1,119,478,516.11","2,808,033.00","398.67","United States","NASDAQ","USD"
-"AMZN","AMAZON COM INC","Consumer Discretionary","Equity","606,505,612.50","4.79","606,505,612.50","3,904,375.00","155.34","United States","NASDAQ","USD"
-"NVDA","NVIDIA CORP","Information Technology","Equity","555,173,581.46","4.39","555,173,581.46","933,206.00","594.91","United States","NASDAQ","USD"
-"AVGO","BROADCOM INC","Information Technology","Equity","552,094,028.80","4.36","552,094,028.80","455,824.00","1,211.20","United States","NASDAQ","USD"
-"META","META PLATFORMS INC CLASS A","Communication","Equity","511,572,915.40","4.04","511,572,915.40","1,334,132.00","383.45","United States","NASDAQ","USD"
-"TSLA","TESLA INC","Consumer Discretionary","Equity","385,758,237.15","3.05","385,758,237.15","1,817,985.00","212.19","United States","NASDAQ","USD"
-"GOOGL","ALPHABET INC CLASS A","Communication","Equity","327,296,165.30","2.59","327,296,165.30","2,235,935.00","146.38","United States","NASDAQ","USD"
-"GOOG","ALPHABET INC CLASS C","Communication","Equity","320,060,293.76","2.53","320,060,293.76","2,163,008.00","147.97","United States","NASDAQ","USD"
-"COST","COSTCO WHOLESALE CORP","Consumer Staples","Equity","300,259,703.59","2.37","300,259,703.59","432,047.00","694.97","United States","NASDAQ","USD"
-"AMD","ADVANCED MICRO DEVICES INC","Information Technology","Equity","274,673,072.31","2.17","274,673,072.31","1,576,497.00","174.23","United States","NASDAQ","USD"
-"ADBE","ADOBE INC","Information Technology","Equity","271,715,945.85","2.15","271,715,945.85","444,307.00","611.55","United States","NASDAQ","USD"
-"PEP","PEPSICO INC","Consumer Staples","Equity","222,422,218.38","1.76","222,422,218.38","1,341,671.00","165.78","United States","NASDAQ","USD"
-"NFLX","NETFLIX INC","Communication","Equity","206,275,189.25","1.63","206,275,189.25","427,115.00","482.95","United States","NASDAQ","USD"
-"CSCO","CISCO SYSTEMS INC","Information Technology","Equity","203,305,699.11","1.61","203,305,699.11","3,965,393.00","51.27","United States","NASDAQ","USD"
-"INTC","INTEL CORPORATION CORP","Information Technology","Equity","198,100,752.30","1.56","198,100,752.30","4,114,242.00","48.15","United States","NASDAQ","USD"
-"TMUS","T MOBILE US INC","Communication","Equity","186,390,987.68","1.47","186,390,987.68","1,128,548.00","165.16","United States","NASDAQ","USD"
-"INTU","INTUIT INC","Information Technology","Equity","169,967,754.58","1.34","169,967,754.58","273,181.00","622.18","United States","NASDAQ","USD"
-"CMCSA","COMCAST CORP CLASS A","Communication","Equity","169,876,425.30","1.34","169,876,425.30","3,918,718.00","43.35","United States","NASDAQ","USD"
-"QCOM","QUALCOMM INC","Information Technology","Equity","165,048,770.68","1.30","165,048,770.68","1,086,133.00","151.96","United States","NASDAQ","USD"
-"AMGN","AMGEN INC","Health Care","Equity","160,752,849.07","1.27","160,752,849.07","522,247.00","307.81","United States","NASDAQ","USD"
-"TXN","TEXAS INSTRUMENT INC","Information Technology","Equity","153,902,869.30","1.22","153,902,869.30","886,282.00","173.65","United States","NASDAQ","USD"
-"AMAT","APPLIED MATERIAL INC","Information Technology","Equity","137,095,635.78","1.08","137,095,635.78","816,337.00","167.94","United States","NASDAQ","USD"
-"HON","HONEYWELL INTERNATIONAL INC","Industrials","Equity","129,168,198.96","1.02","129,168,198.96","643,332.00","200.78","United States","NASDAQ","USD"
-"ISRG","INTUITIVE SURGICAL INC","Health Care","Equity","128,845,874.28","1.02","128,845,874.28","343,754.00","374.82","United States","NASDAQ","USD"
-"BKNG","BOOKING HOLDINGS INC","Consumer Discretionary","Equity","123,163,864.56","0.97","123,163,864.56","34,056.00","3,616.51","United States","NASDAQ","USD"
-"VRTX","VERTEX PHARMACEUTICALS INC","Health Care","Equity","109,497,579.14","0.86","109,497,579.14","251,707.00","435.02","United States","NASDAQ","USD"
-"LRCX","LAM RESEARCH CORP","Information Technology","Equity","106,392,005.28","0.84","106,392,005.28","128,754.00","826.32","United States","NASDAQ","USD"
-"GILD","GILEAD SCIENCES INC","Health Care","Equity","106,279,677.63","0.84","106,279,677.63","1,217,547.00","87.29","United States","NASDAQ","USD"
-"SBUX","STARBUCKS CORP","Consumer Discretionary","Equity","104,193,328.98","0.82","104,193,328.98","1,110,093.00","93.86","United States","NASDAQ","USD"
-"PANW","PALO ALTO NETWORKS INC","Information Technology","Equity","104,072,216.82","0.82","104,072,216.82","308,143.00","337.74","United States","NASDAQ","USD"
-"REGN","REGENERON PHARMACEUTICALS INC","Health Care","Equity","97,757,782.20","0.77","97,757,782.20","104,733.00","933.40","United States","NASDAQ","USD"
-"MDLZ","MONDELEZ INTERNATIONAL INC CLASS A","Consumer Staples","Equity","96,898,732.05","0.77","96,898,732.05","1,330,113.00","72.85","United States","NASDAQ","USD"
-"ADP","AUTOMATIC DATA PROCESSING INC","Industrials","Equity","95,769,144.64","0.76","95,769,144.64","401,986.00","238.24","United States","NASDAQ","USD"
-"ADI","ANALOG DEVICES INC","Information Technology","Equity","94,447,673.63","0.75","94,447,673.63","484,919.00","194.77","United States","NASDAQ","USD"
-"MU","MICRON TECHNOLOGY INC","Information Technology","Equity","94,447,005.21","0.75","94,447,005.21","1,079,271.00","87.51","United States","NASDAQ","USD"
-"PDD","PDD HOLDINGS ADS INC","Consumer Discretionary","Equity","93,165,765.84","0.74","93,165,765.84","648,606.00","143.64","China","NASDAQ","USD"
-"MELI","MERCADOLIBRE INC","Consumer Discretionary","Equity","85,392,893.11","0.67","85,392,893.11","49,469.00","1,726.19","United States","NASDAQ","USD"
-"KLAC","KLA CORP","Information Technology","Equity","81,544,220.73","0.64","81,544,220.73","133,027.00","612.99","United States","NASDAQ","USD"
-"CDNS","CADENCE DESIGN SYSTEMS INC","Information Technology","Equity","77,835,152.34","0.61","77,835,152.34","266,431.00","292.14","United States","NASDAQ","USD"
-"SNPS","SYNOPSYS INC","Information Technology","Equity","76,965,381.80","0.61","76,965,381.80","148,780.00","517.31","United States","NASDAQ","USD"
-"PYPL","PAYPAL HOLDINGS INC","Financials","Equity","69,564,302.34","0.55","69,564,302.34","1,056,887.00","65.82","United States","NASDAQ","USD"
-"MAR","MARRIOTT INTERNATIONAL INC CLASS A","Consumer Discretionary","Equity","67,282,706.13","0.53","67,282,706.13","287,939.00","233.67","United States","NASDAQ","USD"
-"CSX","CSX CORP","Industrials","Equity","66,918,927.60","0.53","66,918,927.60","1,936,872.00","34.55","United States","NASDAQ","USD"
-"ASML","ASML HOLDING ADR REPRESENTING NV","Information Technology","Equity","65,205,208.86","0.52","65,205,208.86","86,042.00","757.83","Netherlands","NASDAQ","USD"
-"CRWD","CROWDSTRIKE HOLDINGS INC CLASS A","Information Technology","Equity","64,902,277.90","0.51","64,902,277.90","223,385.00","290.54","United States","NASDAQ","USD"
-"CTAS","CINTAS CORP","Industrials","Equity","59,902,004.75","0.47","59,902,004.75","99,995.00","599.05","United States","NASDAQ","USD"
-"ORLY","OREILLY AUTOMOTIVE INC","Consumer Discretionary","Equity","59,715,132.30","0.47","59,715,132.30","58,083.00","1,028.10","United States","NASDAQ","USD"
-"ABNB","AIRBNB INC CLASS A","Consumer Discretionary","Equity","59,653,838.16","0.47","59,653,838.16","426,312.00","139.93","United States","NASDAQ","USD"
-"MRVL","MARVELL TECHNOLOGY INC","Information Technology","Equity","59,555,444.20","0.47","59,555,444.20","837,865.00","71.08","United States","NASDAQ","USD"
-"WDAY","WORKDAY INC CLASS A","Information Technology","Equity","58,853,760.49","0.46","58,853,760.49","202,951.00","289.99","United States","NASDAQ","USD"
-"MNST","MONSTER BEVERAGE CORP","Consumer Staples","Equity","57,773,299.68","0.46","57,773,299.68","1,010,376.00","57.18","United States","NASDAQ","USD"
-"ROP","ROPER TECHNOLOGIES INC","Information Technology","Equity","57,509,176.50","0.45","57,509,176.50","104,850.00","548.49","United States","NASDAQ","USD"
-"LULU","LULULEMON ATHLETICA INC","Consumer Discretionary","Equity","57,068,862.12","0.45","57,068,862.12","117,906.00","484.02","United States","NASDAQ","USD"
-"NXPI","NXP SEMICONDUCTORS NV","Information Technology","Equity","54,655,289.64","0.43","54,655,289.64","250,299.00","218.36","United States","NASDAQ","USD"
-"CHTR","CHARTER COMMUNICATIONS INC CLASS A","Communication","Equity","53,897,450.70","0.43","53,897,450.70","145,237.00","371.10","United States","NASDAQ","USD"
-"ADSK","AUTODESK INC","Information Technology","Equity","51,610,950.72","0.41","51,610,950.72","207,573.00","248.64","United States","NASDAQ","USD"
-"PCAR","PACCAR INC","Industrials","Equity","48,896,229.60","0.39","48,896,229.60","507,960.00","96.26","United States","NASDAQ","USD"
-"DXCM","DEXCOM INC","Health Care","Equity","47,761,499.22","0.38","47,761,499.22","375,218.00","127.29","United States","NASDAQ","USD"
-"MCHP","MICROCHIP TECHNOLOGY INC","Information Technology","Equity","46,993,385.92","0.37","46,993,385.92","525,418.00","89.44","United States","NASDAQ","USD"
-"FTNT","FORTINET INC","Information Technology","Equity","46,053,615.30","0.36","46,053,615.30","756,217.00","60.90","United States","NASDAQ","USD"
-"CPRT","COPART INC","Industrials","Equity","45,413,285.70","0.36","45,413,285.70","932,511.00","48.70","United States","NASDAQ","USD"
-"ROST","ROSS STORES INC","Consumer Discretionary","Equity","45,259,625.50","0.36","45,259,625.50","328,850.00","137.63","United States","NASDAQ","USD"
-"KHC","KRAFT HEINZ","Consumer Staples","Equity","44,781,590.16","0.35","44,781,590.16","1,207,702.00","37.08","United States","NASDAQ","USD"
-"KDP","KEURIG DR PEPPER INC","Consumer Staples","Equity","43,910,744.16","0.35","43,910,744.16","1,376,944.00","31.89","United States","NASDAQ","USD"
-"PAYX","PAYCHEX INC","Industrials","Equity","42,827,829.01","0.34","42,827,829.01","350,789.00","122.09","United States","NASDAQ","USD"
-"IDXX","IDEXX LABORATORIES INC","Health Care","Equity","42,248,702.10","0.33","42,248,702.10","80,655.00","523.82","United States","NASDAQ","USD"
-"ODFL","OLD DOMINION FREIGHT LINE INC","Industrials","Equity","41,032,826.95","0.32","41,032,826.95","105,965.00","387.23","United States","NASDAQ","USD"
-"AEP","AMERICAN ELECTRIC POWER INC","Utilities","Equity","40,253,339.70","0.32","40,253,339.70","518,061.00","77.70","United States","NASDAQ","USD"
-"FAST","FASTENAL","Industrials","Equity","38,478,360.82","0.30","38,478,360.82","554,923.00","69.34","United States","NASDAQ","USD"
-"DASH","DOORDASH INC CLASS A","Consumer Discretionary","Equity","38,283,053.20","0.30","38,283,053.20","360,040.00","106.33","United States","NASDAQ","USD"
-"DDOG","DATADOG INC CLASS A","Information Technology","Equity","38,237,514.85","0.30","38,237,514.85","293,435.00","130.31","United States","NASDAQ","USD"
-"AZN","ASTRAZENECA ADR REPRESENTING .5 PL","Health Care","Equity","37,627,638.06","0.30","37,627,638.06","565,489.00","66.54","United Kingdom","NASDAQ","USD"
-"CTSH","COGNIZANT TECHNOLOGY SOLUTIONS COR","Information Technology","Equity","37,436,254.72","0.30","37,436,254.72","486,944.00","76.88","United States","NASDAQ","USD"
-"MRNA","MODERNA INC","Health Care","Equity","36,917,015.70","0.29","36,917,015.70","370,281.00","99.70","United States","NASDAQ","USD"
-"EA","ELECTRONIC ARTS INC","Communication","Equity","36,594,132.08","0.29","36,594,132.08","265,714.00","137.72","United States","NASDAQ","USD"
-"TEAM","ATLASSIAN CORP CLASS A","Information Technology","Equity","36,572,039.92","0.29","36,572,039.92","150,527.00","242.96","United States","NASDAQ","USD"
-"CEG","CONSTELLATION ENERGY CORP","Utilities","Equity","35,496,667.50","0.28","35,496,667.50","310,150.00","114.45","United States","NASDAQ","USD"
-"BIIB","BIOGEN INC","Health Care","Equity","35,171,871.60","0.28","35,171,871.60","140,710.00","249.96","United States","NASDAQ","USD"
-"EXC","EXELON CORP","Utilities","Equity","33,873,588.48","0.27","33,873,588.48","966,712.00","35.04","United States","NASDAQ","USD"
-"VRSK","VERISK ANALYTICS INC","Industrials","Equity","33,807,455.28","0.27","33,807,455.28","140,794.00","240.12","United States","NASDAQ","USD"
-"ZS","ZSCALER INC","Information Technology","Equity","33,313,392.57","0.26","33,313,392.57","144,033.00","231.29","United States","NASDAQ","USD"
-"GEHC","GE HEALTHCARE TECHNOLOGIES INC","Health Care","Equity","32,764,697.99","0.26","32,764,697.99","442,109.00","74.11","United States","NASDAQ","USD"
-"CSGP","COSTAR GROUP INC","Real Estate","Equity","32,649,690.43","0.26","32,649,690.43","396,571.00","82.33","United States","NASDAQ","USD"
-"XEL","XCEL ENERGY INC","Utilities","Equity","31,875,153.56","0.25","31,875,153.56","535,897.00","59.48","United States","NASDAQ","USD"
-"GFS","GLOBALFOUNDRIES INC","Information Technology","Equity","31,475,777.35","0.25","31,475,777.35","531,955.00","59.17","United States","NASDAQ","USD"
-"ON","ON SEMICONDUCTOR CORP","Information Technology","Equity","31,420,752.24","0.25","31,420,752.24","425,352.00","73.87","United States","NASDAQ","USD"
-"BKR","BAKER HUGHES CLASS A","Energy","Equity","30,000,531.20","0.24","30,000,531.20","977,216.00","30.70","United States","NASDAQ","USD"
-"CCEP","COCA COLA EUROPACIFIC PARTNERS PLC","Consumer Staples","Equity","29,965,787.95","0.24","29,965,787.95","443,609.00","67.55","Netherlands","NASDAQ","USD"
-"CDW","CDW CORP","Information Technology","Equity","29,459,502.02","0.23","29,459,502.02","130,087.00","226.46","United States","NASDAQ","USD"
-"TTD","TRADE DESK INC CLASS A","Communication","Equity","28,971,386.15","0.23","28,971,386.15","433,379.00","66.85","United States","NASDAQ","USD"
-"ANSS","ANSYS INC","Information Technology","Equity","28,424,602.00","0.22","28,424,602.00","84,346.00","337.00","United States","NASDAQ","USD"
-"MDB","MONGODB INC CLASS A","Information Technology","Equity","27,779,931.40","0.22","27,779,931.40","69,268.00","401.05","United States","NASDAQ","USD"
-"DLTR","DOLLAR TREE INC","Consumer Staples","Equity","27,606,827.92","0.22","27,606,827.92","211,579.00","130.48","United States","NASDAQ","USD"
-"TTWO","TAKE TWO INTERACTIVE SOFTWARE INC","Communication","Equity","26,936,291.20","0.21","26,936,291.20","165,152.00","163.10","United States","NASDAQ","USD"
-"FANG","DIAMONDBACK ENERGY INC","Energy","Equity","26,255,738.60","0.21","26,255,738.60","173,810.00","151.06","United States","NASDAQ","USD"
-"SPLK","SPLUNK INC","Information Technology","Equity","25,076,910.50","0.20","25,076,910.50","163,634.00","153.25","United States","NASDAQ","USD"
-"WBD","WARNER BROS. DISCOVERY INC SERIES","Communication","Equity","24,512,132.70","0.19","24,512,132.70","2,368,322.00","10.35","United States","NASDAQ","USD"
-"ILMN","ILLUMINA INC","Health Care","Equity","20,954,598.32","0.17","20,954,598.32","154,214.00","135.88","United States","NASDAQ","USD"
-"SIRI","SIRIUS XM HOLDINGS INC","Communication","Equity","20,208,215.26","0.16","20,208,215.26","3,728,453.00","5.42","United States","NASDAQ","USD"
-"USD","USD CASH","Cash and/or Derivatives","Cash","19,563,080.29","0.15","19,563,080.29","19,563,080.00","100.00","United States","-","USD"
-"WBA","WALGREEN BOOTS ALLIANCE INC","Consumer Staples","Equity","18,458,770.00","0.15","18,458,770.00","839,035.00","22.00","United States","NASDAQ","USD"
-"ICSUAGD","BLK ICS USD LIQ AGENCY DIS","Cash and/or Derivatives","Money Market","6,474,719.52","0.05","6,474,719.52","6,474,720.00","1.00","Ireland","-","USD"
-"EUR","EUR CASH","Cash and/or Derivatives","Cash","5,733,397.68","0.05","5,733,397.68","5,268,214.00","108.83","European Union","-","EUR"
-"MLIFT","CASH COLLATERAL USD MLIFT","Cash and/or Derivatives","Cash Collateral and Margins","1,645,000.00","0.01","1,645,000.00","1,645,000.00","100.00","United States","-","USD"
-"GBP","GBP CASH","Cash and/or Derivatives","Cash","1,205,713.01","0.01","1,205,713.01","950,878.00","126.80","United Kingdom","-","GBP"
-"CAD","CAD CASH","Cash and/or Derivatives","Cash","0.38","0.00","0.38","1.00","74.27","Canada","-","CAD"
-"NQH4","NASDAQ 100 E-MINI MAR 24","Cash and/or Derivatives","Futures","0.00","0.00","32,086,840.00","92.00","17,438.50","-","Index And Options Market","USD"
-"USD","USD/EUR","Cash and/or Derivatives","FX","-16,130.86","0.00","-16,130.86","5,615,728.00","1.09","European Union","-","EUR"
- 
+Symbol
+AAPL
+ABNB
+ADBE
+ADI
+ADP
+ADSK
+AEP
+AMAT
+AMD
+AMGN
+AMZN
+ANSS
+ASML
+AVGO
+AZN
+BIIB
+BKNG
+BKR
+CAD
+CCEP
+CDNS
+CDW
+CEG
+CHTR
+CMCSA
+COST
+CPRT
+CRWD
+CSCO
+CSGP
+CSX
+CTAS
+CTSH
+DASH
+DDOG
+DLTR
+DXCM
+EA
+EUR
+EXC
+FANG
+FAST
+FTNT
+GBP
+GEHC
+GFS
+GILD
+GOOG
+GOOGL
+HON
+ICSUAGD
+IDXX
+ILMN
+INTC
+INTU
+ISRG
+KDP
+KHC
+KLAC
+LRCX
+LULU
+MAR
+MCHP
+MDB
+MDLZ
+MELI
+META
+MLIFT
+MNST
+MRNA
+MRVL
+MSFT
+MU
+NFLX
+NQH4
+NVDA
+NXPI
+ODFL
+ON
+ORLY
+PANW
+PAYX
+PCAR
+PDD
+PEP
+PYPL
+QCOM
+REGN
+ROP
+ROST
+SBUX
+SIRI
+SNPS
+SPLK
+TEAM
+TMUS
+TSLA
+TTD
+TTWO
+TXN
+USD
+VRSK
+VRTX
+WBA
+WBD
+WDAY
+XEL
+ZS

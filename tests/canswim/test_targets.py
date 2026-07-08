@@ -72,30 +72,30 @@ def test_pyarrow_filters(targets):
     assert filters[0] == ("Symbol", "in", stock_tickers)
     assert filters[1] == ("Date", ">=", start_date)
 
-@patch('canswim.targets.TimeSeries.from_dataframe')
-@patch('canswim.targets.MissingValuesFiller.transform')
-def test_prepare_stock_price_series(mock_transform, mock_from_df, targets, mock_stock_data):
-    """Test prepare_stock_price_series method"""
-    # Setup test data
-    train_date_start = pd.Timestamp('2023-01-05')
-    targets.stock_price_dict = mock_stock_data
-    
-    # Mock TimeSeries creation and transformation
-    mock_series = MagicMock()
-    mock_series.gaps.return_value = []  # No gaps after filling
-    mock_series.end_time.return_value = pd.Timestamp('2023-01-10')
-    mock_transform.return_value = mock_series
-    mock_from_df.return_value = mock_series
-    
-    # Call the method
+def test_prepare_stock_price_series(targets):
+    """prepare_stock_price_series uses ground-truth bars only (no MissingValuesFiller)."""
+    import pandas_market_calendars as mcal
+
+    nyse = mcal.get_calendar("NYSE")
+    days = nyse.valid_days(start_date="2023-01-01", end_date="2023-06-30", tz=None)
+    days = pd.DatetimeIndex(pd.to_datetime(days)).tz_localize(None)
+    df = pd.DataFrame(
+        {
+            "Open": np.linspace(150, 160, len(days)),
+            "High": np.linspace(155, 165, len(days)),
+            "Low": np.linspace(145, 155, len(days)),
+            "Close": np.linspace(150, 160, len(days)),
+            "Volume": np.full(len(days), 1_000_000),
+        },
+        index=days,
+    )
+    targets.min_samples = 50
+    targets.stock_price_dict = {"AAPL": df}
+    train_date_start = days[10]
     result = targets.prepare_stock_price_series(train_date_start=train_date_start)
-    
-    # Verify results
     assert isinstance(result, dict)
-    assert 'AAPL' in result
-    assert mock_from_df.called
-    assert mock_transform.called
-    mock_series.slice.assert_called_with(train_date_start, mock_series.end_time())
+    assert "AAPL" in result
+    assert len(result["AAPL"]) >= 50
 
 def test_prepare_data(targets, mock_stock_data):
     """Test prepare_data method with univariate target"""
