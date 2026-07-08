@@ -49,3 +49,63 @@ options:
 
 NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.
 ```
+
+## MCP server (read-only)
+
+Expose precomputed TiDE forecasts and local market data to MCP clients (Claude Desktop, Cursor, etc.) over the **same DuckDB search database** used by the dashboard. The MCP process does **not** load the torch model and does not run train/gather/forecast.
+
+### Prerequisites
+
+1. Local data + forecasts (e.g. `python -m canswim downloaddata` / `forecast` as usual).
+2. Build the search DB once via the dashboard (or set `MCP_INIT_DB=1`):
+
+```bash
+python -m canswim dashboard --same_data True
+# or first run without --same_data to (re)build DuckDB from parquet
+```
+
+### Run
+
+```bash
+python -m canswim mcp
+# or
+canswim-mcp
+# or
+python -m canswim.mcp
+```
+
+Configure paths via `.env` (`data_dir`, `db_file`) — same as the dashboard.
+
+### Example client config (stdio)
+
+```json
+{
+  "mcpServers": {
+    "canswim": {
+      "command": "python",
+      "args": ["-m", "canswim", "mcp"],
+      "cwd": "/path/to/canswim",
+      "env": {
+        "data_dir": "data",
+        "db_file": "canswim_local.duckdb"
+      }
+    }
+  }
+}
+```
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `health_check` | DB path / readiness |
+| `get_server_info` | Version, read-only flag, tool list |
+| `list_tickers` | Symbols in search DB |
+| `get_forecast` | Quantile forecast rows for a symbol |
+| `get_reward_risk` | Reward/risk for latest forecast (confidence 80/95/99) |
+| `scan_forecasts` | Universe scan (dashboard Scans tab) |
+| `get_close_price` | Historical closes |
+| `get_backtest_error` | Forecast vs actual error |
+| `run_select` | Single SELECT only (Advanced Queries) |
+
+**NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**

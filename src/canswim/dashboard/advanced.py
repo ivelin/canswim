@@ -13,7 +13,7 @@ Methods:
 from loguru import logger
 from canswim.model import CanswimModel
 import gradio as gr
-import duckdb
+from canswim.db import SelectOnlyError, run_select
 
 
 class AdvancedTab:
@@ -69,19 +69,12 @@ class AdvancedTab:
 
     def scan_forecasts(self, query):
         try:
-            # only run select queries
-            if query.strip().upper().startswith("SELECT"):
-                with duckdb.connect(self.db_path) as db_con:
-                    sql_result = db_con.sql(query)
-                    logger.info(f"SQL Result: \n{sql_result}")
-                    df = sql_result.df()
-                    df["prior_close_date"] = df["prior_close_date"].dt.strftime(
-                        "%Y-%m-%d"
-                    )
-                    df["forecast_start_date"] = df["forecast_start_date"].dt.strftime(
-                        "%Y-%m-%d"
-                    )
-                    return df
+            df = run_select(self.db_path, query, row_limit=50_000)
+            logger.info(f"SQL Result rows: {len(df)}")
+            return df
+        except SelectOnlyError as e:
+            gr.Error(str(e))
+            return None
         except Exception as e:
             gr.Error("An error occurred while running the query:", e)
             return None

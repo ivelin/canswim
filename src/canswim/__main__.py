@@ -27,8 +27,6 @@ load_dotenv(override=True)
 from loguru import logger
 import os
 import argparse
-from canswim import dashboard, gather_data, model_search, train, forecast
-from canswim.hfhub import HFHub
 
 # Instantiate the parser
 parser = argparse.ArgumentParser(
@@ -50,6 +48,7 @@ parser.add_argument(
         `modelsearch` to find and save optimal hyperparameters for model training.
         `train` for continuous model training.
         `forecast` to run forecast on stocks and upload dataset to HF Hub.
+        `mcp` start the read-only MCP server (stdio) over the local DuckDB search database.
         """,
     choices=[
         "dashboard",
@@ -59,6 +58,7 @@ parser.add_argument(
         "modelsearch",
         "train",
         "forecast",
+        "mcp",
     ],
 )
 
@@ -85,11 +85,15 @@ parser.add_argument(
     help="""Optional argument for the `dashboard` task. Whether to reuse previously created search database (faster start time) or update with new forecast data (slower start time).""",
 )
 
+log_level = os.getenv("LOG_LEVEL", os.getenv("LOGURU_LEVEL", "INFO")).upper()
+logger.remove()
+logger.add(sys.stderr, level=log_level)
+
 logging_dir = os.getenv("logging_dir", "tmp")
 logging_path = f"{logging_dir}/canswim.log"
 rot = "24 hours"
 ret = "30 days"
-logger.add(logging_path, rotation=rot, retention=ret)
+logger.add(logging_path, level=log_level, rotation=rot, retention=ret)
 
 logger.info(
     "Logging to: {p} with rotation {rot} and retention {ret}",
@@ -98,16 +102,14 @@ logger.info(
     ret=ret,
 )
 
-version = metadata.version('canswim')
+version = metadata.version("canswim")
 logger.info(f"canswim version: {version}")
 
 args = parser.parse_args()
 
 logger.info("command line args: {args}", args=args)
 
-hfhub = HFHub()
 load_dotenv(override=True)
-repo_id = os.getenv("repo_id", "ivelin/canswim")
 
 
 def signal_handler(sig, frame):
@@ -117,20 +119,39 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
+# Lazy imports keep the MCP path free of torch / Gradio / HF Hub.
 match args.task:
     case "dashboard":
+        from canswim import dashboard
+
         dashboard.main(same_data=args.same_data)
     case "modelsearch":
+        from canswim import model_search
+
         model_search.main()
     case "gatherdata":
+        from canswim import gather_data
+
         gather_data.main()
     case "downloaddata":
-        hfhub.download_data()
+        from canswim.hfhub import HFHub
+
+        HFHub().download_data()
     case "uploaddata":
-        hfhub.upload_data()
+        from canswim.hfhub import HFHub
+
+        HFHub().upload_data()
     case "train":
+        from canswim import train
+
         train.main(new_model=args.new_model)
     case "forecast":
+        from canswim import forecast
+
         forecast.main(forecast_start_date=args.forecast_start_date)
+    case "mcp":
+        from canswim.mcp.server import main as mcp_main
+
+        mcp_main()
     case _:
-        logger.error("Unrecognized task argument {m} ", m=args.module)
+        logger.error("Unrecognized task argument {m} ", m=args.task)

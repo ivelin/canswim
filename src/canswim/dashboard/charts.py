@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import random
 import pandas as pd
-import duckdb
 from pandas.tseries.offsets import BDay
+from canswim.db import list_tickers, get_reward_risk, get_saved_forecasts_as_series
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
@@ -52,17 +52,7 @@ class ChartTab:
         )
 
     def get_tickers(self):
-        logger.info(f"Loading stock tickers from stock_tickers table")
-        with duckdb.connect(self.db_path) as db_con:
-            tickers_df = db_con.sql(
-                "SELECT symbol FROM stock_tickers WHERE symbol IS NOT NULL ORDER BY symbol"
-            ).df()
-            logger.info(f"Loaded {len(tickers_df)} symbols in total")
-            stock_list = list(set(tickers_df["Symbol"]))
-            # logger.debug(f"Loaded symbols: {stock_list}")
-            stock_list = sorted(stock_list)
-            # logger.debug(f"Sorted symbols: {stock_list}")
-            return stock_list
+        return list_tickers(self.db_path)
 
     def get_target(self, ticker):
         try:
@@ -91,54 +81,14 @@ class ChartTab:
     def get_rr(self, ticker=None, lq=None):
         assert ticker is not None
         assert lq is not None and lq >= 0
-        low_quantile_col = f"close_quantile_{lq}"
-        # logger.debug(f"lowq_min: {lowq_min}")
-        mean_col = "close_quantile_0.5"
-        rr = 1.01  # minimum reward/risk ratio
-        reward = 1  # minimum reward percent
-        with duckdb.connect(self.db_path) as db_con:
-            sql_result = db_con.sql(
-                f"""--sql
-                SELECT 
-                    f.symbol, 
-                    f.start_date as forecast_start_date, 
-                    arg_max(c.close, c.date) as prior_close_price,
-                    min("{low_quantile_col}") as forecast_close_low, 
-                    max("{mean_col}") as forecast_close_high, 
-                    100*(forecast_close_high / prior_close_price - 1) as reward_percent, 
-                    (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
-                    max(e.mal_error) as backtest_error,
-                    max(c.date) as prior_close_date, 
-                FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
-                WHERE f.symbol = $ticker AND f.symbol = lf.symbol AND 
-                    f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
-                GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, lf.symbol, lf.date
-                HAVING forecast_close_high > prior_close_price AND
-                    f.start_date = lf.date AND
-                    reward_risk> $rr AND reward_percent >= $reward
-                """,
-                params={
-                    "ticker": ticker,
-                    "rr": rr,
-                    "reward": reward,
-                },
-            )
-            logger.debug(f"sqlresult: \n{sql_result}")
-            df = sql_result.df()
-            logger.info(f"rr table df: {df}")
-            df["prior_close_date"] = df["prior_close_date"].dt.strftime("%Y-%m-%d")
-            df["forecast_start_date"] = df["forecast_start_date"].dt.strftime(
-                "%Y-%m-%d"
-            )
-            # logger.debug(f"df types: {df.dtypes}")
-            # dateformat = lambda d: d.strftime("%d %b, %Y")
-            df_styler = df.style.format(
-                # {"prior_close_date": dateformat, "forecast_start_date": dateformat},
-                precision=2,
-                thousands=",",
-                decimal=".",
-            )
-            return df_styler
+        df = get_reward_risk(self.db_path, symbol=ticker, low_quantile=lq)
+        logger.info(f"rr table df: {df}")
+        df_styler = df.style.format(
+            precision=2,
+            thousands=",",
+            decimal=".",
+        )
+        return df_styler
 
     def plot_quantiles_df(
         self,
@@ -352,42 +302,8 @@ class ChartTab:
             plt.legend()
         return {self.plotComponent: fig, self.rrTable: rr_df}
 
-    def get_saved_forecasts(self, ticker: str = None, start_date = None):
+    def get_saved_forecasts(self, ticker: str = None, start_date=None):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
-        # load parquet partition for stock
-        logger.info(f"Loading saved forecast for {ticker} starting after: {start_date}")
-        with duckdb.connect(self.db_path) as db_con:
-            sql_result = db_con.sql(
-                f"""--sql
-                SELECT *
-                FROM forecast as f
-                WHERE f.symbol = $ticker AND f.start_date >= $start_date
-                ORDER BY f.symbol, f.start_date, f.date
-                """,
-                params={"ticker": ticker, "start_date": start_date},
-            )
-            df = sql_result.df()
-            # filters = [("symbol", "=", ticker)]
-            # df = pd.read_parquet(
-            #     self.forecast_path,
-            #     filters=filters,
-            # )
-            logger.debug(f"df columns count: {len(df.columns)}")
-            logger.debug(f"df row count: {len(df)}")
-            logger.debug(f"df columns: {df.columns}")
-            logger.debug(f"df column types: \n{df.dtypes}")
-            # logger.debug(f"df row sample: {df}")
-            df = df.drop(columns=["symbol"])
-            df.sort_index(ascending=True, inplace=True)
-            df_list = []
-            for d in df["start_date"].unique():
-                single_forecast = df.loc[df["start_date"] == d]
-                single_forecast = single_forecast.drop(columns=["start_date"])
-                single_forecast = single_forecast.set_index("Date")
-                single_forecast.index = pd.to_datetime(single_forecast.index)
-                if not single_forecast.empty:
-                    df_list.append(single_forecast)
-                    logger.debug(
-                        f"Loaded forecast series with {len(single_forecast)} samples, start date: {d}"  # , sample:\n {single_forecast}"  # , column types:\n{single_forecast.dtypes}"
-                    )
-            return df_list
+        return get_saved_forecasts_as_series(
+            self.db_path, ticker=ticker, start_date=start_date
+        )
