@@ -4,7 +4,7 @@ Gather stock market data from 3rd party sources
 
 import yfinance as yf
 from requests import Session
-from requests_ratelimiter import LimiterMixin, MemoryQueueBucket
+from requests_ratelimiter import LimiterMixin
 from pyrate_limiter import Duration, RequestRate, Limiter
 import pandas as pd
 from dotenv import load_dotenv
@@ -26,6 +26,16 @@ from canswim.market_data_io import (
 )
 from fmpsdk.url_methods import __return_json_v3, __validate_period
 from pandas.api.types import is_datetime64_any_dtype as is_datetime
+
+# MemoryQueueBucket is optional: some requests-ratelimiter builds re-export it,
+# others do not (CI ImportError). Prefer pyrate_limiter, else default bucket.
+try:
+    from requests_ratelimiter import MemoryQueueBucket as _MemoryQueueBucket
+except ImportError:  # pragma: no cover - version skew
+    try:
+        from pyrate_limiter import MemoryQueueBucket as _MemoryQueueBucket
+    except ImportError:  # pragma: no cover
+        _MemoryQueueBucket = None
 
 
 class RateLimitedSession(LimiterMixin, Session):
@@ -109,6 +119,12 @@ class MarketDataGatherer:
 
     def _yfinance_session(self):
         """Rate-limited session. Avoids SQLite cache hang by default."""
+        session_kwargs = {
+            "limiter": Limiter(RequestRate(5, Duration.SECOND * 1)),
+        }
+        if _MemoryQueueBucket is not None:
+            session_kwargs["bucket_class"] = _MemoryQueueBucket
+
         if self.use_yfinance_cache:
             try:
                 from requests_cache import CacheMixin, SQLiteCache
@@ -119,17 +135,16 @@ class MarketDataGatherer:
                 logger.warning(
                     "YFINANCE_USE_CACHE=1: using SQLite cache (can be very large/slow)"
                 )
-                return CachedLimiterSession(
-                    limiter=Limiter(RequestRate(2, Duration.SECOND * 5)),
-                    bucket_class=MemoryQueueBucket,
-                    backend=SQLiteCache("yfinance.cache"),
-                )
+                cache_kwargs = {
+                    "limiter": Limiter(RequestRate(2, Duration.SECOND * 5)),
+                    "backend": SQLiteCache("yfinance.cache"),
+                }
+                if _MemoryQueueBucket is not None:
+                    cache_kwargs["bucket_class"] = _MemoryQueueBucket
+                return CachedLimiterSession(**cache_kwargs)
             except Exception as e:
                 logger.warning(f"Could not enable yfinance cache ({e}); uncached session")
-        return RateLimitedSession(
-            limiter=Limiter(RequestRate(5, Duration.SECOND * 1)),
-            bucket_class=MemoryQueueBucket,
-        )
+        return RateLimitedSession(**session_kwargs)
 
     def _data_file(self, name: str) -> str:
         d = data_3rd_party_dir()
