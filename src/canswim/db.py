@@ -207,22 +207,35 @@ def init_search_db(
             ON close_price (symbol, date)
             """
         )
-        logger.info("Creating backtest_error table")
+        logger.info("Creating backtest_error table (per symbol + forecast start_date)")
+        # One mean absolute log-error per forecast origin — not a single
+        # symbol-wide average (which made every RR-table row look identical).
         db_con.sql(
             """--sql
             CREATE OR REPLACE TABLE backtest_error
-            AS SELECT f.symbol, mean(abs(log(greatest(f."close_quantile_0.5", 0.01)/cp.Close))) as mal_error
-            FROM forecast as f, close_price as cp
-            WHERE cp.symbol = f.symbol AND cp.date = f.date
-            GROUP BY f.symbol, cp.symbol
-            HAVING cp.symbol = f.symbol
+            AS SELECT
+                f.symbol,
+                f.start_date,
+                mean(
+                    abs(
+                        log(
+                            greatest(f."close_quantile_0.5", 0.01)
+                            / cp.Close
+                        )
+                    )
+                ) AS mal_error
+            FROM forecast AS f
+            INNER JOIN close_price AS cp
+              ON cp.symbol = f.symbol
+             AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
+            GROUP BY f.symbol, f.start_date
             """
         )
         db_con.table("backtest_error").show()
         db_con.sql(
             """--sql
-            CREATE UNIQUE INDEX backtest_error_sym_idx
-            ON backtest_error (symbol)
+            CREATE UNIQUE INDEX backtest_error_sym_start_idx
+            ON backtest_error (symbol, start_date)
             """
         )
     return True
@@ -347,9 +360,11 @@ def get_reward_risk(
                     ) - min(f."{low_quantile_col}"),
                     0.01
                 ) AS reward_risk,
+                -- Per-start-date error (join on start_date), not symbol-global mean
                 max(e.mal_error) AS backtest_error
             FROM forecast f
-            LEFT JOIN backtest_error e ON e.symbol = f.symbol
+            LEFT JOIN backtest_error e
+              ON e.symbol = f.symbol AND e.start_date = f.start_date
             WHERE f.symbol = $ticker
             {latest_clause}
             GROUP BY f.symbol, f.start_date
@@ -387,8 +402,10 @@ def scan_forecasts(
                 max(c.date) as prior_close_date,
             FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
             WHERE f.symbol = lf.symbol AND
-                f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
-            GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, lf.symbol, lf.date
+                f.symbol = c.symbol AND
+                f.symbol = e.symbol AND e.start_date = f.start_date AND
+                CAST(c.Date AS DATE) < f.start_date
+            GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, e.start_date, lf.symbol, lf.date
             HAVING forecast_close_high > prior_close_price AND
                 f.start_date = lf.date AND
                 reward_risk> $rr AND reward_percent >= $reward

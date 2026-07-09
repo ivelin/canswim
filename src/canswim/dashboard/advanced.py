@@ -37,8 +37,10 @@ class AdvancedTab:
                     max(c.date) as prior_close_date,
                 FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
                 WHERE f.symbol = lf.symbol AND
-                    f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
-                GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, lf.symbol, lf.date
+                    f.symbol = c.symbol AND
+                    f.symbol = e.symbol AND e.start_date = f.start_date AND
+                    CAST(c.Date AS DATE) < f.start_date
+                GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, e.start_date, lf.symbol, lf.date
                 HAVING forecast_close_high > prior_close_price AND
                     f.start_date = lf.date AND
                     reward_risk> 3 AND reward_percent >= 20

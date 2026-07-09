@@ -44,7 +44,10 @@ def _build_mini_db(path: Path) -> str:
             "CREATE TABLE latest_forecast AS SELECT * FROM (VALUES ('AAA', DATE '2025-01-06')) t(symbol, date)"
         )
         con.execute(
-            "CREATE TABLE backtest_error AS SELECT * FROM (VALUES ('AAA', 0.05)) t(symbol, mal_error)"
+            """
+            CREATE TABLE backtest_error AS
+            SELECT * FROM (VALUES ('AAA', DATE '2025-01-06', 0.05)) t(symbol, start_date, mal_error)
+            """
         )
     return db_path
 
