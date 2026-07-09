@@ -259,38 +259,104 @@ def get_reward_risk(
     *,
     min_rr: float = 1.01,
     min_reward: float = 1.0,
+    latest_only: bool = True,
+    uptrending_only: bool = True,
 ) -> pd.DataFrame:
-    """Reward/risk metrics for a symbol's latest forecast (ChartTab.get_rr SQL)."""
+    """Reward/risk metrics for a symbol's forecast start dates.
+
+    Prior close is the last ``close_price`` **before each** ``forecast_start_date``
+    (not only before the global latest start). Charts should pass
+    ``latest_only=False`` so monthly backtests appear; scans keep the default.
+
+    When ``uptrending_only`` is True (default), only rows with positive reward
+    and reward/risk above the thresholds are returned (matches UI label).
+    """
     assert symbol is not None
     assert low_quantile is not None and low_quantile >= 0
     low_quantile_col = f"close_quantile_{low_quantile}"
     mean_col = "close_quantile_0.5"
+    latest_clause = ""
+    if latest_only:
+        latest_clause = """
+            AND f.start_date = (
+                SELECT lf.date FROM latest_forecast lf
+                WHERE lf.symbol = f.symbol
+            )
+        """
+    having_clause = ""
+    if uptrending_only:
+        having_clause = f"""
+            HAVING forecast_close_high > prior_close_price
+                AND reward_risk > {float(min_rr)}
+                AND reward_percent >= {float(min_reward)}
+        """
     with connect_readonly(db_path) as db_con:
         sql_result = db_con.sql(
             f"""--sql
             SELECT
                 f.symbol,
-                f.start_date as forecast_start_date,
-                arg_max(c.close, c.date) as prior_close_price,
-                min("{low_quantile_col}") as forecast_close_low,
-                max("{mean_col}") as forecast_close_high,
-                100*(forecast_close_high / prior_close_price - 1) as reward_percent,
-                (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
-                max(e.mal_error) as backtest_error,
-                max(c.date) as prior_close_date,
-            FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
-            WHERE f.symbol = $ticker AND f.symbol = lf.symbol AND
-                f.symbol = c.symbol AND f.symbol = e.symbol AND c.date < lf.date
-            GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, lf.symbol, lf.date
-            HAVING forecast_close_high > prior_close_price AND
-                f.start_date = lf.date AND
-                reward_risk> $rr AND reward_percent >= $reward
+                f.start_date AS forecast_start_date,
+                (
+                    SELECT c.Close
+                    FROM close_price c
+                    WHERE c.Symbol = f.symbol
+                      AND CAST(c.Date AS DATE) < f.start_date
+                    ORDER BY c.Date DESC
+                    LIMIT 1
+                ) AS prior_close_price,
+                (
+                    SELECT CAST(c.Date AS DATE)
+                    FROM close_price c
+                    WHERE c.Symbol = f.symbol
+                      AND CAST(c.Date AS DATE) < f.start_date
+                    ORDER BY c.Date DESC
+                    LIMIT 1
+                ) AS prior_close_date,
+                min(f."{low_quantile_col}") AS forecast_close_low,
+                max(f."{mean_col}") AS forecast_close_high,
+                100 * (
+                    max(f."{mean_col}") / nullif(
+                        (
+                            SELECT c.Close
+                            FROM close_price c
+                            WHERE c.Symbol = f.symbol
+                              AND CAST(c.Date AS DATE) < f.start_date
+                            ORDER BY c.Date DESC
+                            LIMIT 1
+                        ),
+                        0
+                    ) - 1
+                ) AS reward_percent,
+                (
+                    max(f."{mean_col}") - (
+                        SELECT c.Close
+                        FROM close_price c
+                        WHERE c.Symbol = f.symbol
+                          AND CAST(c.Date AS DATE) < f.start_date
+                        ORDER BY c.Date DESC
+                        LIMIT 1
+                    )
+                ) / GREATEST(
+                    (
+                        SELECT c.Close
+                        FROM close_price c
+                        WHERE c.Symbol = f.symbol
+                          AND CAST(c.Date AS DATE) < f.start_date
+                        ORDER BY c.Date DESC
+                        LIMIT 1
+                    ) - min(f."{low_quantile_col}"),
+                    0.01
+                ) AS reward_risk,
+                max(e.mal_error) AS backtest_error
+            FROM forecast f
+            LEFT JOIN backtest_error e ON e.symbol = f.symbol
+            WHERE f.symbol = $ticker
+            {latest_clause}
+            GROUP BY f.symbol, f.start_date
+            {having_clause}
+            ORDER BY f.start_date
             """,
-            params={
-                "ticker": symbol,
-                "rr": min_rr,
-                "reward": min_reward,
-            },
+            params={"ticker": symbol},
         )
         df = sql_result.df()
     return _format_date_columns(df, ["prior_close_date", "forecast_start_date"])

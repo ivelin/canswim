@@ -43,11 +43,12 @@ def _build_mini_db(path: Path) -> str:
             ) t(Date, Symbol, Close)
             """
         )
-        # latest forecast start 2025-01-06; prior closes before that
+        # Two AAA starts: older 2025-01-03 (uptrend vs prior 100) and latest 2025-01-06
         con.execute(
             """
             CREATE TABLE forecast AS
             SELECT * FROM (VALUES
+                (TIMESTAMP '2025-01-03', 'AAA', DATE '2025-01-03', 95.0, 96.0, 97.0, 108.0, 110.0, 112.0, 115.0),
                 (TIMESTAMP '2025-01-06', 'AAA', DATE '2025-01-06', 98.0, 99.0, 100.0, 110.0, 115.0, 120.0, 125.0),
                 (TIMESTAMP '2025-01-07', 'AAA', DATE '2025-01-06', 99.0, 100.0, 101.0, 112.0, 118.0, 122.0, 128.0),
                 (TIMESTAMP '2025-01-06', 'BBB', DATE '2025-01-06', 48.0, 49.0, 50.0, 52.0, 53.0, 54.0, 55.0)
@@ -112,10 +113,29 @@ def test_get_backtest_error(mini_db):
 
 
 def test_get_reward_risk(mini_db):
-    # low quantile 0.2 corresponds to confidence 80
+    # low quantile 0.2 corresponds to confidence 80; default = latest start only
     df = get_reward_risk(mini_db, "AAA", low_quantile=0.2)
     assert not df.empty
+    assert len(df) == 1
+    assert str(df.iloc[0]["forecast_start_date"]).startswith("2025-01-06")
     assert float(df.iloc[0]["forecast_close_high"]) == pytest.approx(112.0)
+    # prior close is last close before *that* start (102 on 2025-01-03)
+    assert float(df.iloc[0]["prior_close_price"]) == pytest.approx(102.0)
+
+
+def test_get_reward_risk_all_starts_for_chart(mini_db):
+    """Chart table uses latest_only=False so monthly backtests appear."""
+    df = get_reward_risk(
+        mini_db, "AAA", low_quantile=0.2, latest_only=False, uptrending_only=True
+    )
+    assert len(df) >= 2
+    starts = set(str(x)[:10] for x in df["forecast_start_date"].tolist())
+    assert "2025-01-03" in starts
+    assert "2025-01-06" in starts
+    # as-of 2025-01-03 prior is 100 (2025-01-02)
+    row = df[df["forecast_start_date"].astype(str).str.startswith("2025-01-03")].iloc[0]
+    assert float(row["prior_close_price"]) == pytest.approx(100.0)
+    assert float(row["forecast_close_high"]) == pytest.approx(108.0)
 
 
 def test_scan_forecasts(mini_db):

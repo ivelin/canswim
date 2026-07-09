@@ -81,14 +81,23 @@ class ChartTab:
     def get_rr(self, ticker=None, lq=None):
         assert ticker is not None
         assert lq is not None and lq >= 0
-        df = get_reward_risk(self.db_path, symbol=ticker, low_quantile=lq)
+        # Chart plots all backtest starts in range — table must match (not latest-only).
+        # Still filter to uptrending rows (label); prior close is as-of each start.
+        df = get_reward_risk(
+            self.db_path,
+            symbol=ticker,
+            low_quantile=lq,
+            latest_only=False,
+            uptrending_only=True,
+        )
         logger.info(f"rr table df: {df}")
-        df_styler = df.style.format(
+        if df is None or df.empty:
+            return df
+        return df.style.format(
             precision=2,
             thousands=",",
             decimal=".",
         )
-        return df_styler
 
     def plot_quantiles_df(
         self,
@@ -280,10 +289,10 @@ class ChartTab:
                         high_quantile=0.95,
                         label=f"{ticker} Close forecast",
                     )
-                # fetch Reward Risk data for latest forecast
-                latest_forecast_df = saved_forecast_df_list[-1]
-                if latest_forecast_df is not None and not latest_forecast_df.empty:
-                    rr_df = self.get_rr(ticker=ticker, lq=lq)
+            # Reward/Risk for all uptrending forecast starts (incl. monthly backtests),
+            # not only the global latest start (which may be flat/down while older
+            # starts still plot on the chart).
+            rr_df = self.get_rr(ticker=ticker, lq=lq)
             # Set the locator
             major_locator = mdates.YearLocator()  # every year
             minor_locator = mdates.MonthLocator()  # every month
