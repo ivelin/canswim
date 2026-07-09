@@ -1,9 +1,11 @@
 from canswim.model import CanswimModel
 from darts.models import TiDEModel
 from canswim.hfhub import HFHub
+from canswim.eligibility import GroundTruthDataError
 from darts.metrics import quantile_loss
 import numpy as np
 import os
+import sys
 from dotenv import load_dotenv
 import pandas as pd
 from pandas.tseries.offsets import Day, Week
@@ -113,12 +115,26 @@ def main(new_model: bool = False):
     while i < n_outer_train_loop:
         logger.info(f"Outer train loop: {i}")
         try:
-            # load a new data sample from local storage
+            # load a new data sample from local storage (ground-truth filters applied)
             trainer.canswim_model.load_data()
+            n_prices = len(getattr(trainer.canswim_model.targets, "stock_price_dict", {}) or {})
+            if n_prices == 0:
+                raise GroundTruthDataError(
+                    "Train aborted: no tickers with complete ground-truth "
+                    "OHLCV (refusing synthetic/interpolated prices)."
+                )
             # prepare timeseries for training
             trainer.canswim_model.prepare_data()
+            if not trainer.canswim_model.targets_list:
+                raise GroundTruthDataError(
+                    "Train aborted: no eligible target series after ground-truth checks."
+                )
             # train model
             trainer.canswim_model.train()
+        except GroundTruthDataError as e:
+            # Fail hard — do not pretend training succeeded
+            logger.error(str(e))
+            raise SystemExit(2) from e
         except Exception as e:
             logger.exception(f"Skipping train loop due to ERROR.: {e}")
         # Daily routine

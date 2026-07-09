@@ -230,14 +230,14 @@ class Covariates:
                 assert (
                     type(new_covs[t]) == TimeSeries
                 ), f"type of {t} is not TimeSeries, but {type(new_covs[t])}"
-                # logger.info(f'stacking future covs for {t}')
-                old_sliced = covs.slice_intersect(new_covs[t])
-                new_sliced = new_covs[t].slice_intersect(old_sliced)
+                # Align on shared timestamps with a common observed-bar freq.
+                # Price series use CustomBusinessDay (no invented holiday bars);
+                # sparse covs still use "B". slice_intersect alone fails when
+                # freqs disagree (pandas freq validation → ValueError).
+                old_sliced, new_sliced = self._align_series_on_common_index(
+                    covs, new_covs[t]
+                )
                 stacked = old_sliced.stack(new_sliced)
-                # logger.debug(
-                #     f"covariates for {t} start time: {stacked.start_time()}, end time: {stacked.end_time()}"
-                # )
-                # logger.debug(f"covariates for {t} sample: \n{stacked.pd_dataframe()}")
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
                 else:
@@ -246,9 +246,28 @@ class Covariates:
                     )
             except KeyError as e:
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+            except (ValueError, AssertionError) as e:
+                logger.warning(f"Skipping {t} while stacking covariates: {type(e)}: {e}")
         if len(stacked_covs.keys()) > 0:
             logger.info(f"stacked covariates column count: {len(stacked.columns)}")
         return stacked_covs
+
+    @staticmethod
+    def _align_series_on_common_index(a: TimeSeries, b: TimeSeries):
+        """Intersect time indexes and rebuild both series with observed-bar freq."""
+        from canswim.eligibility import timeseries_from_observed_df
+
+        a_df = a.pd_dataframe()
+        b_df = b.pd_dataframe()
+        a_df.index = pd.DatetimeIndex(pd.to_datetime(a_df.index)).normalize()
+        b_df.index = pd.DatetimeIndex(pd.to_datetime(b_df.index)).normalize()
+        common = a_df.index.intersection(b_df.index).sort_values()
+        if len(common) == 0:
+            raise ValueError("no overlapping timestamps between covariate series")
+        return (
+            timeseries_from_observed_df(a_df.loc[common]),
+            timeseries_from_observed_df(b_df.loc[common]),
+        )
 
     def df_index_to_biz_days(self, df=None):
         new_index = df.index.map(lambda x: to_biz_day(date=x))
@@ -257,21 +276,19 @@ class Covariates:
 
     def pad_covs(self, cov_series=None, price_series=None, fillna_value=-1):
         """
-        Pad a ticker's covariate series to align with target price series
+        Pad a ticker's covariate series to align with target price series.
+
+        Reindexes onto the price series calendar (observed bars) so freq matches
+        targets; does not invent price bars.
         """
-        updated_cov_series = None
-        if cov_series.end_time() < price_series.end_time():
-            df = cov_series.pd_dataframe()
-            new_cov_df = df.reindex(
-                price_series.pd_dataframe().index, method="ffill", copy=True
-            )
-            new_cov_ser = TimeSeries.from_dataframe(
-                new_cov_df, freq="B", fillna_value=fillna_value
-            )
-            updated_cov_series = new_cov_ser
-        else:
-            updated_cov_series = cov_series
-        return updated_cov_series
+        from canswim.eligibility import timeseries_from_observed_df
+
+        price_idx = price_series.pd_dataframe().index
+        cov_df = cov_series.pd_dataframe()
+        # ffill known values onto price calendar; remaining holes → fillna_value
+        aligned = cov_df.reindex(price_idx, method="ffill")
+        aligned = aligned.fillna(fillna_value)
+        return timeseries_from_observed_df(aligned)
 
     def prepare_key_metrics(self, stock_price_series=None):
         logger.info("preparing past covariates: key metrics")
@@ -332,69 +349,57 @@ class Covariates:
         # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
 
+    def _price_covariate_series_from_df(self, df: pd.DataFrame, train_date_start=None):
+        """Build multi-asset market price covariates (broad/sectors/industry funds).
+
+        This is **not** target-stock ground truth: sparse prints (e.g. a broken
+        index with only a few sessions) are ffilled so column dimensionality
+        stays aligned with the trained model. Target OHLC still uses
+        ``timeseries_from_observed_df`` without inventing bars.
+        """
+        from canswim.eligibility import timeseries_from_observed_df
+
+        out = df.copy()
+        out.index = pd.DatetimeIndex(pd.to_datetime(out.index)).normalize()
+        out = out[~out.index.duplicated(keep="last")].sort_index()
+        out = out.dropna(axis=1, how="all")
+        if train_date_start is not None:
+            out = out.loc[out.index >= pd.Timestamp(train_date_start)]
+        # Keep all non-empty columns; fill holes so one sparse series cannot
+        # collapse the whole multi-asset frame (dropna how=any would).
+        out = out.ffill().bfill().fillna(0.0)
+        if out.empty:
+            raise ValueError("no complete price-covariate rows after dropping nulls")
+        return timeseries_from_observed_df(out)
+
     def prepare_broad_market_series(self, train_date_start=None):
         logger.info("preparing past covariates: broad market indexes")
         broad_market_df = self.broad_market_df.copy()
         # flatten column hierarchy so Darts can use as covariate series
         broad_market_df.columns = [f"{i}_{j}" for i, j in broad_market_df.columns]
         # CBOE VIX volatility, DYX USD and TNT 10Y Treasury indices do not have meaningful values for Volume
-        broad_market_df = broad_market_df.drop(
-            columns=["^VIX_Volume", "DX-Y.NYB_Volume", "^TNX_Volume"]
+        for col in ["^VIX_Volume", "DX-Y.NYB_Volume", "^TNX_Volume"]:
+            if col in broad_market_df.columns:
+                broad_market_df = broad_market_df.drop(columns=[col])
+        return self._price_covariate_series_from_df(
+            broad_market_df, train_date_start=train_date_start
         )
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        broad_market_df.index = pd.to_datetime(broad_market_df.index)
-        broad_market_series = TimeSeries.from_dataframe(broad_market_df, freq="B")
-        broad_market_series = broad_market_series.slice(
-            train_date_start, broad_market_series.end_time()
-        )
-        filler = MissingValuesFiller(n_jobs=-1)
-        series_filled = filler.transform(broad_market_series)
-        assert len(series_filled.gaps()) == 0
-        broad_market_series = series_filled
-        return broad_market_series
 
     def prepare_sectors_series(self, train_date_start=None):
         logger.info("preparing past covariates: market sectors")
         sectors_df = self.sectors_df.copy()
-        # flatten column hierarchy so Darts can use as covariate series
         sectors_df.columns = [f"{i}_{j}" for i, j in sectors_df.columns]
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        sectors_df.index = pd.to_datetime(sectors_df.index)
-        sectors_series = TimeSeries.from_dataframe(sectors_df, freq="B")
-        sectors_series = sectors_series.slice(
-            train_date_start, sectors_series.end_time()
+        return self._price_covariate_series_from_df(
+            sectors_df, train_date_start=train_date_start
         )
-        filler = MissingValuesFiller(n_jobs=-1)
-        series_filled = filler.transform(sectors_series)
-        assert len(series_filled.gaps()) == 0
-        sectors_series = series_filled
-        # logger.debug(
-        #     f"Finished preparing past covariates: market sectors. {len(sectors_series)} records, columns: {sectors_series.columns}"
-        # )
-        return sectors_series
 
     def prepare_industry_fund_series(self, train_date_start=None):
         logger.info("preparing past covariates: industry funds")
         industry_funds_df = self.industry_funds_df.copy()
-        # flatten column hierarchy so Darts can use as covariate series
         industry_funds_df.columns = [f"{i}_{j}" for i, j in industry_funds_df.columns]
-        # fix datetime index type issue
-        # https://stackoverflow.com/questions/48248239/pandas-how-to-convert-rangeindex-into-datetimeindex
-        industry_funds_df.index = pd.to_datetime(industry_funds_df.index)
-        industry_funds_series = TimeSeries.from_dataframe(industry_funds_df, freq="B")
-        industry_funds_series = industry_funds_series.slice(
-            train_date_start, industry_funds_series.end_time()
+        return self._price_covariate_series_from_df(
+            industry_funds_df, train_date_start=train_date_start
         )
-        filler = MissingValuesFiller(n_jobs=-1)
-        industry_funds_filled = filler.transform(industry_funds_series)
-        assert len(industry_funds_filled.gaps()) == 0
-        industry_funds_series = industry_funds_filled
-        # logger.debug(
-        #     f"Finished preparing past covariates: industry funds. {len(industry_funds_series.columns)} columns, {len(industry_funds_series)} records,  \ncolumns: \n{industry_funds_series.columns}"
-        # )
-        return industry_funds_series
 
     def load_data(self, stock_tickers: set = None, start_date: pd.Timestamp = None):
         self.__start_date = start_date

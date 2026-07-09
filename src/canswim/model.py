@@ -133,12 +133,15 @@ class CanswimModel:
             new_target_series[t] = self.targets.target_series[t]
             new_future_covariates[t] = self.covariates.future_covariates[t]
             new_past_covariates[t] = self.covariates.past_covariates[t]
-        # align targets with past covs
-        for t, covs in new_past_covariates.items():
+        # align targets with past covs (observed-bar freq; avoid darts slice_intersect freq clash)
+        from canswim.covariates import Covariates as _CovAlign
+
+        for t, covs in list(new_past_covariates.items()):
             try:
-                ts_sliced = new_target_series[t].slice_intersect(covs)
+                ts_sliced, covs_sliced = _CovAlign._align_series_on_common_index(
+                    new_target_series[t], covs
+                )
                 new_target_series[t] = ts_sliced
-                covs_sliced = covs.slice_intersect(ts_sliced)
                 new_past_covariates[t] = covs_sliced
                 assert (
                     new_target_series[t].start_time()
@@ -149,15 +152,27 @@ class CanswimModel:
                 )
             except (KeyError, ValueError, AssertionError) as e:
                 logger.exception(f"Skipping {t} from data splits due to error: ", e)
-        # align targets with future covs
-        for t, covs in new_future_covariates.items():
+                new_target_series.pop(t, None)
+                new_past_covariates.pop(t, None)
+                new_future_covariates.pop(t, None)
+        # align targets with future covs (trim target only; keep future horizon)
+        for t, covs in list(new_future_covariates.items()):
+            if t not in new_target_series:
+                continue
             try:
-                ts_sliced = new_target_series[t].slice_intersect(covs)
+                ts_sliced, _ = _CovAlign._align_series_on_common_index(
+                    new_target_series[t], covs
+                )
                 # Do not trim future covariates.
                 # By definition future covs need to extend pred_horizon past target end time.
-                # covs_sliced = covs.slice_intersect(ts_sliced)
-                # new_future_covariates[t] = covs_sliced
                 new_target_series[t] = ts_sliced
+                # Re-align past covs to the possibly shorter target
+                if t in new_past_covariates:
+                    ts2, past2 = _CovAlign._align_series_on_common_index(
+                        new_target_series[t], new_past_covariates[t]
+                    )
+                    new_target_series[t] = ts2
+                    new_past_covariates[t] = past2
                 assert (
                     new_target_series[t].start_time()
                     >= new_future_covariates[t].start_time()
@@ -171,6 +186,9 @@ class CanswimModel:
                     future covariate end time + pred_horizon {new_future_covariates[t].end_time() + BDay(n=self.pred_horizon)}"""
             except (KeyError, ValueError, AssertionError) as e:
                 logger.exception(f"Skipping {t} from data splits due to error: ", e)
+                new_target_series.pop(t, None)
+                new_past_covariates.pop(t, None)
+                new_future_covariates.pop(t, None)
 
         # apply updates to model series
         self.targets.target_series = new_target_series
@@ -702,9 +720,9 @@ class CanswimModel:
         if stock_tickers:
             self.__stock_tickers = stock_tickers
         else:
-            all_stock_tickers = pd.read_csv(
-                f"data/data-3rd-party/{self.stock_train_list}"
-            )
+            from canswim.paths import resolve_symbol_csv
+
+            all_stock_tickers = pd.read_csv(resolve_symbol_csv(self.stock_train_list))
             logger.info(f"Loaded {len(all_stock_tickers)} symbols in total")
             stock_set = list(set(all_stock_tickers["Symbol"]))
             # reduce ticker set to a workable sample size for one training loop
