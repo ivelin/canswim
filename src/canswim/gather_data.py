@@ -19,6 +19,7 @@ from canswim.paths import data_3rd_party_dir, resolve_symbol_csv, symbol_lists_d
 from canswim.eligibility import is_valid_ticker_symbol
 from canswim.market_data_io import (
     coerce_ohlcv_numeric,
+    fmp_historical_to_symbol_date,
     normalize_earnings_dataframe,
     normalize_key_metrics_dataframe,
     yfinance_multi_to_symbol_date,
@@ -311,6 +312,21 @@ class MarketDataGatherer:
         merged_df.to_parquet(data_file)
         logger.info(f"Saved data to {data_file}")
 
+    def _scoped_keep_existing_yf_file(self, data_file: str, label: str) -> bool:
+        """True if few-symbol scope should reuse an existing multi-index yf parquet.
+
+        Avoids long yfinance rate-limit hangs on broad/sectors/industry during
+        scoped verification runs while still refreshing stock prices (yf/FMP).
+        """
+        n = len(getattr(self, "stocks_ticker_set", []) or [])
+        p = Path(data_file)
+        if n <= 20 and p.is_file() and p.stat().st_size > 0:
+            logger.info(
+                f"Scoped gather ({n} stocks): keeping existing {label} file {data_file}"
+            )
+            return True
+        return False
+
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
         # Capture S&P500, NASDAQ100 and Russell 200 indexes and their equal weighted counter parts
@@ -329,6 +345,8 @@ class MarketDataGatherer:
             "^TNX",
         ]
         data_file = self._data_file("broad_market.parquet")
+        if self._scoped_keep_existing_yf_file(data_file, "broad market"):
+            return
         self._gather_yfdata_date_index(
             data_file=data_file, tickers=broad_market_indicies
         )
@@ -337,6 +355,8 @@ class MarketDataGatherer:
         """Gather historic price and volume data for key market sectors"""
         sector_indicies = "XLE ^SP500-15 ^SP500-20 ^SP500-25 ^SP500-30 ^SP500-35 ^SP500-40 ^SP500-45 ^SP500-50 ^SP500-55 ^SP500-60".split()
         data_file = self._data_file("sectors.parquet")
+        if self._scoped_keep_existing_yf_file(data_file, "sectors"):
+            return
         self._gather_yfdata_date_index(data_file=data_file, tickers=sector_indicies)
 
     def gather_industry_fund_data(self):
@@ -345,9 +365,87 @@ class MarketDataGatherer:
         The goal of these covariates is to provide the model with a more granural breakdown of stock grouping by industry.
         Since stocks usually move together with their group, the model can learn which group(s) a stock moves with from these covariates.
         """
-        fund_tickers = self.gather_fund_tickers()
         data_file = self._data_file("industry_funds.parquet")
+        if self._scoped_keep_existing_yf_file(data_file, "industry funds"):
+            return
+        fund_tickers = self.gather_fund_tickers()
         self._gather_yfdata_date_index(data_file=data_file, tickers=list(fund_tickers))
+
+    def _fetch_stock_prices_yfinance(self, start_date) -> pd.DataFrame:
+        """Primary path: yfinance multi-ticker download → (Symbol, Date) frame."""
+        session = self._yfinance_session()
+        tickers = list(self.stocks_ticker_set)
+        try:
+            # threads=False is more reliable under rate limits; fail fast → FMP
+            raw = yf.download(
+                tickers,
+                start=start_date,
+                group_by="tickers",
+                auto_adjust=False,
+                threads=False,
+                progress=True,
+                timeout=15,
+                session=session,
+            )
+        except TypeError:
+            try:
+                raw = yf.download(
+                    tickers,
+                    start=start_date,
+                    group_by="tickers",
+                    auto_adjust=False,
+                    threads=False,
+                    progress=True,
+                    session=session,
+                )
+            except Exception as e:
+                logger.error(f"yfinance stock price download failed: {e}")
+                return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"yfinance stock price download failed: {e}")
+            return pd.DataFrame()
+        new_df = yfinance_multi_to_symbol_date(raw, tickers=tickers)
+        new_df = coerce_ohlcv_numeric(new_df)
+        ohlcv = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in new_df.columns]
+        if ohlcv and not new_df.empty:
+            new_df = new_df.dropna(subset=ohlcv, how="any")
+        return new_df
+
+    def _fetch_stock_prices_fmp(self, start_date) -> pd.DataFrame:
+        """Fallback when yfinance is empty/rate-limited: FMP historical-price-full."""
+        if not self.FMP_API_KEY:
+            logger.warning("FMP_API_KEY missing; cannot fallback stock prices via FMP")
+            return pd.DataFrame()
+        from_date = pd.Timestamp(start_date).strftime("%Y-%m-%d")
+        frames = []
+        for ticker in sorted(self.stocks_ticker_set):
+            try:
+                # fmpsdk historical_price_full(symbol, from_date=..., to_date=...)
+                records = fmpsdk.historical_price_full(
+                    apikey=self.FMP_API_KEY,
+                    symbol=ticker,
+                    from_date=from_date,
+                )
+                # Some SDK versions nest under "historical"
+                if isinstance(records, dict):
+                    records = records.get("historical") or records.get("historicalStockList") or []
+                tdf = fmp_historical_to_symbol_date(records or [], symbol=ticker)
+                if tdf.empty:
+                    logger.warning(f"FMP returned no complete OHLCV bars for {ticker}")
+                    continue
+                logger.info(
+                    f"FMP stock prices for {ticker}: {len(tdf)} bars "
+                    f"({tdf.index.get_level_values('Date').min().date()} → "
+                    f"{tdf.index.get_level_values('Date').max().date()})"
+                )
+                frames.append(tdf)
+            except Exception as e:
+                logger.warning(f"FMP historical price failed for {ticker}: {type(e)}: {e}")
+        if not frames:
+            return pd.DataFrame()
+        out = pd.concat(frames, axis=0)
+        out = out[~out.index.duplicated(keep="last")].sort_index()
+        return out
 
     def gather_stock_price_data(self):
         data_file = self._data_file(
@@ -373,43 +471,43 @@ class MarketDataGatherer:
                 )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
-        session = self._yfinance_session()
-        try:
-            raw = yf.download(
-                list(self.stocks_ticker_set),
-                start=start_date,
-                group_by="tickers",
-                auto_adjust=False,
-                threads=True,
-                progress=True,
-                timeout=30,
-                session=session,
+
+        # Prefer FMP for stock OHLCV when key is present (reliable under yfinance
+        # rate limits); fall back to yfinance if FMP returns nothing.
+        new_df = pd.DataFrame()
+        if self.FMP_API_KEY:
+            logger.info(
+                f"Gathering stock prices via FMP historical-price-full for "
+                f"{len(self.stocks_ticker_set)} tickers from {start_date}"
             )
-        except TypeError:
-            raw = yf.download(
-                list(self.stocks_ticker_set),
-                start=start_date,
-                group_by="tickers",
-                auto_adjust=False,
-                threads=True,
-                progress=True,
-                session=session,
+            new_df = self._fetch_stock_prices_fmp(start_date=start_date)
+            if not new_df.empty:
+                logger.info(
+                    f"FMP stock prices returned {len(new_df)} bars for "
+                    f"{new_df.index.get_level_values('Symbol').nunique()} symbols"
+                )
+        if new_df is None or new_df.empty:
+            logger.info(
+                f"Gathering stock prices via yfinance for {len(self.stocks_ticker_set)} "
+                f"tickers from {start_date}"
             )
-        new_df = yfinance_multi_to_symbol_date(raw, tickers=list(self.stocks_ticker_set))
-        new_df = coerce_ohlcv_numeric(new_df)
-        # Keep only ground-truth complete bars
-        ohlcv = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in new_df.columns]
-        if ohlcv:
-            new_df = new_df.dropna(subset=ohlcv, how="any")
-        logger.info(f"Stock price data index: {new_df.index.names}")
+            new_df = self._fetch_stock_prices_yfinance(start_date=start_date)
+            if new_df is None or new_df.empty:
+                logger.warning("yfinance stock prices empty/failed after FMP miss")
+        logger.info(f"Stock price data index: {new_df.index.names if not new_df.empty else None}")
         logger.info("New data gathered. Sample: \n{df}", df=new_df)
         if old_df is not None and not new_df.empty:
             cols = [c for c in old_df.columns if c in new_df.columns]
             if not cols:
                 cols = list(new_df.columns)
-            merged_df = pd.concat([old_df[cols] if set(cols) <= set(old_df.columns) else old_df,
-                                   new_df[cols] if set(cols) <= set(new_df.columns) else new_df],
-                                  axis=0, join="inner")
+            merged_df = pd.concat(
+                [
+                    old_df[cols] if set(cols) <= set(old_df.columns) else old_df,
+                    new_df[cols] if set(cols) <= set(new_df.columns) else new_df,
+                ],
+                axis=0,
+                join="inner",
+            )
             merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
         else:
             merged_df = new_df if not new_df.empty else old_df
@@ -418,7 +516,12 @@ class MarketDataGatherer:
         assert merged_df.index.is_unique
         Path(data_file).parent.mkdir(parents=True, exist_ok=True)
         merged_df.to_parquet(data_file)
-        logger.info(f"Saved data to {data_file}")
+        logger.info(
+            f"Saved stock prices to {data_file} "
+            f"({len(merged_df)} rows, "
+            f"{merged_df.index.get_level_values('Symbol').nunique()} symbols, "
+            f"latest={merged_df.index.get_level_values('Date').max()})"
+        )
 
     def gather_earnings_data(self):
         logger.info("Gathering earnings and sales data...")

@@ -104,3 +104,46 @@ def coerce_ohlcv_numeric(df: pd.DataFrame) -> pd.DataFrame:
         if c in out.columns:
             out[c] = pd.to_numeric(out[c], errors="coerce")
     return out
+
+
+def fmp_historical_to_symbol_date(
+    records: List[dict],
+    symbol: str,
+) -> pd.DataFrame:
+    """Convert FMP ``historical-price-full`` daily bars to MultiIndex (Symbol, Date).
+
+    Column names match the yfinance parquet layout used elsewhere
+    (Open/High/Low/Close/Adj Close/Volume). Incomplete OHLCV rows are dropped
+    (no invented prices).
+    """
+    if not records:
+        return pd.DataFrame()
+    df = pd.DataFrame(records).dropna(how="all")
+    if df.empty:
+        return pd.DataFrame()
+    rename = {
+        "date": "Date",
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "adjClose": "Adj Close",
+        "volume": "Volume",
+    }
+    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+    if "Date" not in df.columns:
+        return pd.DataFrame()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df["Symbol"] = str(symbol).strip().upper()
+    keep = [c for c in ["Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
+    if not keep:
+        return pd.DataFrame()
+    out = df[["Symbol", "Date"] + keep].copy()
+    out = coerce_ohlcv_numeric(out)
+    ohlcv = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in out.columns]
+    out = out.dropna(subset=ohlcv, how="any")
+    if out.empty:
+        return pd.DataFrame()
+    out = out.set_index(["Symbol", "Date"]).sort_index()
+    out = out[~out.index.duplicated(keep="last")]
+    return out

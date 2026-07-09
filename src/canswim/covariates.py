@@ -230,14 +230,14 @@ class Covariates:
                 assert (
                     type(new_covs[t]) == TimeSeries
                 ), f"type of {t} is not TimeSeries, but {type(new_covs[t])}"
-                # logger.info(f'stacking future covs for {t}')
-                old_sliced = covs.slice_intersect(new_covs[t])
-                new_sliced = new_covs[t].slice_intersect(old_sliced)
+                # Align on shared timestamps with a common observed-bar freq.
+                # Price series use CustomBusinessDay (no invented holiday bars);
+                # sparse covs still use "B". slice_intersect alone fails when
+                # freqs disagree (pandas freq validation → ValueError).
+                old_sliced, new_sliced = self._align_series_on_common_index(
+                    covs, new_covs[t]
+                )
                 stacked = old_sliced.stack(new_sliced)
-                # logger.debug(
-                #     f"covariates for {t} start time: {stacked.start_time()}, end time: {stacked.end_time()}"
-                # )
-                # logger.debug(f"covariates for {t} sample: \n{stacked.pd_dataframe()}")
                 if len(stacked) >= min_samples:
                     stacked_covs[t] = stacked
                 else:
@@ -246,9 +246,28 @@ class Covariates:
                     )
             except KeyError as e:
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+            except (ValueError, AssertionError) as e:
+                logger.warning(f"Skipping {t} while stacking covariates: {type(e)}: {e}")
         if len(stacked_covs.keys()) > 0:
             logger.info(f"stacked covariates column count: {len(stacked.columns)}")
         return stacked_covs
+
+    @staticmethod
+    def _align_series_on_common_index(a: TimeSeries, b: TimeSeries):
+        """Intersect time indexes and rebuild both series with observed-bar freq."""
+        from canswim.eligibility import timeseries_from_observed_df
+
+        a_df = a.pd_dataframe()
+        b_df = b.pd_dataframe()
+        a_df.index = pd.DatetimeIndex(pd.to_datetime(a_df.index)).normalize()
+        b_df.index = pd.DatetimeIndex(pd.to_datetime(b_df.index)).normalize()
+        common = a_df.index.intersection(b_df.index).sort_values()
+        if len(common) == 0:
+            raise ValueError("no overlapping timestamps between covariate series")
+        return (
+            timeseries_from_observed_df(a_df.loc[common]),
+            timeseries_from_observed_df(b_df.loc[common]),
+        )
 
     def df_index_to_biz_days(self, df=None):
         new_index = df.index.map(lambda x: to_biz_day(date=x))
@@ -257,21 +276,19 @@ class Covariates:
 
     def pad_covs(self, cov_series=None, price_series=None, fillna_value=-1):
         """
-        Pad a ticker's covariate series to align with target price series
+        Pad a ticker's covariate series to align with target price series.
+
+        Reindexes onto the price series calendar (observed bars) so freq matches
+        targets; does not invent price bars.
         """
-        updated_cov_series = None
-        if cov_series.end_time() < price_series.end_time():
-            df = cov_series.pd_dataframe()
-            new_cov_df = df.reindex(
-                price_series.pd_dataframe().index, method="ffill", copy=True
-            )
-            new_cov_ser = TimeSeries.from_dataframe(
-                new_cov_df, freq="B", fillna_value=fillna_value
-            )
-            updated_cov_series = new_cov_ser
-        else:
-            updated_cov_series = cov_series
-        return updated_cov_series
+        from canswim.eligibility import timeseries_from_observed_df
+
+        price_idx = price_series.pd_dataframe().index
+        cov_df = cov_series.pd_dataframe()
+        # ffill known values onto price calendar; remaining holes → fillna_value
+        aligned = cov_df.reindex(price_idx, method="ffill")
+        aligned = aligned.fillna(fillna_value)
+        return timeseries_from_observed_df(aligned)
 
     def prepare_key_metrics(self, stock_price_series=None):
         logger.info("preparing past covariates: key metrics")
@@ -333,21 +350,24 @@ class Covariates:
         return t_kms_series
 
     def _price_covariate_series_from_df(self, df: pd.DataFrame, train_date_start=None):
-        """Build a price-index TimeSeries without inventing OHLC via MissingValuesFiller.
+        """Build multi-asset market price covariates (broad/sectors/industry funds).
 
-        Uses only observed complete rows; darts freq is derived from those
-        timestamps (Mon–Fri absences marked holidays) so special closures
-        never become synthetic NaN bars.
+        This is **not** target-stock ground truth: sparse prints (e.g. a broken
+        index with only a few sessions) are ffilled so column dimensionality
+        stays aligned with the trained model. Target OHLC still uses
+        ``timeseries_from_observed_df`` without inventing bars.
         """
         from canswim.eligibility import timeseries_from_observed_df
 
         out = df.copy()
-        out.index = pd.to_datetime(out.index)
-        out = out.sort_index()
+        out.index = pd.DatetimeIndex(pd.to_datetime(out.index)).normalize()
+        out = out[~out.index.duplicated(keep="last")].sort_index()
         out = out.dropna(axis=1, how="all")
         if train_date_start is not None:
             out = out.loc[out.index >= pd.Timestamp(train_date_start)]
-        out = out.dropna(how="any")
+        # Keep all non-empty columns; fill holes so one sparse series cannot
+        # collapse the whole multi-asset frame (dropna how=any would).
+        out = out.ffill().bfill().fillna(0.0)
         if out.empty:
             raise ValueError("no complete price-covariate rows after dropping nulls")
         return timeseries_from_observed_df(out)

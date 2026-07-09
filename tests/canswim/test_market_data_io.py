@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from canswim.market_data_io import (
+    fmp_historical_to_symbol_date,
     normalize_earnings_dataframe,
     normalize_key_metrics_dataframe,
     yfinance_multi_to_symbol_date,
@@ -179,3 +180,46 @@ def test_gather_main_skips_hf_when_local(monkeypatch):
     gd.main()
     assert calls["dl"] == 0
     assert calls["ul"] == 0
+
+
+def test_fmp_historical_to_symbol_date_drops_incomplete_bars():
+    raw = [
+        {
+            "date": "2024-01-02",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.5,
+            "adjClose": 100.5,
+            "volume": 1_000_000,
+        },
+        {
+            "date": "2024-01-03",
+            "open": None,  # incomplete — must not invent
+            "high": 102.0,
+            "low": 100.0,
+            "close": 101.0,
+            "adjClose": 101.0,
+            "volume": 1_100_000,
+        },
+        {
+            "date": "2024-01-04",
+            "open": 101.0,
+            "high": 103.0,
+            "low": 100.5,
+            "close": 102.0,
+            "adjClose": 102.0,
+            "volume": 1_200_000,
+        },
+    ]
+    out = fmp_historical_to_symbol_date(raw, "aapl")
+    assert out.index.names == ["Symbol", "Date"]
+    assert list(out.index.get_level_values("Symbol").unique()) == ["AAPL"]
+    assert len(out) == 2  # incomplete bar dropped
+    assert "Close" in out.columns and "Volume" in out.columns
+    assert out.loc[("AAPL", pd.Timestamp("2024-01-02")), "Close"] == pytest.approx(100.5)
+
+
+def test_fmp_historical_empty_input():
+    assert fmp_historical_to_symbol_date([], "AAPL").empty
+    assert fmp_historical_to_symbol_date(None or [], "MSFT").empty

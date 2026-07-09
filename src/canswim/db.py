@@ -147,11 +147,20 @@ def init_search_db(
             Use --help to see all dashboard launch options.
             """
         )
+        # Forecast parquet from darts uses the time index as column "time"
         db_con.sql(
             f"""--sql
             CREATE OR REPLACE TABLE forecast
-            AS SELECT date, symbol, make_date(forecast_start_year, forecast_start_month, forecast_start_day) as start_date, COLUMNS("close_quantile_\\d+\\.\\d+")
-            FROM read_parquet('{forecast_path}/**/*.parquet', hive_partitioning = 1) as f
+            AS SELECT
+                CAST(f.time AS DATE) AS date,
+                f.symbol,
+                make_date(
+                    f.forecast_start_year,
+                    f.forecast_start_month,
+                    f.forecast_start_day
+                ) AS start_date,
+                COLUMNS("close_quantile_\\d+\\.\\d+")
+            FROM read_parquet('{forecast_path}/**/*.parquet', hive_partitioning = 1) AS f
             SEMI JOIN stock_tickers
             ON f.symbol = stock_tickers.symbol
             """

@@ -2,18 +2,20 @@
 Forecast stock price movement and upload results to HF Hub
 """
 
-import pandas as pd
-from loguru import logger
-from canswim.model import CanswimModel
-from canswim.hfhub import HFHub
-from pandas.tseries.offsets import BDay
-from loguru import logger
+import glob
 import os
-from canswim import constants
-from typing import List
-import duckdb
 from datetime import datetime, timedelta
+from typing import List
+
+import duckdb
+import pandas as pd
 import pandas_market_calendars as mcal
+from loguru import logger
+from pandas.tseries.offsets import BDay
+
+from canswim import constants
+from canswim.hfhub import HFHub
+from canswim.model import CanswimModel
 
 
 class CanswimForecaster:
@@ -55,6 +57,19 @@ class CanswimForecaster:
             * 2
         )
 
+    @staticmethod
+    def _truncate_series_before(series, asof: pd.Timestamp):
+        """Keep only timestamps strictly before ``asof`` (no as-of leakage)."""
+        from canswim.eligibility import timeseries_from_observed_df
+
+        asof = pd.Timestamp(asof).tz_localize(None).normalize()
+        df = series.pd_dataframe()
+        df.index = pd.DatetimeIndex(pd.to_datetime(df.index)).normalize()
+        df = df[df.index < asof]
+        if df.empty:
+            raise ValueError(f"no samples strictly before {asof.date()}")
+        return timeseries_from_observed_df(df)
+
     def get_forecast(self, forecast_start_date: pd.Timestamp = None):
         logger.info("Forecast start. Calling model predict().")
         forecasted_tickers = []
@@ -62,41 +77,71 @@ class CanswimForecaster:
         past_cov_list = []
         future_cov_list = []
         tickers_list = self.canswim_model.targets_ticker_list
-        # trim end of targets to specified forecast start date
+        # trim end of targets (and past covs) for historical / as-of forecast starts
         if forecast_start_date is not None:
-            logger.debug(
-                f"Dropping target samples after forecast start date, included: {forecast_start_date}"
+            fsd = pd.Timestamp(forecast_start_date).tz_localize(None).normalize()
+            logger.info(
+                f"As-of forecast start date {fsd.date()}: truncating targets and "
+                f"past covariates to timestamps < start (no leakage)"
             )
             for i, ts in enumerate(self.canswim_model.targets_list):
                 try:
                     logger.debug(
-                        f"Target {tickers_list[i]} start date, end date, sample count: {ts.start_time()}, {ts.end_time()}, {len(ts)}"
+                        f"Target {tickers_list[i]} start date, end date, sample count: "
+                        f"{ts.start_time()}, {ts.end_time()}, {len(ts)}"
                     )
-                    # if forecast start date is after the end of the target time series,
-                    # then we can still forecast if the target series ends on the open market business day before the forecast start date
-                    cutoff_forecast_start_date = get_next_open_market_day(after_date=ts.end_time())
-                    if forecast_start_date == cutoff_forecast_start_date:
-                        target_sliced = ts
-                    if forecast_start_date < cutoff_forecast_start_date:
-                        target_sliced = ts.drop_after(forecast_start_date)
-                    # we can only provide forecasts
-                    # when forecast start date is immediately after target series end date
-                    # and there are sufficient number of historical data samples
-                    if (
-                        forecast_start_date <= cutoff_forecast_start_date
-                        and len(ts) >= self.canswim_model.min_samples
-                    ):
-                        forecasted_tickers.append(tickers_list[i])
-                        target_sliced_list.append(target_sliced)
-                        past_cov_list.append(self.canswim_model.past_cov_list[i])
-                        future_cov_list.append(self.canswim_model.future_cov_list[i])
-                    else:
+                    # Latest start allowed = next open market day after last ground-truth bar
+                    cutoff_forecast_start_date = get_next_open_market_day(
+                        after_date=ts.end_time()
+                    )
+                    if fsd > cutoff_forecast_start_date:
                         logger.info(
-                            f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to lack of historical data. Min {self.canswim_model.min_samples} samples needed. Historical timeseries has {len(ts)} samples and ends on {ts.end_time()}."
+                            f"Skipping {tickers_list[i]}: forecast start {fsd.date()} "
+                            f"is after next open market day after last bar "
+                            f"({cutoff_forecast_start_date}; series ends {ts.end_time()}). "
+                            f"Gather more recent ground-truth prices first."
                         )
-                except ValueError as e:
+                        continue
+
+                    if fsd == pd.Timestamp(cutoff_forecast_start_date).normalize():
+                        # Forecast from end of available history (no truncation)
+                        target_sliced = ts
+                        past_sliced = self.canswim_model.past_cov_list[i]
+                    else:
+                        # Historical backtest: history strictly before start
+                        target_sliced = self._truncate_series_before(ts, fsd)
+                        past_sliced = self._truncate_series_before(
+                            self.canswim_model.past_cov_list[i], fsd
+                        )
+                        # Align past cov end to target end
+                        if past_sliced.end_time() > target_sliced.end_time():
+                            past_sliced = self._truncate_series_before(
+                                past_sliced,
+                                target_sliced.end_time() + pd.Timedelta(days=1),
+                            )
+
+                    n_hist = len(target_sliced)
+                    if n_hist < self.canswim_model.min_samples:
+                        logger.info(
+                            f"Skipping {tickers_list[i]}: only {n_hist} pre-start samples "
+                            f"(need >= {self.canswim_model.min_samples}); "
+                            f"as-of {fsd.date()}, hist ends {target_sliced.end_time().date()}."
+                        )
+                        continue
+
+                    forecasted_tickers.append(tickers_list[i])
+                    target_sliced_list.append(target_sliced)
+                    past_cov_list.append(past_sliced)
+                    # Future covs may extend through the prediction horizon (known futures)
+                    future_cov_list.append(self.canswim_model.future_cov_list[i])
+                    logger.info(
+                        f"Eligible {tickers_list[i]}: hist_end={target_sliced.end_time().date()}, "
+                        f"n={n_hist}, forecast_start={fsd.date()}"
+                    )
+                except (ValueError, KeyError, AssertionError) as e:
                     logger.warning(
-                        f"Skipping {tickers_list[i]} for forecast start date {forecast_start_date} due to error: {type(e)}: {e}"
+                        f"Skipping {tickers_list[i]} for forecast start date "
+                        f"{forecast_start_date} due to error: {type(e)}: {e}"
                     )
         if len(target_sliced_list) > 0:
             canswim_forecast = self.canswim_model.predict(
@@ -128,21 +173,36 @@ class CanswimForecaster:
         # logger.debug(f"Forecast start date, year, month, day: {bd}, {y}, {m}, {d}")
         # logger.debug(f"len(stocks_df): {len(stocks_df)}")
         # logger.debug(f"stocks_df: {stocks_df}")
-        df = duckdb.sql(
-            f"""--sql
-            CREATE OR REPLACE TABLE stock_group AS SELECT Symbol from stocks_df;
-            SELECT symbol, count(*), forecast_start_year, forecast_start_month, forecast_start_day
-            FROM read_parquet('{self.data_dir}/{self.forecast_subdir}**/*.parquet', hive_partitioning = 1) as f
-            SEMI JOIN stock_group
-            ON f.symbol = stock_group.symbol
-            GROUP BY f.symbol, forecast_start_year, forecast_start_month, forecast_start_day
-            HAVING 
-                forecast_start_year={y} AND
-                forecast_start_month={m} AND
-                forecast_start_day={d} AND
-                count(*) >= {self.canswim_model.pred_horizon}
-            """
-        ).df()
+        forecast_glob = f"{self.data_dir}/{self.forecast_subdir}**/*.parquet"
+        # Empty/missing forecast tree: all symbols need a forecast (do not crash DuckDB)
+        if not glob.glob(forecast_glob, recursive=True):
+            logger.info(
+                f"No existing forecast parquet under {self.data_dir}/{self.forecast_subdir}; "
+                "all listed symbols are candidates."
+            )
+            stocks_without_forecast = sorted(list(set(stocks_df["Symbol"])))
+            return stocks_without_forecast
+        try:
+            df = duckdb.sql(
+                f"""--sql
+                CREATE OR REPLACE TABLE stock_group AS SELECT Symbol from stocks_df;
+                SELECT symbol, count(*), forecast_start_year, forecast_start_month, forecast_start_day
+                FROM read_parquet('{forecast_glob}', hive_partitioning = 1) as f
+                SEMI JOIN stock_group
+                ON f.symbol = stock_group.symbol
+                GROUP BY f.symbol, forecast_start_year, forecast_start_month, forecast_start_day
+                HAVING 
+                    forecast_start_year={y} AND
+                    forecast_start_month={m} AND
+                    forecast_start_day={d} AND
+                    count(*) >= {self.canswim_model.pred_horizon}
+                """
+            ).df()
+        except duckdb.IOException as e:
+            logger.warning(
+                f"Could not read existing forecasts ({e}); treating all as candidates."
+            )
+            return sorted(list(set(stocks_df["Symbol"])))
         # logger.debug(f"sql result: {df}")
         stocks_with_saved_forecast = set(df["symbol"])
         logger.debug(
@@ -172,7 +232,15 @@ class CanswimForecaster:
             f"{len(all_stock_tickers)-len(stock_list)} stock already have forecast saved."
         )
         logger.info(f"{len(stock_list)} stock tickers candidates for new forecast.")
-        if self.n_stocks < 0 or self.n_stocks > len(stock_list):
+        if not stock_list:
+            # Idempotent success: all symbols already have a partition for this start
+            self.all_already_saved = True
+            logger.info(
+                "All listed symbols already have saved forecasts for this start date; nothing to do."
+            )
+            return
+        self.all_already_saved = False
+        if self.n_stocks < 1 or self.n_stocks > len(stock_list):
             self.n_stocks = len(stock_list)
         # group tickers in workable sample sizes for each forecast pass
         # credit ref: https://stackoverflow.com/questions/434287/how-to-iterate-over-a-list-in-chunks
@@ -186,14 +254,24 @@ class CanswimForecaster:
             logger.info(f"Prepared forecast data for {len(stock_group)}: {stock_group}")
             yield pos
 
-    def save_forecast(self, forecasts: dict = None):
-        """Saves forecast data to local database"""
+    def save_forecast(self, forecasts: dict = None, asof_start: pd.Timestamp = None):
+        """Saves forecast data to local hive-partitioned parquet.
+
+        Partition keys use ``asof_start`` when provided (CLI / backtest date) so
+        skip-if-exists and monthly inventories match the requested start even if
+        the first predicted bar falls on an adjacent session due to holidays.
+        """
 
         def _list_to_df(forecasts: dict = None):
             """Format list of forecasts as a dataframe to be saved as a partitioned parquet dir"""
             forecast_df = pd.DataFrame()
             for t, ts in forecasts.items():
                 pred_start = ts.start_time()
+                partition_start = (
+                    pd.Timestamp(asof_start).tz_localize(None).normalize()
+                    if asof_start is not None
+                    else pd.Timestamp(pred_start).tz_localize(None).normalize()
+                )
                 # logger.debug(f"Next forecast timeseries: {ts}")
                 # normalize name of target series column if needed (e.g. "Adj Close" -> "Close")
                 if self.canswim_model.target_column != "Close":
@@ -208,9 +286,9 @@ class CanswimForecaster:
                     qname = f"close_quantile_{q}"
                     df[qname] = qseries
                 df["symbol"] = t
-                df["forecast_start_year"] = pred_start.year
-                df["forecast_start_month"] = pred_start.month
-                df["forecast_start_day"] = pred_start.day
+                df["forecast_start_year"] = partition_start.year
+                df["forecast_start_month"] = partition_start.month
+                df["forecast_start_day"] = partition_start.day
                 # logger.debug(f"Next forecast sample: {df}")
                 forecast_df = pd.concat([forecast_df, df])
             return forecast_df
@@ -264,15 +342,22 @@ def get_next_open_market_day(after_date=None):
 # main function
 def main(forecast_start_date: str = None):
     logger.info("Running forecast on stocks (local data; HF upload only if hfhub_sync)...")
-    if forecast_start_date is not None:
+    explicit_start = forecast_start_date is not None
+    if explicit_start:
         logger.info(f"forecast_start_date: {forecast_start_date}")
         forecast_start_date = pd.Timestamp(forecast_start_date, tz=None)
+        logger.info(f"Forecast start date set to: {forecast_start_date}")
     else:
-        forecast_start_date = get_next_open_market_day()
-
-    logger.info(f"Forecast start date set to: {forecast_start_date}")
+        # Default is resolved after data prep: next open market day after the
+        # latest ground-truth bar (not calendar "today"), so we do not skip
+        # symbols when local prices lag the wall clock by one session.
+        forecast_start_date = None
+        logger.info(
+            "Forecast start date: auto (next open market day after latest ground-truth bar)"
+        )
 
     cf = CanswimForecaster()
+    cf.all_already_saved = False
     cf.download_model()
     # Local-first: download_data is a no-op unless hfhub_sync=True
     cf.download_data()
@@ -280,7 +365,14 @@ def main(forecast_start_date: str = None):
     any_group = False
     for pos in cf.prep_next_stock_group(forecast_start_date=forecast_start_date):
         any_group = True
-        forecasts = cf.get_forecast(forecast_start_date=forecast_start_date)
+        fsd = forecast_start_date
+        if fsd is None and cf.canswim_model.targets_list:
+            latest_bar = max(ts.end_time() for ts in cf.canswim_model.targets_list)
+            fsd = get_next_open_market_day(after_date=latest_bar)
+            logger.info(
+                f"Auto forecast start date {fsd} (next open after latest bar {latest_bar})"
+            )
+        forecasts = cf.get_forecast(forecast_start_date=fsd)
         if forecasts:
             # Drop any all-NaN probabilistic outputs (not ground-truth usable)
             clean = {}
@@ -296,13 +388,18 @@ def main(forecast_start_date: str = None):
                     pass
                 clean[t] = ts
             if clean:
-                cf.save_forecast(clean)
+                cf.save_forecast(clean, asof_start=fsd)
                 any_saved = True
         else:
             logger.warning(
                 "No eligible tickers with complete ground-truth history in this batch"
             )
     if not any_group:
+        if getattr(cf, "all_already_saved", False):
+            logger.info(
+                "Finished forecast task (all symbols already had forecasts for this start)."
+            )
+            return
         raise RuntimeError(
             "Forecast aborted: no stock groups prepared. Check stock list and local price data."
         )
