@@ -72,9 +72,10 @@ def _build_mini_db(path: Path) -> str:
             """
             CREATE TABLE backtest_error AS
             SELECT * FROM (VALUES
-                ('AAA', 0.05),
-                ('BBB', 0.08)
-            ) t(symbol, mal_error)
+                ('AAA', DATE '2025-01-03', 0.03),
+                ('AAA', DATE '2025-01-06', 0.05),
+                ('BBB', DATE '2025-01-06', 0.08)
+            ) t(symbol, start_date, mal_error)
             """
         )
     return db_path
@@ -108,8 +109,9 @@ def test_get_close_prices(mini_db):
 
 def test_get_backtest_error(mini_db):
     df = get_backtest_error(mini_db, symbol="AAA")
-    assert len(df) == 1
-    assert float(df.iloc[0]["mal_error"]) == pytest.approx(0.05)
+    # Per forecast start_date (not a single symbol-wide row)
+    assert len(df) == 2
+    assert set(df["mal_error"].astype(float).round(2)) == {0.03, 0.05}
 
 
 def test_get_reward_risk(mini_db):
@@ -136,6 +138,13 @@ def test_get_reward_risk_all_starts_for_chart(mini_db):
     row = df[df["forecast_start_date"].astype(str).str.startswith("2025-01-03")].iloc[0]
     assert float(row["prior_close_price"]) == pytest.approx(100.0)
     assert float(row["forecast_close_high"]) == pytest.approx(108.0)
+    # backtest_error is per start_date (not a repeated symbol-wide constant)
+    errs = {
+        str(r["forecast_start_date"])[:10]: float(r["backtest_error"])
+        for _, r in df.iterrows()
+    }
+    assert errs["2025-01-03"] == pytest.approx(0.03)
+    assert errs["2025-01-06"] == pytest.approx(0.05)
 
 
 def test_scan_forecasts(mini_db):
