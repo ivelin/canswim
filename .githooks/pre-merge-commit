@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs on local `git merge` commit creation (not on `gh pr merge`).
+# Bypass: git merge --no-verify
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -z "$ROOT" ]] && exit 0
+
+if [[ "${SKIP_LOCAL_CI:-}" == "1" ]]; then
+  echo "pre-merge-commit: SKIP_LOCAL_CI=1 — skipping"
+  exit 0
+fi
+
+CI_SCRIPT="$ROOT/scripts/ci-local.sh"
+if [[ -f "$CI_SCRIPT" ]]; then
+  echo "pre-merge-commit: running scripts/ci-local.sh"
+  exec bash "$CI_SCRIPT"
+fi
+exit 0

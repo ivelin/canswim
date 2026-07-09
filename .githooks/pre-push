@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Block push if local CI fails (mirrors GitHub Actions Tests).
+# Bypass once: git push --no-verify   or   SKIP_LOCAL_CI=1 git push
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$ROOT" ]]; then
+  exit 0
+fi
+
+if [[ "${SKIP_LOCAL_CI:-}" == "1" ]]; then
+  echo "pre-push: SKIP_LOCAL_CI=1 — skipping"
+  exit 0
+fi
+
+CI_SCRIPT="$ROOT/scripts/ci-local.sh"
+if [[ ! -x "$CI_SCRIPT" ]]; then
+  # allow non-executable but present
+  if [[ -f "$CI_SCRIPT" ]]; then
+    bash "$CI_SCRIPT"
+    exit $?
+  fi
+  echo "pre-push: no scripts/ci-local.sh — allowing push" >&2
+  exit 0
+fi
+
+echo "pre-push: running scripts/ci-local.sh"
+exec "$CI_SCRIPT"
