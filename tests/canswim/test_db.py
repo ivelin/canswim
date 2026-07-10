@@ -150,8 +150,10 @@ def test_get_reward_risk_all_starts_for_chart(mini_db):
 
 def test_list_forecast_start_dates(mini_db):
     starts = list_forecast_start_dates(mini_db)
-    assert starts[0] == "2025-01-06"  # newest first
+    assert starts[0] == "2025-01-06"  # newest first (default choice)
     assert "2025-01-03" in starts
+    assert starts == sorted(starts, reverse=True)
+    assert all(len(s) == 10 and s[4] == "-" for s in starts)
 
 
 def test_scan_forecasts(mini_db):

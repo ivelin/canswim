@@ -380,30 +380,22 @@ def get_reward_risk(
 def list_forecast_start_dates(db_path: str) -> list[str]:
     """Distinct forecast origin dates (YYYY-MM-DD), newest first.
 
-    Used by the Scans tab backtest picker so users can run RR scans as-of a
-    historical monthly start, not only the global latest run.
+    Efficient single aggregate over ``forecast.start_date`` (not a full scan of
+    all horizon rows as wide dataframes). Used to populate the Scans backtest
+    dropdown; first element is the default (most recent).
     """
     with connect_readonly(db_path) as db_con:
-        df = db_con.sql(
+        # GROUP BY is cheap on the start_date column; strftime avoids Python loops
+        rows = db_con.execute(
             """--sql
-            SELECT DISTINCT start_date
+            SELECT strftime(start_date, '%Y-%m-%d') AS d
             FROM forecast
             WHERE start_date IS NOT NULL
+            GROUP BY start_date
             ORDER BY start_date DESC
             """
-        ).df()
-    if df.empty:
-        return []
-    col = "start_date" if "start_date" in df.columns else df.columns[0]
-    out: list[str] = []
-    for v in df[col].tolist():
-        if hasattr(v, "strftime"):
-            out.append(v.strftime("%Y-%m-%d"))
-        else:
-            s = str(v)[:10]
-            if s and s.lower() != "nat":
-                out.append(s)
-    return out
+        ).fetchall()
+    return [r[0] for r in rows if r and r[0]]
 
 
 def scan_forecasts(

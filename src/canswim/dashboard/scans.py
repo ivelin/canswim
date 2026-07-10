@@ -14,18 +14,22 @@ class ScanTab:
         assert db_path is not None
         self.canswim_model = canswim_model
         self.db_path = db_path
-        start_choices = list_forecast_start_dates(self.db_path)
-        default_start = start_choices[0] if start_choices else None
+        # Choices filled dynamically via refresh_start_dates() (page load / refresh)
         with gr.Row():
             self.forecastStart = gr.Dropdown(
-                choices=start_choices,
-                value=default_start,
+                choices=[],
+                value=None,
                 label="Forecast as-of date (backtest origin)",
                 info=(
-                    "Pick a historic monthly forecast start, or the latest run. "
-                    "Scan scores stocks using that origin only."
+                    "Loaded from the search DB (newest first). "
+                    "Default is the most recent forecast start. "
+                    "Scan scores stocks for that origin only."
                 ),
                 allow_custom_value=False,
+            )
+            self.refreshStartsBtn = gr.Button(
+                value="Refresh dates",
+                scale=0,
             )
         with gr.Row():
             self.lowq = gr.Radio(
@@ -53,13 +57,28 @@ class ScanTab:
         with gr.Row():
             self.scanResult = gr.Dataframe()
 
+        self.refreshStartsBtn.click(
+            fn=self.refresh_start_dates,
+            inputs=[],
+            outputs=[self.forecastStart],
+        )
         self.scanBtn.click(
             fn=self.scan_forecasts,
             inputs=[self.lowq, self.reward, self.rr, self.forecastStart],
             outputs=[self.scanResult],
         )
 
+    def refresh_start_dates(self):
+        """Query DB for distinct start dates; default selection = most recent."""
+        choices = list_forecast_start_dates(self.db_path)
+        default = choices[0] if choices else None
+        logger.info(
+            f"Scan start-date picker: {len(choices)} origins; default={default}"
+        )
+        return gr.Dropdown(choices=choices, value=default)
+
     def scan_forecasts(self, lowq, reward, rr, forecast_start_date=None):
+        # If UI has no selection yet, resolve to newest via scan_forecasts(None)
         df = db_scan_forecasts(
             self.db_path,
             lowq=lowq,
