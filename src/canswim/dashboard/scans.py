@@ -8,13 +8,16 @@ from canswim.db import (
 
 
 def _normalize_start_value(current) -> str | None:
-    """Map Gradio dropdown payload to ISO YYYY-MM-DD."""
+    """Map Gradio dropdown / state payload to ISO YYYY-MM-DD."""
     if current is None:
+        return None
+    # Index payloads (type=index or accidental int) are not usable alone
+    if isinstance(current, (int, float)) and not isinstance(current, bool):
         return None
     s = str(current).strip()
     if not s:
         return None
-    # Prefer leading ISO date (handles full label if Gradio ever sends it)
+    # Prefer leading ISO date (handles full label if Gradio sends it)
     return s[:10] if len(s) >= 10 and s[4] == "-" and s[7] == "-" else s
 
 
@@ -31,11 +34,25 @@ class ScanTab:
         except Exception:
             self._pred_horizon = 42
 
-        # Choices filled dynamically via refresh_start_dates() (page load / refresh)
+        # Preload so the Dropdown is never empty (Gradio is flaky with choices=[]
+        # then later gr.update — selected value can arrive as None on Refresh).
+        init_pairs = list_forecast_start_date_choices(
+            self.db_path, pred_horizon_bdays=self._pred_horizon
+        )
+        init_labels = [lab for lab, _v in init_pairs]
+        init_iso = init_pairs[0][1] if init_pairs else None
+        init_label = init_labels[0] if init_labels else None
+
+        # Stable selection store — do not rely only on Dropdown I/O (same component
+        # as input+output often loses the user pick in Gradio 4.x).
+        self.selectedStart = gr.State(value=init_iso)
+
         with gr.Row():
+            # Plain string choices (label == value). Avoid (label, value) tuples:
+            # frontend can send None / label / value inconsistently on refresh.
             self.forecastStart = gr.Dropdown(
-                choices=[],
-                value=None,
+                choices=init_labels,
+                value=init_label,
                 label="Forecast start date (as-of origin)",
                 info=(
                     "Queried from the search DB (newest first). Default = most recent. "
@@ -46,8 +63,7 @@ class ScanTab:
                     "Refresh reloads the list but keeps your current selection when possible."
                 ),
                 allow_custom_value=False,
-                # Return the ISO value, not the display label
-                type="value",
+                filterable=True,
             )
             self.refreshStartsBtn = gr.Button(
                 value="Refresh dates",
@@ -79,38 +95,77 @@ class ScanTab:
         with gr.Row():
             self.scanResult = gr.Dataframe()
 
-        # Pass current selection so refresh does not wipe a user pick
+        # Keep State in sync whenever the user picks a date
+        self.forecastStart.change(
+            fn=self._on_start_change,
+            inputs=[self.forecastStart],
+            outputs=[self.selectedStart],
+        )
+        self.forecastStart.input(
+            fn=self._on_start_change,
+            inputs=[self.forecastStart],
+            outputs=[self.selectedStart],
+        )
+        # Refresh: prefer Dropdown (what user sees), fall back to State
         self.refreshStartsBtn.click(
             fn=self.refresh_start_dates,
-            inputs=[self.forecastStart],
-            outputs=[self.forecastStart],
+            inputs=[self.forecastStart, self.selectedStart],
+            outputs=[self.forecastStart, self.selectedStart],
         )
+        # Scan: prefer Dropdown payload, fall back to State
         self.scanBtn.click(
             fn=self.scan_forecasts,
-            inputs=[self.lowq, self.reward, self.rr, self.forecastStart],
+            inputs=[
+                self.lowq,
+                self.reward,
+                self.rr,
+                self.forecastStart,
+                self.selectedStart,
+            ],
             outputs=[self.scanResult],
         )
 
-    def refresh_start_dates(self, current=None):
-        """Reload start dates from DB; keep selection if still valid, else newest."""
-        choices = list_forecast_start_date_choices(
+    def _on_start_change(self, current):
+        return _normalize_start_value(current)
+
+    def refresh_start_dates(self, current=None, stored=None):
+        """Reload start dates from DB; keep selection if still valid, else newest.
+
+        Prefer the Dropdown value (``current``) over State (``stored``). State alone
+        can lag if change events were skipped, which previously forced a reset to
+        the default newest origin.
+
+        Returns ``(dropdown_update, selected_iso)`` for Dropdown + State.
+        """
+        pairs = list_forecast_start_date_choices(
             self.db_path, pred_horizon_bdays=self._pred_horizon
         )
-        values = [v for _lab, v in choices]
-        cur = _normalize_start_value(current)
-        if cur and cur in values:
-            selected = cur
-        else:
-            selected = values[0] if values else None
-        logger.info(
-            f"Scan start-date picker: {len(choices)} origins; "
-            f"selected={selected} (was {current!r})"
-        )
-        # gr.update preserves component identity better than replacing Dropdown
-        return gr.update(choices=choices, value=selected)
+        labels = [lab for lab, _v in pairs]
+        by_iso = {v: lab for lab, v in pairs}
+        isos = [v for _lab, v in pairs]
 
-    def scan_forecasts(self, lowq, reward, rr, forecast_start_date=None):
-        asof = _normalize_start_value(forecast_start_date)
+        # Dropdown first (authoritative UI selection), then State backup
+        cur = _normalize_start_value(current) or _normalize_start_value(stored)
+        if cur and cur in by_iso:
+            selected_iso = cur
+            selected_label = by_iso[cur]
+        else:
+            selected_iso = isos[0] if isos else None
+            selected_label = labels[0] if labels else None
+
+        logger.info(
+            f"Scan start-date picker: {len(pairs)} origins; "
+            f"selected={selected_iso} (current={current!r}, stored={stored!r})"
+        )
+        return gr.update(choices=labels, value=selected_label), selected_iso
+
+    def scan_forecasts(
+        self, lowq, reward, rr, forecast_start_date=None, stored_start=None
+    ):
+        asof = (
+            _normalize_start_value(forecast_start_date)
+            or _normalize_start_value(stored_start)
+        )
         df = db_scan_forecasts(
             self.db_path,
             lowq=lowq,
