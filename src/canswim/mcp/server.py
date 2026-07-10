@@ -1,8 +1,8 @@
 """CANSWIM MCP server entrypoint.
 
-READ-ONLY — exposes precomputed TiDE forecasts and market data from the local
-DuckDB search database used by the Gradio dashboard. Does not load the torch
-model or run train/gather/forecast tasks.
+Default is READ-ONLY — precomputed TiDE forecasts and market data from the
+local DuckDB search database. Optional write tools (gather/forecast) are
+registered for discoverability but require ``MCP_ALLOW_RUNS=1`` to execute.
 """
 
 from __future__ import annotations
@@ -18,11 +18,21 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 from canswim.mcp import __version__ as SERVER_VERSION  # noqa: E402
 from canswim.mcp.tools import forecasts, meta, prices, query, tickers  # noqa: E402
+from canswim.mcp.tools import runs as run_tools  # noqa: E402
+from canswim.run_triggers import runs_allowed  # noqa: E402
 
-logger.warning(
-    "canswim-mcp starting in READ-ONLY MODE. "
-    "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
-)
+if runs_allowed():
+    logger.warning(
+        "canswim-mcp starting with MCP_ALLOW_RUNS enabled "
+        "(gather/forecast tools may mutate local data and load torch). "
+        "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
+    )
+else:
+    logger.warning(
+        "canswim-mcp starting in READ-ONLY MODE "
+        "(set MCP_ALLOW_RUNS=1 to enable gather/forecast triggers). "
+        "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
+    )
 
 mcp: FastMCP = FastMCP("canswim-mcp")
 mcp._mcp_server.version = SERVER_VERSION
@@ -143,6 +153,54 @@ def get_backtest_error(
 )
 def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
     return query.run_select_impl(sql=sql, row_limit=row_limit)
+
+
+@mcp.tool(
+    name="resolve_forecast_start",
+    description=(
+        "Preview the week-aligned forecast start date. "
+        "Optional start_date (YYYY-MM-DD) is snapped to the market week start "
+        "on or before the pick; empty/today → live default after latest week-end close. "
+        "Read-only (always available)."
+    ),
+)
+def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
+    return run_tools.resolve_forecast_start_impl(start_date=start_date)
+
+
+@mcp.tool(
+    name="gather_tickers",
+    description=(
+        "Gather local market data for a ticker list (comma/newline separated). "
+        "Requires MCP_ALLOW_RUNS=1. Local-first (hfhub_sync off by default)."
+    ),
+)
+def gather_tickers(
+    tickers: str,
+    include_covariates: bool = True,
+) -> dict[str, Any]:
+    return run_tools.gather_tickers_impl(
+        tickers=tickers, include_covariates=include_covariates
+    )
+
+
+@mcp.tool(
+    name="forecast_tickers",
+    description=(
+        "Run TiDE forecast for a ticker list with week-aligned start date. "
+        "Requires MCP_ALLOW_RUNS=1. May load torch and take minutes. "
+        "Optional start_date (YYYY-MM-DD); empty → live week-start default. "
+        "dry_run=true only resolves start and validates tickers."
+    ),
+)
+def forecast_tickers(
+    tickers: str,
+    start_date: Optional[str] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    return run_tools.forecast_tickers_impl(
+        tickers=tickers, start_date=start_date, dry_run=dry_run
+    )
 
 
 def main() -> None:

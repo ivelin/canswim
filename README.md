@@ -77,9 +77,11 @@ options:
 NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.
 ```
 
-## MCP server (read-only)
+## MCP server (read-only by default)
 
-Expose precomputed TiDE forecasts and local market data to MCP clients (Claude Desktop, Cursor, etc.) over the **same DuckDB search database** used by the dashboard. The MCP process does **not** load the torch model and does not run train/gather/forecast.
+Expose precomputed TiDE forecasts and local market data to MCP clients (Claude Desktop, Cursor, etc.) over the **same DuckDB search database** used by the dashboard.
+
+By default the process stays **read-only** (no torch, no gather/forecast). Optional **write tools** are always listed but only execute when `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`).
 
 ### Prerequisites
 
@@ -102,6 +104,12 @@ python -m canswim.mcp
 ```
 
 Configure paths via `.env` (`data_dir`, `db_file`) — same as the dashboard.
+
+Enable gather/forecast triggers (local mutation + possible model load):
+
+```bash
+MCP_ALLOW_RUNS=1 python -m canswim mcp
+```
 
 ### Example client config (stdio)
 
@@ -126,7 +134,7 @@ Configure paths via `.env` (`data_dir`, `db_file`) — same as the dashboard.
 | Tool | Description |
 |------|-------------|
 | `health_check` | DB path / readiness |
-| `get_server_info` | Version, read-only flag, tool list |
+| `get_server_info` | Version, read-only / runs_allowed flags, tool list |
 | `list_tickers` | Symbols in search DB |
 | `get_forecast` | Quantile forecast rows for a symbol |
 | `get_reward_risk` | Reward/risk for latest forecast (confidence 80/95/99) |
@@ -134,5 +142,12 @@ Configure paths via `.env` (`data_dir`, `db_file`) — same as the dashboard.
 | `get_close_price` | Historical closes |
 | `get_backtest_error` | Forecast vs actual error |
 | `run_select` | Single SELECT only (Advanced Queries) |
+| `resolve_forecast_start` | Preview week-aligned forecast start (read-only) |
+| `gather_tickers` | Gather data for ticker list (**requires `MCP_ALLOW_RUNS=1`**) |
+| `forecast_tickers` | Forecast ticker list, week-aligned start (**requires `MCP_ALLOW_RUNS=1`**) |
+
+### Dashboard Run tab
+
+The Gradio **Run** tab uses the same orchestration as the MCP write tools (without the env gate): paste tickers, optional forecast start date (snapped to market week start), **Gather data** / **Run forecast**.
 
 **NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**

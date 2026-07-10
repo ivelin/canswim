@@ -9,7 +9,8 @@ import duckdb
 import pytest
 
 from canswim.mcp.tools import forecasts, meta, prices, query, tickers
-from canswim.mcp.tools.meta import TOOL_NAMES
+from canswim.mcp.tools import runs as run_tools
+from canswim.mcp.tools.meta import READ_TOOL_NAMES, TOOL_NAMES, WRITE_TOOL_NAMES
 
 
 def _build_mini_db(path: Path) -> str:
@@ -72,17 +73,56 @@ def test_tool_names_cover_surface():
         "get_close_price",
         "get_backtest_error",
         "run_select",
+        "resolve_forecast_start",
+        "gather_tickers",
+        "forecast_tickers",
     }
     assert set(TOOL_NAMES) == expected
+    assert set(WRITE_TOOL_NAMES) == {"gather_tickers", "forecast_tickers"}
+    assert "resolve_forecast_start" in READ_TOOL_NAMES
 
 
-def test_health_and_info(mcp_env):
+def test_health_and_info(mcp_env, monkeypatch):
+    monkeypatch.delenv("MCP_ALLOW_RUNS", raising=False)
+    monkeypatch.delenv("CANSWIM_ALLOW_RUNS", raising=False)
     h = meta.health_check_impl()
     assert h["ok"] is True
+    assert h["data"]["is_read_only"] is True
     info = meta.get_server_info_impl()
     assert info["ok"] is True
     assert info["data"]["is_read_only"] is True
+    assert info["data"]["runs_allowed"] is False
     assert "list_tickers" in info["data"]["tools"]
+    assert "gather_tickers" in info["data"]["tools"]
+    assert "forecast_tickers" in info["data"]["write_tools"]
+
+
+def test_write_tools_blocked_without_opt_in(mcp_env, monkeypatch):
+    monkeypatch.delenv("MCP_ALLOW_RUNS", raising=False)
+    monkeypatch.delenv("CANSWIM_ALLOW_RUNS", raising=False)
+    g = run_tools.gather_tickers_impl("AAPL")
+    assert g["ok"] is False
+    assert "MCP_ALLOW_RUNS" in g["error"]
+    f = run_tools.forecast_tickers_impl("AAPL", dry_run=True)
+    assert f["ok"] is False
+
+
+def test_resolve_forecast_start_always_available(mcp_env, monkeypatch):
+    monkeypatch.delenv("MCP_ALLOW_RUNS", raising=False)
+    r = run_tools.resolve_forecast_start_impl(start_date="2026-03-05")
+    assert r["ok"] is True
+    assert r["data"]["start"] == "2026-03-02"
+
+
+def test_server_module_registers_run_tools():
+    """Structural: real server module exposes write tool callables."""
+    from canswim.mcp import server as srv
+
+    assert hasattr(srv, "gather_tickers")
+    assert hasattr(srv, "forecast_tickers")
+    assert hasattr(srv, "resolve_forecast_start")
+    assert callable(srv.gather_tickers)
+    assert callable(srv.forecast_tickers)
 
 
 def test_list_tickers(mcp_env):
