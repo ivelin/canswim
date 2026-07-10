@@ -73,7 +73,7 @@ class CanswimPlayground:
                     db_path=self.db_path,
                 )
             with gr.Tab("Scans"):
-                ScanTab(
+                scans_tab = ScanTab(
                     self.canswim_model,
                     db_path=self.db_path,
                 )
@@ -83,10 +83,25 @@ class CanswimPlayground:
                     db_path=self.db_path,
                 )
 
+            def _on_load(ticker, lowq):
+                """Page load: plot chart + fill scan as-of dates (newest default)."""
+                chart_out = charts_tab.plot_forecast(ticker, lowq)
+                start_dd = scans_tab.refresh_start_dates()
+                # chart returns dict of component updates in some paths
+                if isinstance(chart_out, dict):
+                    plot_val = chart_out.get(charts_tab.plotComponent)
+                    rr_val = chart_out.get(charts_tab.rrTable)
+                    return plot_val, rr_val, start_dd
+                return chart_out[0], chart_out[1], start_dd
+
             demo.load(
-                fn=charts_tab.plot_forecast,
+                fn=_on_load,
                 inputs=[charts_tab.tickerDropdown, charts_tab.lowq],
-                outputs=[charts_tab.plotComponent, charts_tab.rrTable],
+                outputs=[
+                    charts_tab.plotComponent,
+                    charts_tab.rrTable,
+                    scans_tab.forecastStart,
+                ],
             )
 
         demo.queue().launch()
