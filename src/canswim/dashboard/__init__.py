@@ -84,15 +84,30 @@ class CanswimPlayground:
                 )
 
             def _on_load(ticker, lowq):
-                """Page load: plot chart + fill scan as-of dates (newest default)."""
+                """Page load: chart + scan dates + auto-scan with defaults."""
                 chart_out = charts_tab.plot_forecast(ticker, lowq)
-                start_dd = scans_tab.refresh_start_dates()
-                # chart returns dict of component updates in some paths
+                start_dd, start_iso, scan_status, scan_table = (
+                    scans_tab.initial_scan()
+                )
                 if isinstance(chart_out, dict):
                     plot_val = chart_out.get(charts_tab.plotComponent)
                     rr_val = chart_out.get(charts_tab.rrTable)
-                    return plot_val, rr_val, start_dd
-                return chart_out[0], chart_out[1], start_dd
+                    return (
+                        plot_val,
+                        rr_val,
+                        start_dd,
+                        start_iso,
+                        scan_status,
+                        scan_table,
+                    )
+                return (
+                    chart_out[0],
+                    chart_out[1],
+                    start_dd,
+                    start_iso,
+                    scan_status,
+                    scan_table,
+                )
 
             demo.load(
                 fn=_on_load,
@@ -101,6 +116,9 @@ class CanswimPlayground:
                     charts_tab.plotComponent,
                     charts_tab.rrTable,
                     scans_tab.forecastStart,
+                    scans_tab.selectedStart,
+                    scans_tab.scanStatus,
+                    scans_tab.scanResult,
                 ],
             )
 
