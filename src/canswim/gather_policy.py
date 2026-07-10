@@ -4,8 +4,9 @@ Forecast-scoped gathers (GUI / MCP / CLI ``--tickers``) only need about the last
 **two years** of history—enough for model lookback + horizon—not multi-decade
 training archives. Train-mode gathers still use the long ``train_date_start``.
 
-Decisions never invent prices: if local history is short or gappy, we plan a
-remote fetch for the missing window; if coverage is complete and fresh, we skip.
+Skip is allowed only when local history **covers the full required window**
+(first bar near window start, enough eligible bars, and recent enough).
+Partial tails (e.g. 350 bars starting mid-window) must still fetch.
 """
 
 from __future__ import annotations
@@ -26,6 +27,12 @@ FORECAST_LOOKBACK_YEARS = 2
 DEFAULT_FRESHNESS_DAYS = 5
 # Minimum complete OHLCV bars for forecast-only path (252+42+42) with small pad
 DEFAULT_FORECAST_MIN_BARS = 350
+# Train needs long history before we skip remote (not the same as forecast)
+DEFAULT_TRAIN_MIN_BARS = 1500
+# First bar may lag window_start by weekends/holidays only
+DEFAULT_MAX_WINDOW_START_LAG_DAYS = 10
+# Train: allow a slightly larger lag after train_date_start (NYSE holidays)
+DEFAULT_TRAIN_MAX_START_LAG_DAYS = 14
 
 
 def _ts(d: Optional[DateLike] = None) -> pd.Timestamp:
@@ -62,6 +69,15 @@ class SymbolFetchPlan:
             "reason": self.reason,
         }
 
+    @property
+    def is_incomplete(self) -> bool:
+        """True if local data is missing or insufficient (not merely stale)."""
+        if self.action == "skip":
+            return False
+        if self.reason == "local_complete_but_stale":
+            return False
+        return True
+
 
 def _symbol_ohlcv(
     price_df: Optional[pd.DataFrame],
@@ -94,6 +110,13 @@ def _symbol_ohlcv(
         return None
 
 
+def _ohlcv_cols(df: pd.DataFrame) -> tuple[str, ...]:
+    cols = tuple(c for c in PRICE_OHLCV_COLS if c in df.columns)
+    if len(cols) >= 5:
+        return cols
+    return PRICE_OHLCV_COLS
+
+
 def plan_symbol_price_fetch(
     symbol: str,
     price_df: Optional[pd.DataFrame],
@@ -101,52 +124,94 @@ def plan_symbol_price_fetch(
     mode: Literal["forecast", "train"] = "forecast",
     asof: Optional[DateLike] = None,
     train_min_start: DateLike = "1991-01-01",
-    min_bars: int = DEFAULT_FORECAST_MIN_BARS,
+    min_bars: Optional[int] = None,
     freshness_days: int = DEFAULT_FRESHNESS_DAYS,
     lookback_years: int = FORECAST_LOOKBACK_YEARS,
+    max_window_start_lag_days: Optional[int] = None,
 ) -> SymbolFetchPlan:
-    """Decide skip vs remote fetch start for one symbol (pure)."""
+    """Decide skip vs remote fetch start for one symbol (pure).
+
+    Skip only when:
+    - history covers from near *window_start* through asof (not a late-starting tail),
+    - enough eligible bars for the mode,
+    - last bar is fresh enough.
+    """
     sym = str(symbol).strip().upper()
     asof_ts = _ts(asof)
     if mode == "train":
         window_start = train_window_start(train_min_start)
+        need_bars = (
+            int(min_bars)
+            if min_bars is not None
+            else DEFAULT_TRAIN_MIN_BARS
+        )
+        start_lag = (
+            int(max_window_start_lag_days)
+            if max_window_start_lag_days is not None
+            else DEFAULT_TRAIN_MAX_START_LAG_DAYS
+        )
+        hist_for_check = None  # set below from full series in window
     else:
         window_start = forecast_window_start(asof=asof_ts, years=lookback_years)
+        need_bars = (
+            int(min_bars)
+            if min_bars is not None
+            else DEFAULT_FORECAST_MIN_BARS
+        )
+        start_lag = (
+            int(max_window_start_lag_days)
+            if max_window_start_lag_days is not None
+            else DEFAULT_MAX_WINDOW_START_LAG_DAYS
+        )
 
+    window_iso = window_start.strftime("%Y-%m-%d")
     sub = _symbol_ohlcv(price_df, sym)
     if sub is None or sub.empty:
         return SymbolFetchPlan(
             symbol=sym,
             action="fetch",
-            fetch_start=window_start.strftime("%Y-%m-%d"),
+            fetch_start=window_iso,
             reason="missing_local_symbol",
         )
 
-    # Restrict to window for forecast mode eligibility
     in_window = sub[sub.index >= window_start]
     if in_window.empty:
         return SymbolFetchPlan(
             symbol=sym,
             action="fetch",
-            fetch_start=window_start.strftime("%Y-%m-%d"),
+            fetch_start=window_iso,
             reason="no_bars_in_window",
         )
 
+    first = pd.Timestamp(in_window.index.min()).normalize()
+    last = pd.Timestamp(in_window.index.max()).normalize()
+    # Must reach back to the start of the required window (not a mid-window tail)
+    if first > window_start + pd.Timedelta(days=start_lag):
+        return SymbolFetchPlan(
+            symbol=sym,
+            action="fetch",
+            fetch_start=window_iso,
+            reason=(
+                f"window_starts_late:first={first.strftime('%Y-%m-%d')}"
+                f",need_near={window_iso}"
+            ),
+        )
+
+    cols = _ohlcv_cols(in_window)
     ok, why = price_history_is_eligible(
-        in_window if mode == "forecast" else sub,
-        min_samples=min_bars if mode == "forecast" else min_bars,
-        required_cols=tuple(c for c in PRICE_OHLCV_COLS if c in in_window.columns)
-        or PRICE_OHLCV_COLS,
+        in_window,
+        min_samples=need_bars,
+        required_cols=cols,
     )
-    # If column names differ slightly, try with whatever OHLCV-like cols exist
     if not ok and "missing columns" in why:
-        cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in in_window.columns]
-        if len(cols) >= 5:
+        alt = tuple(
+            c for c in ("Open", "High", "Low", "Close", "Volume") if c in in_window.columns
+        )
+        if len(alt) >= 5:
             ok, why = price_history_is_eligible(
-                in_window, min_samples=min_bars, required_cols=tuple(cols)
+                in_window, min_samples=need_bars, required_cols=alt
             )
 
-    last = pd.Timestamp(in_window.index.max()).normalize()
     stale = (asof_ts - last).days > int(freshness_days)
 
     if ok and not stale:
@@ -158,7 +223,6 @@ def plan_symbol_price_fetch(
         )
 
     if ok and stale:
-        # Tail refresh only
         fetch_start = (last - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         return SymbolFetchPlan(
             symbol=sym,
@@ -167,11 +231,10 @@ def plan_symbol_price_fetch(
             reason="local_complete_but_stale",
         )
 
-    # Incomplete / gappy: re-pull from window start (forecast) or train min
     return SymbolFetchPlan(
         symbol=sym,
         action="fetch",
-        fetch_start=window_start.strftime("%Y-%m-%d"),
+        fetch_start=window_iso,
         reason=f"local_incomplete:{why}",
     )
 
@@ -183,7 +246,7 @@ def plan_stock_price_fetches(
     mode: Literal["forecast", "train"] = "forecast",
     asof: Optional[DateLike] = None,
     train_min_start: DateLike = "1991-01-01",
-    min_bars: int = DEFAULT_FORECAST_MIN_BARS,
+    min_bars: Optional[int] = None,
     freshness_days: int = DEFAULT_FRESHNESS_DAYS,
 ) -> list[SymbolFetchPlan]:
     """Plan per-symbol skip/fetch for a ticker list."""
@@ -207,3 +270,38 @@ def aggregate_fetch_start(plans: Sequence[SymbolFetchPlan]) -> Optional[str]:
     if not starts:
         return None
     return min(starts)
+
+
+def incomplete_symbols(plans: Sequence[SymbolFetchPlan]) -> list[str]:
+    """Symbols still missing or insufficient after planning (not mere staleness)."""
+    return [p.symbol for p in plans if p.is_incomplete]
+
+
+def evaluate_symbol_coverage(
+    tickers: Sequence[str],
+    price_df: Optional[pd.DataFrame],
+    *,
+    mode: Literal["forecast", "train"] = "forecast",
+    asof: Optional[DateLike] = None,
+    train_min_start: DateLike = "1991-01-01",
+) -> dict:
+    """Post-fetch (or any-time) coverage report for requested tickers."""
+    plans = plan_stock_price_fetches(
+        tickers,
+        price_df,
+        mode=mode,
+        asof=asof,
+        train_min_start=train_min_start,
+    )
+    incomplete = incomplete_symbols(plans)
+    skipped = [p.symbol for p in plans if p.action == "skip"]
+    stale_only = [
+        p.symbol for p in plans if p.reason == "local_complete_but_stale"
+    ]
+    return {
+        "plans": plans,
+        "incomplete": incomplete,
+        "skipped": skipped,
+        "stale_only": stale_only,
+        "ok": len(incomplete) == 0,
+    }

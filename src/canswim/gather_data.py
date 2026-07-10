@@ -466,12 +466,14 @@ class MarketDataGatherer:
         """Refresh stock OHLCV parquet with missing-only remote calls when possible.
 
         * ``gather_mode=forecast`` (scoped runs): ~2y window; skip symbols that
-          already have complete, fresh local history; otherwise fetch only the
-          missing/stale range.
+          already have complete, full-window, fresh local history; otherwise fetch
+          only the missing/stale range. After remote attempt, re-check coverage
+          and raise if any requested symbol is still incomplete.
         * ``gather_mode=train``: long history from ``train_date_start``.
         """
         from canswim.gather_policy import (
             aggregate_fetch_start,
+            evaluate_symbol_coverage,
             plan_stock_price_fetches,
         )
 
@@ -494,6 +496,7 @@ class MarketDataGatherer:
             train_min_start=self.min_start_date,
         )
         self.last_price_fetch_plans = plans
+        self.last_remote_symbols_written = []
         to_fetch = [p for p in plans if p.action == "fetch"]
         skipped = [p for p in plans if p.action == "skip"]
         for p in plans:
@@ -509,6 +512,20 @@ class MarketDataGatherer:
         if not to_fetch:
             if old_df is None or old_df.empty:
                 raise RuntimeError("No stock price data gathered; aborting")
+            # Still verify all requested symbols are complete
+            cov = evaluate_symbol_coverage(
+                tickers,
+                old_df,
+                mode=mode,
+                train_min_start=self.min_start_date,
+            )
+            self.last_post_fetch_plans = cov["plans"]
+            if not cov["ok"]:
+                raise RuntimeError(
+                    "Market history is incomplete for: "
+                    f"{', '.join(cov['incomplete'])}. "
+                    "Could not skip remote fetch and local data is insufficient."
+                )
             logger.info("All requested symbols already covered locally; no remote call")
             return
 
@@ -524,7 +541,6 @@ class MarketDataGatherer:
                 f"Gathering stock prices via FMP for {len(fetch_syms)} tickers "
                 f"(mode={mode}, earliest start={start_date})"
             )
-            # Temporarily restrict set for yfinance fallback path consistency
             prev_set = self.stocks_ticker_set
             self.stocks_ticker_set = fetch_syms
             try:
@@ -557,7 +573,21 @@ class MarketDataGatherer:
             f"Stock price data index: {new_df.index.names if not new_df.empty else None}"
         )
         logger.info("New data gathered. Sample: \n{df}", df=new_df)
-        if old_df is not None and not new_df.empty:
+
+        written: list[str] = []
+        if new_df is not None and not new_df.empty:
+            try:
+                written = sorted(
+                    {
+                        str(s).upper()
+                        for s in new_df.index.get_level_values("Symbol").unique()
+                    }
+                )
+            except Exception:
+                written = []
+        self.last_remote_symbols_written = written
+
+        if old_df is not None and new_df is not None and not new_df.empty:
             cols = [c for c in old_df.columns if c in new_df.columns]
             if not cols:
                 cols = list(new_df.columns)
@@ -571,9 +601,36 @@ class MarketDataGatherer:
             )
             merged_df = merged_df[~merged_df.index.duplicated(keep="last")]
         else:
-            merged_df = new_df if not new_df.empty else old_df
+            merged_df = new_df if new_df is not None and not new_df.empty else old_df
+
         if merged_df is None or merged_df.empty:
-            raise RuntimeError("No stock price data gathered; aborting")
+            raise RuntimeError(
+                "No stock price data gathered; remote returned empty and no local "
+                f"history for: {', '.join(fetch_syms)}"
+            )
+
+        # Scoped forecast gather: fail if any planned fetch symbol is still incomplete
+        cov = evaluate_symbol_coverage(
+            tickers,
+            merged_df,
+            mode=mode,
+            train_min_start=self.min_start_date,
+        )
+        self.last_post_fetch_plans = cov["plans"]
+        still_bad = cov["incomplete"]
+        if still_bad:
+            # Do not silently keep old_df as success when requested symbols failed
+            if mode == "forecast":
+                raise RuntimeError(
+                    "Could not obtain complete market history for: "
+                    f"{', '.join(still_bad)}. "
+                    "Remote download returned no usable bars for those symbols. "
+                    "Check the symbol and try again later (rate limits / API keys)."
+                )
+            logger.warning(
+                f"Train gather: still incomplete after fetch: {still_bad}"
+            )
+
         assert merged_df.index.is_unique
         Path(data_file).parent.mkdir(parents=True, exist_ok=True)
         merged_df.to_parquet(data_file)

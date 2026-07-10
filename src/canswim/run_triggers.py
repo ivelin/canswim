@@ -282,17 +282,47 @@ def gather_for_tickers(
             messages.append(f"Sector data note: {e}")
 
         g.gather_stock_price_data()
-        plans = getattr(g, "last_price_fetch_plans", []) or []
-        skipped = [p.symbol for p in plans if p.action == "skip"]
-        fetched = [p.symbol for p in plans if p.action == "fetch"]
+        pre_plans = getattr(g, "last_price_fetch_plans", []) or []
+        post_plans = getattr(g, "last_post_fetch_plans", None) or pre_plans
+        written = list(getattr(g, "last_remote_symbols_written", None) or [])
+
+        from canswim.gather_policy import incomplete_symbols
+
+        skipped = [p.symbol for p in pre_plans if p.action == "skip"]
+        # Only count as downloaded when remote actually returned bars for the symbol
+        planned_fetch = {p.symbol for p in pre_plans if p.action == "fetch"}
+        fetched = sorted(planned_fetch & set(written))
+        still_incomplete = incomplete_symbols(post_plans)
+
         if skipped:
             messages.append(
                 f"Already up to date locally (no download): {', '.join(skipped)}"
             )
         if fetched:
             messages.append(f"Downloaded or refreshed: {', '.join(fetched)}")
-        if plans and not fetched:
+        planned_but_empty = sorted(planned_fetch - set(written))
+        if planned_but_empty and still_incomplete:
+            messages.append(
+                "No usable download for: " + ", ".join(planned_but_empty)
+            )
+        if pre_plans and not planned_fetch:
             messages.append("No remote price download needed.")
+
+        if still_incomplete:
+            return {
+                "ok": False,
+                "error": INCOMPLETE_DATA_MSG.format(
+                    symbols=", ".join(still_incomplete)
+                ),
+                "tickers": tickers,
+                "rejected": parsed.get("rejected", []),
+                "messages": messages,
+                "price_plans": [p.as_dict() for p in post_plans],
+                "fetched": fetched,
+                "skipped_remote": skipped,
+                "incomplete": still_incomplete,
+                "need_gather": True,
+            }
 
         if include_covariates:
             for name, fn in (
@@ -315,9 +345,10 @@ def gather_for_tickers(
             "rejected": parsed.get("rejected", []),
             "messages": messages,
             "processed": tickers,
-            "price_plans": [p.as_dict() for p in plans],
+            "price_plans": [p.as_dict() for p in post_plans],
             "fetched": fetched,
             "skipped_remote": skipped,
+            "incomplete": [],
         }
     except Exception as e:
         logger.exception("gather_for_tickers failed")
@@ -327,6 +358,7 @@ def gather_for_tickers(
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "messages": messages,
+            "need_gather": True,
         }
 
 
