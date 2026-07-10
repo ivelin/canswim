@@ -28,27 +28,40 @@ from loguru import logger
 import os
 import argparse
 
+from canswim.run_triggers import (
+    FORECAST_START_HELP,
+    TICKERS_HELP,
+    DATE_POLICY_SUMMARY,
+    RUNS_OPT_IN_HELP,
+)
+
 # Instantiate the parser
 parser = argparse.ArgumentParser(
     prog="canswim",
     description="""CANSWIM is a toolkit for CANSLIM style investors.
         Aims to complement the Simple Moving Average and other technical indicators.
         """,
-    epilog="NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
+    epilog=(
+        "NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.\n"
+        f"{DATE_POLICY_SUMMARY}\n"
+        f"{RUNS_OPT_IN_HELP}"
+    ),
+    formatter_class=argparse.RawDescriptionHelpFormatter,
 )
 
 parser.add_argument(
     "task",
     type=str,
     help="""Which %(prog)s task to run:
-        `dashboard` for stock charting and scans of recorded forecasts.
-        'gatherdata` to gather 3rd party stock market data and save to HF Hub.
-        'downloaddata` download model training and forecast data from HF Hub to local data storage.
-        'uploaddata` upload to HF Hub any interim changes to local train and forecast data.
-        `modelsearch` to find and save optimal hyperparameters for model training.
-        `train` for continuous model training.
-        `forecast` to run forecast on stocks and upload dataset to HF Hub.
-        `mcp` start the read-only MCP server (stdio) over the local DuckDB search database.
+        `dashboard` — charts, scans, and Run tab (gather/forecast for ticker lists).
+        `gatherdata` — full-universe gather, or scoped with --tickers (same as GUI/MCP).
+        `downloaddata` — download model training and forecast data from HF Hub.
+        `uploaddata` — upload local train/forecast data to HF Hub.
+        `modelsearch` — find and save optimal hyperparameters.
+        `train` — continuous model training.
+        `forecast` — full-universe forecast, or scoped with --tickers (week-aligned start).
+        `mcp` — MCP server (read-only by default; write tools need MCP_ALLOW_RUNS=1).
+        `resolve_start` — print week-aligned forecast start (no model/IO beyond local close).
         """,
     choices=[
         "dashboard",
@@ -59,14 +72,49 @@ parser.add_argument(
         "train",
         "forecast",
         "mcp",
+        "resolve_start",
     ],
+)
+
+parser.add_argument(
+    "--tickers",
+    type=str,
+    required=False,
+    default=None,
+    help=(
+        f"Scope `gatherdata` / `forecast` to an explicit list. {TICKERS_HELP} "
+        "Uses the same orchestration as the Dashboard Run tab and MCP "
+        "gather_tickers / forecast_tickers tools."
+    ),
 )
 
 parser.add_argument(
     "--forecast_start_date",
     type=str,
     required=False,
-    help="""Optional argument for the `forecast` task. Indicate forecast start date in YYYY-MM-DD format. If not specified, forecast will start from the end of the target series.""",
+    help=(
+        f"For `forecast` (with or without --tickers) and `resolve_start`. "
+        f"{FORECAST_START_HELP} "
+        "Without --tickers, legacy full-universe forecast still accepts this date "
+        "but does not force week-align (use --tickers or resolve_start for the shared policy)."
+    ),
+)
+
+parser.add_argument(
+    "--dry_run",
+    action="store_true",
+    default=False,
+    help=(
+        "With `forecast --tickers`: validate tickers and resolve week-aligned start only "
+        "(no model load). Same as MCP forecast_tickers dry_run=true."
+    ),
+)
+
+parser.add_argument(
+    "--no_covariates",
+    action="store_true",
+    default=False,
+    help="With `gatherdata --tickers`: skip per-ticker covariates (earnings, metrics, …).",
 )
 
 parser.add_argument(
@@ -130,6 +178,15 @@ match args.task:
 
         model_search.main()
     case "gatherdata":
+        if args.tickers:
+            from canswim.cli_run import run_gather_tickers
+
+            sys.exit(
+                run_gather_tickers(
+                    args.tickers,
+                    include_covariates=not args.no_covariates,
+                )
+            )
         from canswim import gather_data
 
         gather_data.main()
@@ -146,9 +203,26 @@ match args.task:
 
         train.main(new_model=args.new_model)
     case "forecast":
+        if args.tickers:
+            from canswim.cli_run import run_forecast_tickers
+
+            sys.exit(
+                run_forecast_tickers(
+                    args.tickers,
+                    forecast_start_date=args.forecast_start_date,
+                    dry_run=args.dry_run,
+                )
+            )
+        if args.dry_run:
+            logger.error("--dry_run requires --tickers (scoped forecast path)")
+            sys.exit(2)
         from canswim import forecast
 
         forecast.main(forecast_start_date=args.forecast_start_date)
+    case "resolve_start":
+        from canswim.cli_run import run_resolve_start
+
+        sys.exit(run_resolve_start(args.forecast_start_date))
     case "mcp":
         from canswim.mcp.server import main as mcp_main
 

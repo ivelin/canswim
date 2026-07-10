@@ -1,4 +1,9 @@
-"""Dashboard Run tab: gather data + week-aligned forecast for user tickers."""
+"""Dashboard Run tab: gather data + week-aligned forecast for user tickers.
+
+Uses the same ``canswim.run_triggers`` orchestration as:
+- CLI: ``python -m canswim gatherdata|forecast --tickers …``
+- MCP: ``gather_tickers`` / ``forecast_tickers`` (opt-in)
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,9 @@ import gradio as gr
 from loguru import logger
 
 from canswim.run_triggers import (
+    DATE_POLICY_SUMMARY,
+    FORECAST_START_HELP,
+    TICKERS_HELP,
     forecast_for_tickers,
     gather_for_tickers,
     parse_ticker_list,
@@ -26,12 +34,15 @@ class RunTab:
         self.db_path = db_path
 
         gr.Markdown(
-            """
+            f"""
 ### Run gather & forecast
-Enter one or more tickers (comma or newline separated).  
-**Gather** pulls local market data for those symbols.  
-**Forecast** runs TiDE for that list with a **week-aligned** start date
-(snapped to the first NYSE session of the market week; default / today → live week origin).
+Same pipeline as **CLI** (`--tickers`) and **MCP** (`gather_tickers` / `forecast_tickers`).
+
+{DATE_POLICY_SUMMARY}
+
+**Gather** → local market data for the listed symbols (not the full universe).  
+**Forecast** → TiDE for that list at the resolved week-aligned start.  
+**Preview start date** → see the snap/default without running the model.
             """
         )
         with gr.Row():
@@ -39,25 +50,25 @@ Enter one or more tickers (comma or newline separated).
                 label="Tickers",
                 lines=4,
                 placeholder="AAPL, MSFT\nNVDA",
-                info="Comma and/or newline separated. Max 50 symbols per run.",
+                info=TICKERS_HELP,
             )
         with gr.Row():
             self.forecastDate = gr.Textbox(
                 label="Forecast start date (optional YYYY-MM-DD)",
                 value="",
                 placeholder="Leave empty for live week-start default",
-                info=(
-                    "Past dates snap to the market week start on or before the pick. "
-                    "Empty or today → live default (week start after latest week-end close). "
-                    "Future dates beyond the live default are rejected."
-                ),
+                info=FORECAST_START_HELP,
             )
             self.resolveBtn = gr.Button("Preview start date", scale=0)
         with gr.Row():
             self.gatherBtn = gr.Button("Gather data", variant="secondary")
             self.forecastBtn = gr.Button("Run forecast", variant="primary")
         self.status = gr.Markdown(
-            value="_Enter tickers, then Gather and/or Run forecast._"
+            value=(
+                "_Enter tickers, then Gather and/or Run forecast. "
+                "CLI equivalent: `python -m canswim gatherdata --tickers '…'` / "
+                "`forecast --tickers '…' [--forecast_start_date YYYY-MM-DD]`._"
+            )
         )
 
         self.resolveBtn.click(

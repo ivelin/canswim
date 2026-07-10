@@ -158,10 +158,11 @@ def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
 @mcp.tool(
     name="resolve_forecast_start",
     description=(
-        "Preview the week-aligned forecast start date. "
-        "Optional start_date (YYYY-MM-DD) is snapped to the market week start "
-        "on or before the pick; empty/today → live default after latest week-end close. "
-        "Read-only (always available)."
+        "Preview week-aligned forecast start (same policy as CLI resolve_start "
+        "and Dashboard Run → Preview start date). "
+        "Optional start_date YYYY-MM-DD: past → first NYSE session of that market week "
+        "(holiday Monday → next open that week); empty/today → live default after "
+        "latest week-end close. Read-only; always available."
     ),
 )
 def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
@@ -172,6 +173,7 @@ def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
     name="gather_tickers",
     description=(
         "Gather local market data for a ticker list (comma/newline separated). "
+        "Same orchestration as CLI `gatherdata --tickers` and Dashboard Run → Gather. "
         "Requires MCP_ALLOW_RUNS=1. Local-first (hfhub_sync off by default)."
     ),
 )
@@ -187,10 +189,11 @@ def gather_tickers(
 @mcp.tool(
     name="forecast_tickers",
     description=(
-        "Run TiDE forecast for a ticker list with week-aligned start date. "
+        "Run TiDE forecast for a ticker list with week-aligned start. "
+        "Same orchestration as CLI `forecast --tickers` and Dashboard Run → Forecast. "
         "Requires MCP_ALLOW_RUNS=1. May load torch and take minutes. "
-        "Optional start_date (YYYY-MM-DD); empty → live week-start default. "
-        "dry_run=true only resolves start and validates tickers."
+        "Optional start_date YYYY-MM-DD (shared snap/default policy). "
+        "dry_run=true → validate tickers + resolve start only (CLI: --dry_run)."
     ),
 )
 def forecast_tickers(

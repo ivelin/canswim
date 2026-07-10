@@ -1,8 +1,17 @@
-"""Shared GUI/MCP orchestration for scoped gather and forecast runs.
+"""Shared CLI / GUI / MCP orchestration for scoped gather and forecast runs.
+
+One contract, three surfaces
+----------------------------
+- **CLI** — ``python -m canswim gatherdata|forecast --tickers "AAPL,MSFT"``
+- **GUI** — Dashboard **Run** tab (same functions; always allowed in-process)
+- **MCP** — ``gather_tickers`` / ``forecast_tickers`` (require ``MCP_ALLOW_RUNS=1``)
+
+Without ``--tickers``, CLI ``gatherdata`` / ``forecast`` keep their legacy
+full-universe behavior (symbol list env / all stocks; forecast start = next
+open after latest bar when date omitted).
 
 Pure helpers (parse + calendar) stay free of torch/network. Orchestration
-functions return structured dicts and are the single entry used by dashboard
-and MCP write tools.
+returns structured dicts consumed by all three surfaces.
 """
 
 from __future__ import annotations
@@ -20,8 +29,37 @@ from canswim.calendar_weeks import resolve_forecast_start
 from canswim.eligibility import is_valid_ticker_symbol
 from canswim.hfhub import _env_bool
 
-# Soft cap so GUI/MCP accidental pastes do not launch huge jobs
+# Soft cap so accidental pastes do not launch huge jobs
 DEFAULT_MAX_TICKERS = 50
+
+# --- UX copy shared by CLI help, GUI labels, MCP tool descriptions -----------
+
+TICKERS_HELP = (
+    "One or more stock symbols, comma and/or newline (or space) separated. "
+    f"Example: 'AAPL, MSFT' or multiline. Max {DEFAULT_MAX_TICKERS} per run. "
+    "Invalid tokens are reported and skipped."
+)
+
+FORECAST_START_HELP = (
+    "Optional forecast origin as YYYY-MM-DD. "
+    "Past dates snap to the first NYSE session of that market week "
+    "(usually Monday; Tuesday if Monday is a holiday). "
+    "Empty or today → live default: first session after the latest completed "
+    "week-end close (usually Monday after Friday), using local latest close when known. "
+    "Dates after the allowed live origin are rejected."
+)
+
+DATE_POLICY_SUMMARY = (
+    "**Week-aligned starts:** backtest picks → first NYSE session of that ISO week; "
+    "holiday Mondays → next open that week (not prior week); "
+    "empty/today → live week origin after last week-end close; no pure-future origins."
+)
+
+RUNS_OPT_IN_HELP = (
+    "MCP write tools require MCP_ALLOW_RUNS=1 (or CANSWIM_ALLOW_RUNS=1). "
+    "CLI --tickers and the Dashboard Run tab are explicit local actions and do not "
+    "need that flag. Default MCP mode stays read-only."
+)
 
 
 def parse_ticker_list(
