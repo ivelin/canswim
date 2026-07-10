@@ -80,17 +80,16 @@ def last_session_of_iso_week(d: DateLike) -> pd.Timestamp:
 
 
 def snap_to_week_start_on_or_before(pick: DateLike) -> pd.Timestamp:
-    """Nearest market-week start on or before ``pick``."""
-    day = _ts(pick)
-    ws = first_session_of_iso_week(day)
-    if day < ws:
-        # Weekend before Monday session → previous week's start
-        prev = day - pd.Timedelta(days=7)
-        return first_session_of_iso_week(prev)
-    # If pick is mid-week, week start of that week is on or before pick
-    if ws <= day:
-        return ws
-    return first_session_of_iso_week(day - pd.Timedelta(days=7))
+    """Market-week start for the ISO week containing ``pick``.
+
+    Week start = first NYSE session of that ISO week (usually Monday). When
+    Monday is a holiday, the week start is the next open session (often
+    Tuesday) — holiday Mondays must **not** fall back to the prior week.
+
+    Mid-week picks (Tue–Fri) snap to that same first session, which is on or
+    before the pick whenever Monday was open.
+    """
+    return first_session_of_iso_week(pick)
 
 
 def last_completed_week_end(

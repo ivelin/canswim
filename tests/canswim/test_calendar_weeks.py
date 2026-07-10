@@ -34,6 +34,51 @@ def test_snap_friday_to_same_week_start():
     )
 
 
+def test_snap_holiday_monday_memorial_day_2026():
+    """Memorial Day Mon 2026-05-25 closed → week start is Tue 2026-05-26."""
+    mon = snap_to_week_start_on_or_before("2026-05-25")
+    tue = snap_to_week_start_on_or_before("2026-05-26")
+    wed = snap_to_week_start_on_or_before("2026-05-27")
+    assert mon.strftime("%Y-%m-%d") == "2026-05-26"
+    assert tue.strftime("%Y-%m-%d") == "2026-05-26"
+    assert wed.strftime("%Y-%m-%d") == "2026-05-26"
+    # Same ISO week Mon vs Tue must agree
+    assert mon == tue == wed
+
+
+def test_snap_holiday_monday_mlk_2026():
+    """MLK Day Mon 2026-01-19 closed → week start Tue 2026-01-20."""
+    assert (
+        snap_to_week_start_on_or_before("2026-01-19").strftime("%Y-%m-%d")
+        == "2026-01-20"
+    )
+    assert (
+        snap_to_week_start_on_or_before("2026-01-20").strftime("%Y-%m-%d")
+        == "2026-01-20"
+    )
+
+
+def test_snap_holiday_monday_labor_day_2026():
+    """Labor Day Mon 2026-09-07 closed → week start Tue 2026-09-08."""
+    assert (
+        snap_to_week_start_on_or_before("2026-09-07").strftime("%Y-%m-%d")
+        == "2026-09-08"
+    )
+    assert (
+        snap_to_week_start_on_or_before("2026-09-08").strftime("%Y-%m-%d")
+        == "2026-09-08"
+    )
+
+
+def test_resolve_holiday_monday_backtest():
+    r = resolve_forecast_start(
+        "2026-05-25", asof="2026-07-10", latest_close="2026-07-09"
+    )
+    assert r.ok
+    assert r.start == "2026-05-26"
+    assert r.reason == "snapped_week_start"
+
+
 def test_july4_week_start_is_first_session():
     # 2026-07-03 is Friday; week of July 4 holiday: Mon 6/29? check
     # ISO week of 2026-07-03: Mon 2026-06-29
