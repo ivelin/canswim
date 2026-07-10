@@ -32,33 +32,52 @@ from canswim.hfhub import _env_bool
 # Soft cap so accidental pastes do not launch huge jobs
 DEFAULT_MAX_TICKERS = 50
 
-# --- UX copy shared by CLI help, GUI labels, MCP tool descriptions -----------
+# --- Consumer-facing copy (CLI help, GUI, MCP). Operator detail → docs. --------
 
 TICKERS_HELP = (
-    "One or more stock symbols, comma and/or newline (or space) separated. "
-    f"Example: 'AAPL, MSFT' or multiline. Max {DEFAULT_MAX_TICKERS} per run. "
-    "Invalid tokens are reported and skipped."
+    "Stock symbols separated by commas or new lines. "
+    f"Example: AAPL, MSFT. Up to {DEFAULT_MAX_TICKERS} at a time."
 )
 
 FORECAST_START_HELP = (
-    "Optional forecast origin as YYYY-MM-DD. "
-    "Past dates snap to the first NYSE session of that market week "
-    "(usually Monday; Tuesday if Monday is a holiday). "
-    "Empty or today → live default: first session after the latest completed "
-    "week-end close (usually Monday after Friday), using local latest close when known. "
-    "Dates after the allowed live origin are rejected."
+    "Optional start date (YYYY-MM-DD). Leave blank to use the next available "
+    "market-week start after the latest completed trading week. "
+    "Past dates are moved to the start of that market week "
+    "(if Monday is a holiday, the next open day that week is used). "
+    "Future dates are not allowed."
 )
 
+# Kept for docs/CLI epilog only — not primary GUI body copy
 DATE_POLICY_SUMMARY = (
-    "**Week-aligned starts:** backtest picks → first NYSE session of that ISO week; "
-    "holiday Mondays → next open that week (not prior week); "
-    "empty/today → live week origin after last week-end close; no pure-future origins."
+    "Start dates use market weeks (see docs/run_triggers.md)."
+)
+
+GATHER_SECTION_TITLE = "Get market data"
+GATHER_SECTION_HELP = (
+    "Download recent prices for the symbols you list. "
+    "Uses local files when they already cover about the last two years; "
+    "only requests from the internet what is missing or out of date."
+)
+GATHER_BUTTON = "Update market data"
+
+FORECAST_SECTION_TITLE = "Run a forecast"
+FORECAST_SECTION_HELP = (
+    "Create forecasts for the symbols you list. "
+    "Needs complete local market history—if anything is missing, "
+    "update market data first, then try again."
+)
+FORECAST_BUTTON = "Run forecast"
+PREVIEW_START_BUTTON = "Check start date"
+
+INCOMPLETE_DATA_MSG = (
+    "Market history is incomplete or not ready for: {symbols}. "
+    "Use Get market data / gather for these symbols, then run the forecast again. "
+    "Forecasts never invent missing prices."
 )
 
 RUNS_OPT_IN_HELP = (
-    "MCP write tools require MCP_ALLOW_RUNS=1 (or CANSWIM_ALLOW_RUNS=1). "
-    "CLI --tickers and the Dashboard Run tab are explicit local actions and do not "
-    "need that flag. Default MCP mode stays read-only."
+    "MCP data/forecast tools need MCP_ALLOW_RUNS=1. "
+    "CLI and the dashboard do not. MCP stays read-only by default."
 )
 
 
@@ -242,25 +261,38 @@ def gather_for_tickers(
 
     # Local-first defaults
     if not _env_bool("hfhub_sync", default=False):
-        messages.append("hfhub_sync off (local-first gather).")
+        messages.append("Using local files first (no cloud dataset sync).")
 
     try:
         from canswim.gather_data import MarketDataGatherer
 
         g = MarketDataGatherer()
         g.stocks_ticker_set = list(tickers)
+        # Scoped user runs: ~2y missing-only (not multi-decade train history)
+        g.gather_mode = "forecast"
 
-        # Broad market / sectors are small and needed as covariates
+        # Broad market / sectors: reuse local files on small scopes
         try:
             g.gather_broad_market_data()
         except Exception as e:
-            messages.append(f"broad_market warning: {e}")
+            messages.append(f"Broad market data note: {e}")
         try:
             g.gather_sectors_data()
         except Exception as e:
-            messages.append(f"sectors warning: {e}")
+            messages.append(f"Sector data note: {e}")
 
         g.gather_stock_price_data()
+        plans = getattr(g, "last_price_fetch_plans", []) or []
+        skipped = [p.symbol for p in plans if p.action == "skip"]
+        fetched = [p.symbol for p in plans if p.action == "fetch"]
+        if skipped:
+            messages.append(
+                f"Already up to date locally (no download): {', '.join(skipped)}"
+            )
+        if fetched:
+            messages.append(f"Downloaded or refreshed: {', '.join(fetched)}")
+        if plans and not fetched:
+            messages.append("No remote price download needed.")
 
         if include_covariates:
             for name, fn in (
@@ -272,7 +304,7 @@ def gather_for_tickers(
                 try:
                     fn()
                 except Exception as e:
-                    messages.append(f"{name} warning: {e}")
+                    messages.append(f"{name} note: {e}")
 
         # Ensure symbols appear on a stock list CSV for forecast path
         _ensure_symbols_on_list(tickers)
@@ -283,6 +315,9 @@ def gather_for_tickers(
             "rejected": parsed.get("rejected", []),
             "messages": messages,
             "processed": tickers,
+            "price_plans": [p.as_dict() for p in plans],
+            "fetched": fetched,
+            "skipped_remote": skipped,
         }
     except Exception as e:
         logger.exception("gather_for_tickers failed")
@@ -364,7 +399,7 @@ def forecast_for_tickers(
             "resolved_start": start_info,
             "forecasted": [],
             "skipped": [],
-            "messages": ["dry_run: no model load / forecast executed"],
+            "messages": ["Check only: no forecast model was run."],
         }
 
     # Write a temporary symbol list and point stock_tickers_list at it
@@ -389,7 +424,30 @@ def forecast_for_tickers(
     forecasted: list[str] = []
     skipped: list[str] = []
     messages: list[str] = list(parsed.get("messages") or [])
-    messages.append(f"resolved_start={resolved} ({start_info.get('reason')})")
+    messages.append(f"Using start date {resolved}.")
+
+    def _incomplete_result(
+        *,
+        forecasted_syms: list[str],
+        incomplete_syms: list[str],
+        extra_error: Optional[str] = None,
+        already_saved: bool = False,
+    ) -> dict[str, Any]:
+        err = extra_error or INCOMPLETE_DATA_MSG.format(
+            symbols=", ".join(incomplete_syms) or "requested symbols"
+        )
+        return {
+            "ok": False,
+            "error": err,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": forecasted_syms,
+            "skipped": incomplete_syms,
+            "messages": messages,
+            "already_saved": already_saved,
+            "need_gather": True,
+        }
 
     try:
         from canswim.forecast import CanswimForecaster
@@ -424,55 +482,55 @@ def forecast_for_tickers(
                     forecasted.extend(clean.keys())
                     any_saved = True
             else:
-                messages.append("No eligible tickers in batch.")
+                messages.append("No symbols had enough complete history in this batch.")
 
         if not any_group:
             if getattr(cf, "all_already_saved", False):
-                messages.append("All symbols already had forecasts for this start.")
+                messages.append("Forecasts for this start date already exist.")
                 return {
                     "ok": True,
                     "tickers": tickers,
                     "rejected": parsed.get("rejected", []),
                     "resolved_start": start_info,
                     "forecasted": [],
-                    "skipped": list(tickers),
+                    "skipped": [],
                     "messages": messages,
                     "already_saved": True,
                 }
-            return {
-                "ok": False,
-                "error": "No stock groups prepared. Check local price data / list.",
-                "tickers": tickers,
-                "resolved_start": start_info,
-                "forecasted": [],
-                "skipped": tickers,
-                "messages": messages,
-            }
+            return _incomplete_result(
+                forecasted_syms=[],
+                incomplete_syms=list(tickers),
+                extra_error=INCOMPLETE_DATA_MSG.format(
+                    symbols=", ".join(tickers)
+                ),
+            )
         if not any_saved:
-            return {
-                "ok": False,
-                "error": "No forecasts saved (insufficient ground-truth history).",
-                "tickers": tickers,
-                "resolved_start": start_info,
-                "forecasted": forecasted,
-                "skipped": [t for t in tickers if t not in forecasted],
-                "messages": messages,
-            }
+            return _incomplete_result(
+                forecasted_syms=[],
+                incomplete_syms=[t for t in tickers if t not in forecasted],
+            )
 
         # Optional HF upload only if enabled
         try:
             cf.upload_data()
         except Exception as e:
-            messages.append(f"upload skipped/failed: {e}")
+            messages.append(f"Cloud upload skipped: {e}")
 
-        skipped = [t for t in tickers if t not in set(forecasted)]
+        incomplete = [t for t in tickers if t not in set(forecasted)]
+        # Hard-fail: do not report success if any requested symbol lacked clean data
+        if incomplete:
+            return _incomplete_result(
+                forecasted_syms=list(forecasted),
+                incomplete_syms=incomplete,
+            )
+
         return {
             "ok": True,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "resolved_start": start_info,
             "forecasted": forecasted,
-            "skipped": skipped,
+            "skipped": [],
             "messages": messages,
         }
     except Exception as e:

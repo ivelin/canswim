@@ -31,7 +31,6 @@ import argparse
 from canswim.run_triggers import (
     FORECAST_START_HELP,
     TICKERS_HELP,
-    DATE_POLICY_SUMMARY,
     RUNS_OPT_IN_HELP,
 )
 
@@ -43,7 +42,9 @@ parser = argparse.ArgumentParser(
         """,
     epilog=(
         "NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.\n"
-        f"{DATE_POLICY_SUMMARY}\n"
+        "Get market data: gatherdata --tickers …\n"
+        "Run a forecast: forecast --tickers … [--forecast_start_date] [--dry_run]\n"
+        "See docs/run_triggers.md for start-date rules and operator detail.\n"
         f"{RUNS_OPT_IN_HELP}"
     ),
     formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -53,15 +54,15 @@ parser.add_argument(
     "task",
     type=str,
     help="""Which %(prog)s task to run:
-        `dashboard` — charts, scans, and Run tab (gather/forecast for ticker lists).
-        `gatherdata` — full-universe gather, or scoped with --tickers (same as GUI/MCP).
+        `dashboard` — charts, scans, get market data, run forecasts.
+        `gatherdata` — get market data (all symbols, or --tickers for a short list).
         `downloaddata` — download model training and forecast data from HF Hub.
         `uploaddata` — upload local train/forecast data to HF Hub.
         `modelsearch` — find and save optimal hyperparameters.
-        `train` — continuous model training.
-        `forecast` — full-universe forecast, or scoped with --tickers (week-aligned start).
+        `train` — continuous model training (full history).
+        `forecast` — run forecasts (all symbols, or --tickers for a short list).
         `mcp` — MCP server (read-only by default; write tools need MCP_ALLOW_RUNS=1).
-        `resolve_start` — print week-aligned forecast start (no model/IO beyond local close).
+        `resolve_start` — show which forecast start date would be used.
         """,
     choices=[
         "dashboard",
@@ -82,9 +83,8 @@ parser.add_argument(
     required=False,
     default=None,
     help=(
-        f"Scope `gatherdata` / `forecast` to an explicit list. {TICKERS_HELP} "
-        "Uses the same orchestration as the Dashboard Run tab and MCP "
-        "gather_tickers / forecast_tickers tools."
+        f"Limit get-market-data / forecast to these symbols. {TICKERS_HELP} "
+        "Matches the dashboard and MCP tools."
     ),
 )
 
@@ -93,10 +93,7 @@ parser.add_argument(
     type=str,
     required=False,
     help=(
-        f"For `forecast` (with or without --tickers) and `resolve_start`. "
-        f"{FORECAST_START_HELP} "
-        "Without --tickers, legacy full-universe forecast still accepts this date "
-        "but does not force week-align (use --tickers or resolve_start for the shared policy)."
+        f"For `forecast` and `resolve_start`. {FORECAST_START_HELP}"
     ),
 )
 
@@ -105,8 +102,7 @@ parser.add_argument(
     action="store_true",
     default=False,
     help=(
-        "With `forecast --tickers`: validate tickers and resolve week-aligned start only "
-        "(no model load). Same as MCP forecast_tickers dry_run=true."
+        "With `forecast --tickers`: only check symbols and start date (no model run)."
     ),
 )
 
@@ -114,7 +110,7 @@ parser.add_argument(
     "--no_covariates",
     action="store_true",
     default=False,
-    help="With `gatherdata --tickers`: skip per-ticker covariates (earnings, metrics, …).",
+    help="With `gatherdata --tickers`: prices only (skip earnings, dividends, etc.).",
 )
 
 parser.add_argument(

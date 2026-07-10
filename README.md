@@ -55,26 +55,27 @@ Optional HF:
 
 Train/forecast **skip tickers without complete ground-truth OHLCV** (no synthetic price fill).
 
-## Gather & forecast: one contract (CLI · GUI · MCP)
+## Get market data & run forecasts (CLI · GUI · MCP)
 
-Scoped runs share **`canswim.run_triggers`** (tickers + week-aligned start). Full detail: **[docs/run_triggers.md](docs/run_triggers.md)**.
+Two separate steps, same backend (`canswim.run_triggers`). Details: **[docs/run_triggers.md](docs/run_triggers.md)**.
 
-| Surface | Gather | Forecast | Preview start |
-|---------|--------|----------|---------------|
-| **CLI** | `gatherdata --tickers "…"` | `forecast --tickers "…" [--forecast_start_date] [--dry_run]` | `resolve_start [--forecast_start_date]` |
-| **GUI** | Dashboard → **Run** → Gather | **Run** → Forecast | **Preview start date** |
-| **MCP** | `gather_tickers` (`MCP_ALLOW_RUNS=1`) | `forecast_tickers` (`MCP_ALLOW_RUNS=1`) | `resolve_forecast_start` (always) |
+| | Get market data | Run a forecast | Check start date |
+|--|-----------------|----------------|------------------|
+| **CLI** | `gatherdata --tickers "…"` | `forecast --tickers "…" [date] [--dry_run]` | `resolve_start` |
+| **GUI** | **Update market data** | **Run forecast** | **Check start date** |
+| **MCP** | `gather_tickers`* | `forecast_tickers`* | `resolve_forecast_start` |
 
-**Start-date policy (all three):** past dates → first NYSE session of that market week (holiday Monday → next open that week); empty/today → live origin after latest week-end close; no pure-future origins.
+\*MCP write tools need `MCP_ALLOW_RUNS=1`.
+
+Scoped get-market-data uses **~2 years** of history and **skips downloads** when local files are already complete. Forecasts **stop** if data is incomplete (no invented prices).
 
 ```bash
-# examples
+python -m canswim gatherdata --tickers "AAPL, MSFT"
 python -m canswim resolve_start --forecast_start_date 2026-03-05
 python -m canswim forecast --tickers AAPL --forecast_start_date 2026-03-05 --dry_run
-python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-05
 ```
 
-Without `--tickers`, `gatherdata` / `forecast` keep legacy full-universe behavior.
+Without `--tickers`, `gatherdata` / `forecast` keep full-universe / train-style behavior.
 
 ## Command line interface
 

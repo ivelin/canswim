@@ -158,11 +158,9 @@ def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
 @mcp.tool(
     name="resolve_forecast_start",
     description=(
-        "Preview week-aligned forecast start (same policy as CLI resolve_start "
-        "and Dashboard Run → Preview start date). "
-        "Optional start_date YYYY-MM-DD: past → first NYSE session of that market week "
-        "(holiday Monday → next open that week); empty/today → live default after "
-        "latest week-end close. Read-only; always available."
+        "Check which forecast start date will be used. "
+        "Optional start_date (YYYY-MM-DD); blank uses the default next market-week start. "
+        "Same as CLI resolve_start and dashboard “Check start date”. Read-only."
     ),
 )
 def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
@@ -172,9 +170,10 @@ def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
 @mcp.tool(
     name="gather_tickers",
     description=(
-        "Gather local market data for a ticker list (comma/newline separated). "
-        "Same orchestration as CLI `gatherdata --tickers` and Dashboard Run → Gather. "
-        "Requires MCP_ALLOW_RUNS=1. Local-first (hfhub_sync off by default)."
+        "Get / update market data for listed stock symbols (comma or newline separated). "
+        "Only downloads what is missing or out of date (~last 2 years for forecast use). "
+        "Same as CLI `gatherdata --tickers` and dashboard “Update market data”. "
+        "Requires MCP_ALLOW_RUNS=1."
     ),
 )
 def gather_tickers(
@@ -189,11 +188,11 @@ def gather_tickers(
 @mcp.tool(
     name="forecast_tickers",
     description=(
-        "Run TiDE forecast for a ticker list with week-aligned start. "
-        "Same orchestration as CLI `forecast --tickers` and Dashboard Run → Forecast. "
-        "Requires MCP_ALLOW_RUNS=1. May load torch and take minutes. "
-        "Optional start_date YYYY-MM-DD (shared snap/default policy). "
-        "dry_run=true → validate tickers + resolve start only (CLI: --dry_run)."
+        "Run a forecast for listed stock symbols. "
+        "Fails clearly if market history is incomplete—update market data first. "
+        "Same as CLI `forecast --tickers` and dashboard “Run forecast”. "
+        "Requires MCP_ALLOW_RUNS=1. May take several minutes. "
+        "Optional start_date (YYYY-MM-DD). dry_run=true only checks symbols and start date."
     ),
 )
 def forecast_tickers(

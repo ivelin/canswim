@@ -96,8 +96,14 @@ class MarketDataGatherer:
         self.min_start_date = os.getenv("train_date_start", "1991-01-01")
         # Optional scope: gather only tickers from this CSV (under symbol_lists/)
         self.stock_tickers_list = os.getenv("stock_tickers_list")
+        # "train" = long history; "forecast" = ~2y missing-only (scoped GUI/MCP/CLI)
+        self.gather_mode = os.getenv("gather_mode", "train").strip().lower()
+        if self.gather_mode not in ("train", "forecast"):
+            self.gather_mode = "train"
         # Never use multi-GB SQLite yfinance cache unless explicitly enabled
         self.use_yfinance_cache = _env_bool("YFINANCE_USE_CACHE", default=False)
+        # Last per-symbol fetch plan (for tests / result reporting)
+        self.last_price_fetch_plans = []
 
     def _yfinance_session(self):
         """Rate-limited session. Avoids SQLite cache hang by default.
@@ -411,14 +417,23 @@ class MarketDataGatherer:
             new_df = new_df.dropna(subset=ohlcv, how="any")
         return new_df
 
-    def _fetch_stock_prices_fmp(self, start_date) -> pd.DataFrame:
-        """Fallback when yfinance is empty/rate-limited: FMP historical-price-full."""
+    def _fetch_stock_prices_fmp(
+        self, start_date, tickers=None, per_symbol_start=None
+    ) -> pd.DataFrame:
+        """Fallback when yfinance is empty/rate-limited: FMP historical-price-full.
+
+        ``per_symbol_start`` maps symbol → ISO start (missing-only). When set,
+        each ticker uses its own from_date instead of the shared ``start_date``.
+        """
         if not self.FMP_API_KEY:
             logger.warning("FMP_API_KEY missing; cannot fallback stock prices via FMP")
             return pd.DataFrame()
-        from_date = pd.Timestamp(start_date).strftime("%Y-%m-%d")
+        default_from = pd.Timestamp(start_date).strftime("%Y-%m-%d")
         frames = []
-        for ticker in sorted(self.stocks_ticker_set):
+        symbols = sorted(tickers if tickers is not None else self.stocks_ticker_set)
+        per = per_symbol_start or {}
+        for ticker in symbols:
+            from_date = per.get(ticker, default_from)
             try:
                 # fmpsdk historical_price_full(symbol, from_date=..., to_date=...)
                 records = fmpsdk.historical_price_full(
@@ -448,39 +463,78 @@ class MarketDataGatherer:
         return out
 
     def gather_stock_price_data(self):
+        """Refresh stock OHLCV parquet with missing-only remote calls when possible.
+
+        * ``gather_mode=forecast`` (scoped runs): ~2y window; skip symbols that
+          already have complete, fresh local history; otherwise fetch only the
+          missing/stale range.
+        * ``gather_mode=train``: long history from ``train_date_start``.
+        """
+        from canswim.gather_policy import (
+            aggregate_fetch_start,
+            plan_stock_price_fetches,
+        )
+
         data_file = self._data_file(
             f"all_stocks_price_hist_{self.price_frequency}.parquet"
         )
-        start_date = self.min_start_date
+        mode = "forecast" if self.gather_mode == "forecast" else "train"
         old_df = None
         try:
             old_df = pd.read_parquet(data_file)
             logger.info("Loaded saved data. Sample: \n{df}", df=old_df)
-            all_tickers = set(self.stocks_ticker_set)
-            old_tickers = set(old_df.index.get_level_values("Symbol"))
-            new_tickers = all_tickers - old_tickers
-            if not new_tickers:
-                start_date = get_latest_date(
-                    old_df.index.get_level_values("Date")
-                ) - pd.Timedelta(1, "d")
-                logger.info(f"Columns: \n{old_df.columns}")
-                logger.info(f"Latest saved record is after {start_date}")
-            else:
-                logger.info(
-                    f"Not all tickers found in saved data. Missing: {new_tickers}"
-                )
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
+
+        tickers = list(self.stocks_ticker_set)
+        plans = plan_stock_price_fetches(
+            tickers,
+            old_df,
+            mode=mode,
+            train_min_start=self.min_start_date,
+        )
+        self.last_price_fetch_plans = plans
+        to_fetch = [p for p in plans if p.action == "fetch"]
+        skipped = [p for p in plans if p.action == "skip"]
+        for p in plans:
+            logger.info(
+                f"Price plan {p.symbol}: {p.action} "
+                f"start={p.fetch_start} ({p.reason})"
+            )
+        if skipped:
+            logger.info(
+                f"Skipping remote price fetch for {len(skipped)} symbol(s) "
+                f"with complete local history: {[p.symbol for p in skipped]}"
+            )
+        if not to_fetch:
+            if old_df is None or old_df.empty:
+                raise RuntimeError("No stock price data gathered; aborting")
+            logger.info("All requested symbols already covered locally; no remote call")
+            return
+
+        per_start = {p.symbol: p.fetch_start for p in to_fetch if p.fetch_start}
+        start_date = aggregate_fetch_start(to_fetch) or self.min_start_date
+        fetch_syms = [p.symbol for p in to_fetch]
 
         # Prefer FMP for stock OHLCV when key is present (reliable under yfinance
         # rate limits); fall back to yfinance if FMP returns nothing.
         new_df = pd.DataFrame()
         if self.FMP_API_KEY:
             logger.info(
-                f"Gathering stock prices via FMP historical-price-full for "
-                f"{len(self.stocks_ticker_set)} tickers from {start_date}"
+                f"Gathering stock prices via FMP for {len(fetch_syms)} tickers "
+                f"(mode={mode}, earliest start={start_date})"
             )
-            new_df = self._fetch_stock_prices_fmp(start_date=start_date)
+            # Temporarily restrict set for yfinance fallback path consistency
+            prev_set = self.stocks_ticker_set
+            self.stocks_ticker_set = fetch_syms
+            try:
+                new_df = self._fetch_stock_prices_fmp(
+                    start_date=start_date,
+                    tickers=fetch_syms,
+                    per_symbol_start=per_start,
+                )
+            finally:
+                self.stocks_ticker_set = prev_set
             if not new_df.empty:
                 logger.info(
                     f"FMP stock prices returned {len(new_df)} bars for "
@@ -488,13 +542,20 @@ class MarketDataGatherer:
                 )
         if new_df is None or new_df.empty:
             logger.info(
-                f"Gathering stock prices via yfinance for {len(self.stocks_ticker_set)} "
+                f"Gathering stock prices via yfinance for {len(fetch_syms)} "
                 f"tickers from {start_date}"
             )
-            new_df = self._fetch_stock_prices_yfinance(start_date=start_date)
+            prev_set = self.stocks_ticker_set
+            self.stocks_ticker_set = fetch_syms
+            try:
+                new_df = self._fetch_stock_prices_yfinance(start_date=start_date)
+            finally:
+                self.stocks_ticker_set = prev_set
             if new_df is None or new_df.empty:
                 logger.warning("yfinance stock prices empty/failed after FMP miss")
-        logger.info(f"Stock price data index: {new_df.index.names if not new_df.empty else None}")
+        logger.info(
+            f"Stock price data index: {new_df.index.names if not new_df.empty else None}"
+        )
         logger.info("New data gathered. Sample: \n{df}", df=new_df)
         if old_df is not None and not new_df.empty:
             cols = [c for c in old_df.columns if c in new_df.columns]

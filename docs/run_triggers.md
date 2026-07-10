@@ -1,74 +1,61 @@
-# Gather & forecast triggers (CLI · GUI · MCP)
+# Get market data & run forecasts (CLI · GUI · MCP)
 
-One shared contract for **scoped** data gather and TiDE forecast runs.
-Implementation: `canswim.run_triggers` (+ `canswim.calendar_weeks` for dates).
+User-facing actions for a **short list of symbols**. Implementation: `canswim.run_triggers`,
+`canswim.gather_policy`, `canswim.calendar_weeks`.
 
 **NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
 
-## Surfaces (aligned)
+## Two separate steps
 
-| Surface | How to invoke | Gate |
-|---------|----------------|------|
-| **CLI** | `python -m canswim gatherdata --tickers "AAPL,MSFT"` | Always (local CLI) |
-| **CLI** | `python -m canswim forecast --tickers "AAPL" [--forecast_start_date …] [--dry_run]` | Always |
-| **CLI** | `python -m canswim resolve_start [--forecast_start_date …]` | Always |
-| **GUI** | Dashboard → **Run** tab | Always (in-process UI) |
-| **MCP** | tools `gather_tickers`, `forecast_tickers` | **`MCP_ALLOW_RUNS=1`** (or `CANSWIM_ALLOW_RUNS=1`) |
-| **MCP** | tool `resolve_forecast_start` | Read-only; always available |
+| Step | What it does | CLI | GUI | MCP |
+|------|----------------|-----|-----|-----|
+| **Get market data** | Update local prices for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
+| **Run a forecast** | Forecast those symbols | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
+| **Check start date** | Show which start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |
 
-Without `--tickers`, CLI `gatherdata` / `forecast` keep **legacy full-universe** behavior
-(`stock_tickers_list` / all stocks; forecast default = next open after latest bar).
-That path is intentionally separate so weekend batch jobs stay stable.
+MCP write tools need `MCP_ALLOW_RUNS=1`. CLI and dashboard do not.
 
-## Shared parameters
+Without `--tickers`, CLI `gatherdata` / `forecast` keep **full-universe / train-style** behavior.
 
-### Tickers
-- Comma, semicolon, whitespace, and/or **newlines**
-- Uppercased; duplicates reported; invalid tokens rejected
-- Soft max **50** symbols per run (`DEFAULT_MAX_TICKERS`)
+## Get market data (lean & rate-limit aware)
 
-### Forecast start date (`YYYY-MM-DD` or empty)
+For scoped runs (`--tickers` / dashboard / MCP):
 
-| Input | Resolved start |
-|-------|----------------|
-| Empty / omitted | **Live default**: first NYSE session **after** the last completed week-end close (usually Monday after Friday), using local latest close when known |
-| Today (calendar) | Same as live default |
-| Past calendar day | First NYSE session of that **ISO market week** (usually Monday) |
-| Holiday Monday (e.g. Memorial Day) | First **open** session of that week (often Tuesday) — **not** prior week |
-| After allowed live origin | **Rejected** (no pure-future origins) |
+- Target about the **last 2 years** of prices (enough to forecast)—not multi-decade history.
+- **Skip remote download** when local history is already complete and recent.
+- If history is short or gappy, download only the **missing window**.
+- If history is complete but stale, download only a **short tail** refresh.
+- **Train** mode (`gatherdata` without `--tickers`) still uses full `train_date_start` history.
 
-Preview without running the model:
-- CLI: `python -m canswim resolve_start --forecast_start_date 2026-03-05`
-- GUI: **Preview start date**
-- MCP: `resolve_forecast_start`
+Forecasts never invent prices. If history is incomplete, **Run a forecast** fails and asks you to update market data first.
+
+## Start date rules (enforced in code)
+
+| You enter | System uses |
+|-----------|-------------|
+| Blank / today | Next market-week start after the latest completed trading week |
+| A past date | Start of that market week (first open session; if Monday is a holiday, next open day that week) |
+| A future date past the allowed default | Rejected |
+
+Operator detail only—primary UI uses plain language.
 
 ## Examples
 
 ```bash
-# Gather two symbols (local-first; same as Run tab / MCP gather_tickers)
+# Update market data for two symbols (missing-only, ~2y)
 hfhub_sync=False python -m canswim gatherdata --tickers "AAPL, MSFT"
 
-# Preview week-aligned start only
+# See start date
 python -m canswim resolve_start
 python -m canswim forecast --tickers AAPL --forecast_start_date 2026-03-05 --dry_run
 
-# Scoped forecast (week-aligned)
+# Forecast (fails if data incomplete)
 python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-05
-
-# MCP write tools (default server is read-only)
-MCP_ALLOW_RUNS=1 python -m canswim mcp
 ```
-
-## Result shape
-
-Structured JSON (CLI prints it; GUI shows it; MCP wraps in `{ok, data|error}`):
-
-- **Gather:** `ok`, `tickers`, `rejected`, `messages`, optional `error`
-- **Forecast:** `ok`, `tickers`, `resolved_start`, `forecasted`, `skipped`, `messages`, optional `dry_run` / `error`
 
 ## Design rules
 
-1. **One orchestration** — do not reimplement parse/snap in GUI or MCP.
-2. **MCP stays safe by default** — write tools listed for discoverability, gated at invoke time.
-3. **Small lists** — keep runs short; full-universe stays on legacy CLI without `--tickers`.
-4. **Local-first** — `hfhub_sync` remains off unless explicitly enabled.
+1. One orchestration for CLI / GUI / MCP.
+2. Missing-only remote calls for forecast-scoped gather; train stays full-history.
+3. Fail closed on incomplete forecast data.
+4. Consumer copy in the product; policy detail in this doc.
