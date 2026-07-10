@@ -377,6 +377,10 @@ def get_reward_risk(
     return _format_date_columns(df, ["prior_close_date", "forecast_start_date"])
 
 
+# Default TiDE output_chunk_length when model is not available for labeling
+_DEFAULT_PRED_HORIZON_BDAYS = 42
+
+
 def list_forecast_start_dates(db_path: str) -> list[str]:
     """Distinct forecast origin dates (YYYY-MM-DD), newest first.
 
@@ -398,6 +402,56 @@ def list_forecast_start_dates(db_path: str) -> list[str]:
     return [r[0] for r in rows if r and r[0]]
 
 
+def list_forecast_start_date_choices(
+    db_path: str,
+    *,
+    pred_horizon_bdays: int = _DEFAULT_PRED_HORIZON_BDAYS,
+    asof: Optional[Union[str, pd.Timestamp]] = None,
+) -> list[tuple[str, str]]:
+    """Gradio dropdown choices: ``(label, value)`` newest first.
+
+    Labels distinguish:
+    - **latest · open horizon** — most recent origin, and today's date is still
+      inside the forecast horizon (not a finished backtest yet)
+    - **open horizon** — older origin whose horizon has not fully elapsed
+    - **completed backtest** — all horizon sessions are in the past relative to
+      the latest available close (or calendar as-of)
+
+    ``value`` is always ISO ``YYYY-MM-DD`` for scanning.
+    """
+    from pandas.tseries.offsets import BDay
+
+    dates = list_forecast_start_dates(db_path)
+    if not dates:
+        return []
+
+    # Reference "today" = last close in DB when available (market as-of), else calendar
+    ref = pd.Timestamp(asof).normalize() if asof is not None else None
+    if ref is None:
+        with connect_readonly(db_path) as db_con:
+            row = db_con.execute(
+                "SELECT max(CAST(Date AS DATE)) FROM close_price"
+            ).fetchone()
+        if row and row[0] is not None:
+            ref = pd.Timestamp(row[0]).normalize()
+        else:
+            ref = pd.Timestamp.now().normalize()
+
+    newest = dates[0]
+    choices: list[tuple[str, str]] = []
+    for d in dates:
+        start = pd.Timestamp(d)
+        horizon_end = (start + BDay(n=int(pred_horizon_bdays))).normalize()
+        if d == newest and ref <= horizon_end:
+            kind = "latest · open horizon (not a finished backtest)"
+        elif ref <= horizon_end:
+            kind = "open horizon (backtest incomplete)"
+        else:
+            kind = "completed backtest"
+        choices.append((f"{d}  —  {kind}", d))
+    return choices
+
+
 def scan_forecasts(
     db_path: str,
     lowq: int,
@@ -410,16 +464,22 @@ def scan_forecasts(
     ``forecast_start_date`` selects the forecast origin (backtest as-of).
     When omitted, uses the newest date in ``latest_forecast`` (live scan).
     """
+    # Gradio radios often pass strings; coerce for SQL numeric compares
+    lowq = int(lowq)
+    reward = float(reward)
+    rr = float(rr)
     lq = (100 - lowq) / 100
     low_quantile_col = f"close_quantile_{lq}"
     mean_col = "close_quantile_0.5"
     if forecast_start_date is None or (
-        isinstance(forecast_start_date, str) and not forecast_start_date.strip()
+        isinstance(forecast_start_date, str) and not str(forecast_start_date).strip()
     ):
         starts = list_forecast_start_dates(db_path)
         asof = starts[0] if starts else None
     else:
-        asof = pd.Timestamp(forecast_start_date).strftime("%Y-%m-%d")
+        # Dropdown may send "YYYY-MM-DD  —  label" if misconfigured; take ISO prefix
+        raw = str(forecast_start_date).strip()
+        asof = pd.Timestamp(raw[:10]).strftime("%Y-%m-%d")
     if asof is None:
         logger.warning("scan_forecasts: no forecast start dates in database")
         return pd.DataFrame()
@@ -445,7 +505,7 @@ def scan_forecasts(
             WHERE f.start_date = CAST($start AS DATE)
             GROUP BY f.symbol, f.start_date
             HAVING forecast_close_high > prior_close_price AND
-                reward_risk > $rr AND reward_percent >= $reward
+                reward_risk >= $rr AND reward_percent >= $reward
             ORDER BY reward_percent DESC, reward_risk DESC
             """,
             params={

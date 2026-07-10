@@ -16,6 +16,7 @@ from canswim.db import (
     get_forecast_rows,
     get_reward_risk,
     is_select_only,
+    list_forecast_start_date_choices,
     list_forecast_start_dates,
     list_tickers,
     run_select,
@@ -154,6 +155,21 @@ def test_list_forecast_start_dates(mini_db):
     assert "2025-01-03" in starts
     assert starts == sorted(starts, reverse=True)
     assert all(len(s) == 10 and s[4] == "-" for s in starts)
+
+
+def test_list_forecast_start_date_choices_labels(mini_db):
+    choices = list_forecast_start_date_choices(
+        mini_db, pred_horizon_bdays=42, asof="2025-06-01"
+    )
+    assert choices[0][1] == "2025-01-06"  # value = ISO date
+    assert "2025-01-06" in choices[0][0]
+    # Both starts fully before mid-2025 → completed backtest labels
+    assert all("completed backtest" in lab for lab, _ in choices)
+    # Open-horizon labeling when asof is near newest start
+    open_choices = list_forecast_start_date_choices(
+        mini_db, pred_horizon_bdays=42, asof="2025-01-10"
+    )
+    assert "open horizon" in open_choices[0][0].lower() or "latest" in open_choices[0][0].lower()
 
 
 def test_scan_forecasts(mini_db):
