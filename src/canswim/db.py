@@ -377,16 +377,60 @@ def get_reward_risk(
     return _format_date_columns(df, ["prior_close_date", "forecast_start_date"])
 
 
+def list_forecast_start_dates(db_path: str) -> list[str]:
+    """Distinct forecast origin dates (YYYY-MM-DD), newest first.
+
+    Used by the Scans tab backtest picker so users can run RR scans as-of a
+    historical monthly start, not only the global latest run.
+    """
+    with connect_readonly(db_path) as db_con:
+        df = db_con.sql(
+            """--sql
+            SELECT DISTINCT start_date
+            FROM forecast
+            WHERE start_date IS NOT NULL
+            ORDER BY start_date DESC
+            """
+        ).df()
+    if df.empty:
+        return []
+    col = "start_date" if "start_date" in df.columns else df.columns[0]
+    out: list[str] = []
+    for v in df[col].tolist():
+        if hasattr(v, "strftime"):
+            out.append(v.strftime("%Y-%m-%d"))
+        else:
+            s = str(v)[:10]
+            if s and s.lower() != "nat":
+                out.append(s)
+    return out
+
+
 def scan_forecasts(
     db_path: str,
     lowq: int,
     reward: float,
     rr: float,
+    forecast_start_date: Optional[Union[str, pd.Timestamp]] = None,
 ) -> pd.DataFrame:
-    """Universe scan (ScanTab.scan_forecasts SQL). lowq is confidence 80/95/99."""
+    """Universe scan (ScanTab.scan_forecasts SQL). lowq is confidence 80/95/99.
+
+    ``forecast_start_date`` selects the forecast origin (backtest as-of).
+    When omitted, uses the newest date in ``latest_forecast`` (live scan).
+    """
     lq = (100 - lowq) / 100
     low_quantile_col = f"close_quantile_{lq}"
     mean_col = "close_quantile_0.5"
+    if forecast_start_date is None or (
+        isinstance(forecast_start_date, str) and not forecast_start_date.strip()
+    ):
+        starts = list_forecast_start_dates(db_path)
+        asof = starts[0] if starts else None
+    else:
+        asof = pd.Timestamp(forecast_start_date).strftime("%Y-%m-%d")
+    if asof is None:
+        logger.warning("scan_forecasts: no forecast start dates in database")
+        return pd.DataFrame()
     with connect_readonly(db_path) as db_con:
         sql_result = db_con.sql(
             f"""--sql
@@ -400,24 +444,27 @@ def scan_forecasts(
                 (forecast_close_high - prior_close_price)/GREATEST(prior_close_price-forecast_close_low, 0.01) as reward_risk,
                 max(e.mal_error) as backtest_error,
                 max(c.date) as prior_close_date,
-            FROM forecast f, close_price c, backtest_error as e, latest_forecast as lf
-            WHERE f.symbol = lf.symbol AND
-                f.symbol = c.symbol AND
-                f.symbol = e.symbol AND e.start_date = f.start_date AND
-                CAST(c.Date AS DATE) < f.start_date
-            GROUP BY f.symbol, f.start_date, c.symbol, e.symbol, e.start_date, lf.symbol, lf.date
+            FROM forecast f
+            INNER JOIN close_price c
+              ON c.symbol = f.symbol
+             AND CAST(c.Date AS DATE) < f.start_date
+            LEFT JOIN backtest_error e
+              ON e.symbol = f.symbol AND e.start_date = f.start_date
+            WHERE f.start_date = CAST($start AS DATE)
+            GROUP BY f.symbol, f.start_date
             HAVING forecast_close_high > prior_close_price AND
-                f.start_date = lf.date AND
-                reward_risk> $rr AND reward_percent >= $reward
-                AND forecast_start_date = (select max(date) from latest_forecast)
+                reward_risk > $rr AND reward_percent >= $reward
+            ORDER BY reward_percent DESC, reward_risk DESC
             """,
             params={
+                "start": asof,
                 "rr": rr,
                 "reward": reward,
             },
         )
         logger.info(
-            f"Scan params: Confidence {lowq}%, Reward: {reward}%, Risk/Reward: {rr}"
+            f"Scan params: as-of {asof}, Confidence {lowq}%, "
+            f"Reward: {reward}%, Risk/Reward: {rr}"
         )
         logger.info(f"SQL Result: \n{sql_result}")
         df = sql_result.df()
