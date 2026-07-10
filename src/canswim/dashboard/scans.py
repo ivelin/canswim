@@ -35,7 +35,7 @@ class ScanTab:
             self._pred_horizon = 42
 
         # Preload so the Dropdown is never empty (Gradio is flaky with choices=[]
-        # then later gr.update — selected value can arrive as None on Refresh).
+        # then later gr.update — selected value can arrive as None).
         init_pairs = list_forecast_start_date_choices(
             self.db_path, pred_horizon_bdays=self._pred_horizon
         )
@@ -43,97 +43,114 @@ class ScanTab:
         init_iso = init_pairs[0][1] if init_pairs else None
         init_label = init_labels[0] if init_labels else None
 
-        # Stable selection store — do not rely only on Dropdown I/O (same component
-        # as input+output often loses the user pick in Gradio 4.x).
+        # Stable selection store — backup if Dropdown payload is empty
         self.selectedStart = gr.State(value=init_iso)
 
         with gr.Row():
             # Plain string choices (label == value). Avoid (label, value) tuples:
-            # frontend can send None / label / value inconsistently on refresh.
+            # frontend can send None / label / value inconsistently.
             self.forecastStart = gr.Dropdown(
                 choices=init_labels,
                 value=init_label,
                 label="Forecast start date (as-of origin)",
                 info=(
-                    "Queried from the search DB (newest first). Default = most recent. "
-                    "Includes the latest run, which may still be an **open-horizon live "
-                    "forecast** (not a finished backtest) if today is inside the "
-                    "prediction window. Older dates with a fully elapsed horizon are "
-                    "**completed backtests**. Scan scores only that origin. "
-                    "Refresh reloads the list but keeps your current selection when possible."
+                    "Newest first. Latest may be an **open-horizon live forecast**; "
+                    "older dates with a full elapsed window are **completed backtests**. "
+                    "Changing the date or filters updates results immediately."
                 ),
                 allow_custom_value=False,
                 filterable=True,
             )
             self.refreshStartsBtn = gr.Button(
-                value="Refresh dates",
+                value="↻ dates",
                 scale=0,
+                min_width=80,
+                variant="secondary",
             )
         with gr.Row():
             self.lowq = gr.Radio(
                 choices=[80, 95, 99],
                 value=80,
                 label="Confidence level for lowest close price",
-                info="Choose low price confidence percentage",
+                info="Low-price confidence used in reward/risk",
             )
             self.reward = gr.Radio(
                 choices=[5, 10, 15, 20, 25],
                 value=5,
                 label="Minimum probabilistic price gain (%)",
-                info="Median forecast high vs prior close. Lower if the table is empty.",
+                info="Median forecast high vs prior close",
             )
             self.rr = gr.Radio(
                 choices=[1, 1.5, 3, 5, 10],
                 value=1,
                 label="Minimum reward / risk ratio",
-                info="Upside to downside (low-confidence quantile). Lower if empty.",
+                info="Upside vs downside (low-confidence quantile)",
             )
 
         with gr.Row():
-            self.scanBtn = gr.Button(value="Scan", variant="primary")
+            self.scanStatus = gr.Markdown(
+                value="_Pick filters — results update automatically._"
+            )
 
         with gr.Row():
             self.scanResult = gr.Dataframe()
 
-        # Keep State in sync whenever the user picks a date
+        scan_inputs = [
+            self.lowq,
+            self.reward,
+            self.rr,
+            self.forecastStart,
+            self.selectedStart,
+        ]
+        scan_outputs = [self.selectedStart, self.scanStatus, self.scanResult]
+
+        # Auto-scan on any control change (same pattern as Charts tab)
         self.forecastStart.change(
-            fn=self._on_start_change,
-            inputs=[self.forecastStart],
-            outputs=[self.selectedStart],
+            fn=self.apply_and_scan,
+            inputs=scan_inputs,
+            outputs=scan_outputs,
         )
-        self.forecastStart.input(
-            fn=self._on_start_change,
-            inputs=[self.forecastStart],
-            outputs=[self.selectedStart],
+        self.lowq.change(
+            fn=self.apply_and_scan,
+            inputs=scan_inputs,
+            outputs=scan_outputs,
         )
-        # Refresh: prefer Dropdown (what user sees), fall back to State
+        self.reward.change(
+            fn=self.apply_and_scan,
+            inputs=scan_inputs,
+            outputs=scan_outputs,
+        )
+        self.rr.change(
+            fn=self.apply_and_scan,
+            inputs=scan_inputs,
+            outputs=scan_outputs,
+        )
+        # Optional: reload date list only (new forecast origins in DB)
         self.refreshStartsBtn.click(
             fn=self.refresh_start_dates,
             inputs=[self.forecastStart, self.selectedStart],
             outputs=[self.forecastStart, self.selectedStart],
-        )
-        # Scan: prefer Dropdown payload, fall back to State
-        self.scanBtn.click(
-            fn=self.scan_forecasts,
-            inputs=[
-                self.lowq,
-                self.reward,
-                self.rr,
-                self.forecastStart,
-                self.selectedStart,
-            ],
-            outputs=[self.scanResult],
+        ).then(
+            fn=self.apply_and_scan,
+            inputs=scan_inputs,
+            outputs=scan_outputs,
         )
 
-    def _on_start_change(self, current):
-        return _normalize_start_value(current)
+    def apply_and_scan(
+        self, lowq, reward, rr, forecast_start_date=None, stored_start=None
+    ):
+        """Update selection state + run scan. Used by control change handlers."""
+        asof = (
+            _normalize_start_value(forecast_start_date)
+            or _normalize_start_value(stored_start)
+        )
+        status, table = self._run_scan(lowq=lowq, reward=reward, rr=rr, asof=asof)
+        return asof, status, table
 
     def refresh_start_dates(self, current=None, stored=None):
         """Reload start dates from DB; keep selection if still valid, else newest.
 
-        Prefer the Dropdown value (``current``) over State (``stored``). State alone
-        can lag if change events were skipped, which previously forced a reset to
-        the default newest origin.
+        Prefer the Dropdown value (``current``) over State (``stored``).
 
         Returns ``(dropdown_update, selected_iso)`` for Dropdown + State.
         """
@@ -144,7 +161,6 @@ class ScanTab:
         by_iso = {v: lab for lab, v in pairs}
         isos = [v for _lab, v in pairs]
 
-        # Dropdown first (authoritative UI selection), then State backup
         cur = _normalize_start_value(current) or _normalize_start_value(stored)
         if cur and cur in by_iso:
             selected_iso = cur
@@ -159,13 +175,14 @@ class ScanTab:
         )
         return gr.update(choices=labels, value=selected_label), selected_iso
 
-    def scan_forecasts(
-        self, lowq, reward, rr, forecast_start_date=None, stored_start=None
-    ):
-        asof = (
-            _normalize_start_value(forecast_start_date)
-            or _normalize_start_value(stored_start)
-        )
+    def initial_scan(self):
+        """Page-load helper: (dropdown_update, iso, status, table)."""
+        dd, iso = self.refresh_start_dates(current=None, stored=None)
+        # Defaults match Radio initial values
+        status, table = self._run_scan(lowq=80, reward=5, rr=1, asof=iso)
+        return dd, iso, status, table
+
+    def _run_scan(self, lowq, reward, rr, asof):
         df = db_scan_forecasts(
             self.db_path,
             lowq=lowq,
@@ -178,15 +195,19 @@ class ScanTab:
             f"Scan as-of={asof} lowq={lowq} reward={reward} rr={rr} hits={n}"
         )
         if df is None or df.empty:
-            gr.Warning(
-                f"No symbols met reward ≥ {reward}% and R/R ≥ {rr} for as-of "
-                f"{asof or 'latest'}. "
-                f"Try lower thresholds (e.g. 5% / 1.0) or another start date. "
-                f"Latest open-horizon forecasts are often milder than past backtests."
+            status = (
+                f"**No matches** for as-of `{asof or 'latest'}` · "
+                f"reward ≥ {reward}% · R/R ≥ {rr} · low conf {lowq}%. "
+                f"Try lower thresholds or another start date."
             )
-            return df
-        return df.style.format(
+            return status, df
+        status = (
+            f"**{n} symbol{'s' if n != 1 else ''}** · as-of `{asof}` · "
+            f"reward ≥ {reward}% · R/R ≥ {rr} · low conf {lowq}%"
+        )
+        styled = df.style.format(
             precision=2,
             thousands=",",
             decimal=".",
         )
+        return status, styled
