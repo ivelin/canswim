@@ -88,17 +88,24 @@ def get_reward_risk(symbol: str, confidence: int = 80) -> dict[str, Any]:
 @mcp.tool(
     name="scan_forecasts",
     description=(
-        "Scan latest forecasts for symbols meeting reward and reward/risk thresholds "
+        "Scan forecasts for symbols meeting reward and reward/risk thresholds "
         "(same logic as the dashboard Scans tab). "
-        "confidence: 80/95/99; reward: min percent gain; rr: min reward/risk ratio."
+        "confidence: 80/95/99; reward: min percent gain; rr: min reward/risk ratio. "
+        "forecast_start_date: optional YYYY-MM-DD backtest origin (default: latest)."
     ),
 )
 def scan_forecasts(
     confidence: int = 80,
     reward: float = 20,
     rr: float = 3,
+    forecast_start_date: Optional[str] = None,
 ) -> dict[str, Any]:
-    return forecasts.scan_forecasts_impl(confidence=confidence, reward=reward, rr=rr)
+    return forecasts.scan_forecasts_impl(
+        confidence=confidence,
+        reward=reward,
+        rr=rr,
+        forecast_start_date=forecast_start_date,
+    )
 
 
 @mcp.tool(

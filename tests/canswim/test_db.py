@@ -16,6 +16,7 @@ from canswim.db import (
     get_forecast_rows,
     get_reward_risk,
     is_select_only,
+    list_forecast_start_dates,
     list_tickers,
     run_select,
     scan_forecasts,
@@ -147,10 +148,29 @@ def test_get_reward_risk_all_starts_for_chart(mini_db):
     assert errs["2025-01-06"] == pytest.approx(0.05)
 
 
+def test_list_forecast_start_dates(mini_db):
+    starts = list_forecast_start_dates(mini_db)
+    assert starts[0] == "2025-01-06"  # newest first
+    assert "2025-01-03" in starts
+
+
 def test_scan_forecasts(mini_db):
     df = scan_forecasts(mini_db, lowq=80, reward=5, rr=1.0)
     assert "AAA" in set(df["symbol"]) if not df.empty else True
     # AAA: high 112 vs prior 102 → ~9.8% reward, low 100 → should pass loose rr
+
+
+def test_scan_forecasts_historic_start(mini_db):
+    """Backtest picker: scan as-of an older monthly origin."""
+    df = scan_forecasts(
+        mini_db, lowq=80, reward=5, rr=1.0, forecast_start_date="2025-01-03"
+    )
+    assert not df.empty
+    assert set(df["symbol"]) == {"AAA"}
+    assert str(df.iloc[0]["forecast_start_date"]).startswith("2025-01-03")
+    # prior for 2025-01-03 is close on 2025-01-02 = 100; mid = 108
+    assert float(df.iloc[0]["prior_close_price"]) == pytest.approx(100.0)
+    assert float(df.iloc[0]["forecast_close_high"]) == pytest.approx(108.0)
 
 
 def test_is_select_only():

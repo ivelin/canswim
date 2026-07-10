@@ -76,6 +76,7 @@ def scan_forecasts_impl(
     confidence: int = 80,
     reward: float = 20,
     rr: float = 3,
+    forecast_start_date: str | None = None,
 ) -> dict[str, Any]:
     ready, msg = ensure_db_ready()
     if not ready:
@@ -84,12 +85,19 @@ def scan_forecasts_impl(
         return err_result(f"confidence must be one of {sorted(_VALID_CONFIDENCE)}")
     db_path = resolve_db_path()
     try:
-        df = scan_forecasts(db_path, lowq=confidence, reward=reward, rr=rr)
+        df = scan_forecasts(
+            db_path,
+            lowq=confidence,
+            reward=reward,
+            rr=rr,
+            forecast_start_date=forecast_start_date,
+        )
         return ok_result(
             {
                 "confidence": confidence,
                 "reward": reward,
                 "rr": rr,
+                "forecast_start_date": forecast_start_date,
                 "row_count": len(df),
                 "rows": dataframe_to_records(df),
             }
