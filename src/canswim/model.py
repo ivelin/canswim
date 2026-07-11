@@ -705,7 +705,10 @@ class CanswimModel:
         self.hfhub.download_data(repo_id=repo_id)
 
     def load_data(
-        self, stock_tickers: List[str] = None, start_date: pd.Timestamp = None
+        self,
+        stock_tickers: List[str] = None,
+        start_date: pd.Timestamp = None,
+        min_samples: int = None,
     ):
         assert (
             self.torch_model is not None
@@ -734,9 +737,11 @@ class CanswimModel:
             f"Training loop stock subset has {len(self.stock_tickers)} tickers: ",
             self.stock_tickers,
         )
+        # Charting / forecast-scoped loads may pass a lower floor than full train min_samples
+        ms = self.min_samples if min_samples is None else int(min_samples)
         self.targets.load_data(
             stock_tickers=self.stock_tickers,
-            min_samples=self.min_samples,
+            min_samples=ms,
             start_date=start_date,
         )
         self.covariates.load_data(

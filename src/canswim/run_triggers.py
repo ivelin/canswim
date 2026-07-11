@@ -542,6 +542,16 @@ def forecast_for_tickers(
             )
         )
     if not to_run:
+        try:
+            from canswim.db import get_db_path, sync_forecasts_to_search_db
+
+            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(already))
+            if sync_fc.get("ok") and sync_fc.get("forecast_rows"):
+                messages.append(
+                    f"Charts updated with {sync_fc.get('forecast_rows')} forecast rows."
+                )
+        except Exception as e:
+            messages.append(f"Charts forecast sync note: {e}")
         return {
             "ok": True,
             "tickers": tickers,
@@ -678,6 +688,20 @@ def forecast_for_tickers(
                 forecasted_syms=list(forecasted),
                 incomplete_syms=incomplete,
             )
+
+        # Push new forecast parquet into DuckDB so Charts/Scans see lines
+        try:
+            from canswim.db import get_db_path, sync_forecasts_to_search_db
+
+            sync_fc = sync_forecasts_to_search_db(
+                get_db_path(), list(set(forecasted) | set(already))
+            )
+            if sync_fc.get("ok"):
+                messages.append(
+                    f"Charts updated with {sync_fc.get('forecast_rows', 0)} forecast rows."
+                )
+        except Exception as e:
+            messages.append(f"Charts forecast sync note: {e}")
 
         return {
             "ok": True,
