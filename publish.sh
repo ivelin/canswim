@@ -9,12 +9,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 MODE="${1:-test}"
 
-python3 -m pip install -q build twine
+# Twine >=6 supports Metadata-Version 2.4 (current setuptools)
+python3 -m pip install -q build 'twine>=6' 'pkginfo>=1.12'
 rm -rf dist/ build/ *.egg-info src/*.egg-info
 python3 -m build
 
 version="$(python3 -c "import configparser; c=configparser.ConfigParser(); c.read('setup.cfg'); print(c['metadata']['version'])")"
 echo "Built canswim==${version}"
+python3 -m twine check dist/*
 
 case "$MODE" in
   test)
