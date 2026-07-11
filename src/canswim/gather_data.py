@@ -538,11 +538,19 @@ class MarketDataGatherer:
             )
             self.last_post_fetch_plans = cov["plans"]
             if not cov["ok"]:
-                raise RuntimeError(
-                    "Market history is incomplete for: "
-                    f"{', '.join(cov['incomplete'])}. "
-                    "Could not skip remote fetch and local data is insufficient."
+                self.last_incomplete_coverage = cov
+                # Partial: some ready is OK for scoped runs; fail only if none ready
+                if mode == "forecast" and not cov.get("skipped"):
+                    from canswim.gather_policy import format_incomplete_gather_message
+
+                    raise RuntimeError(
+                        format_incomplete_gather_message(cov["plans"])
+                    )
+                logger.warning(
+                    f"Local coverage incomplete (continuing with ready symbols): "
+                    f"{cov['incomplete']}"
                 )
+                return
             logger.info("All requested symbols already covered locally; no remote call")
             return
 
@@ -626,7 +634,7 @@ class MarketDataGatherer:
                 f"history for: {', '.join(fetch_syms)}"
             )
 
-        # Scoped forecast gather: fail if any planned fetch symbol is still incomplete
+        # Coverage after merge: save whatever we have; fail only if nothing ready
         cov = evaluate_symbol_coverage(
             tickers,
             merged_df,
@@ -634,22 +642,13 @@ class MarketDataGatherer:
             train_min_start=self.min_start_date,
         )
         self.last_post_fetch_plans = cov["plans"]
+        self.last_incomplete_coverage = cov
         still_bad = cov["incomplete"]
-        if still_bad:
-            # Do not silently keep old_df as success when requested symbols failed
-            if mode == "forecast":
-                raise RuntimeError(
-                    "Could not obtain complete market history for: "
-                    f"{', '.join(still_bad)}. "
-                    "Remote download returned no usable bars for those symbols. "
-                    "Check the symbol and try again later (rate limits / API keys)."
-                )
-            logger.warning(
-                f"Train gather: still incomplete after fetch: {still_bad}"
-            )
+        ready = list(cov.get("skipped") or [])
 
         assert merged_df.index.is_unique
         Path(data_file).parent.mkdir(parents=True, exist_ok=True)
+        # Always persist bars we have so partial lists don't lose good symbols
         merged_df.to_parquet(data_file)
         logger.info(
             f"Saved stock prices to {data_file} "
@@ -657,6 +656,16 @@ class MarketDataGatherer:
             f"{merged_df.index.get_level_values('Symbol').nunique()} symbols, "
             f"latest={merged_df.index.get_level_values('Date').max()})"
         )
+
+        if still_bad:
+            if mode == "forecast" and not ready:
+                from canswim.gather_policy import format_incomplete_gather_message
+
+                raise RuntimeError(format_incomplete_gather_message(cov["plans"]))
+            logger.warning(
+                f"{'Forecast' if mode == 'forecast' else 'Train'} gather: "
+                f"still incomplete after fetch (ready={ready}): {still_bad}"
+            )
 
     def _merge_symbol_date_parquet(
         self, path: str, new_df: pd.DataFrame

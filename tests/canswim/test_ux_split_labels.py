@@ -66,6 +66,7 @@ def test_summary_helpers_are_plain():
         {
             "ok": True,
             "tickers": ["AAPL"],
+            "ready": ["AAPL"],
             "skipped_remote": ["AAPL"],
             "fetched": [],
             "db_sync": {"added": []},
@@ -73,6 +74,39 @@ def test_summary_helpers_are_plain():
     )
     assert "AAPL" in g
     assert "```" not in g
+
+    partial = _gather_summary(
+        {
+            "ok": True,
+            "partial": True,
+            "tickers": ["AAPL", "STRC"],
+            "ready": ["AAPL"],
+            "incomplete": ["STRC"],
+            "short_history": ["STRC"],
+            "messages": [
+                "Not enough trading history yet for: STRC. Recent IPOs usually cannot."
+            ],
+            "skipped_remote": ["AAPL"],
+            "fetched": [],
+            "db_sync": {"added": []},
+        }
+    )
+    assert "Partial" in partial
+    assert "STRC" in partial or "IPO" in partial
+    assert "rate limit" not in partial.lower()
+
+    fail_ipo = _gather_summary(
+        {
+            "ok": False,
+            "error": (
+                "Not enough trading history yet for: BOT. "
+                "Recent IPOs and newly listed names usually cannot be used."
+            ),
+            "short_history": ["BOT"],
+        }
+    )
+    assert "Could not finish" in fail_ipo
+    assert "BOT" in fail_ipo
     f = _forecast_summary(
         {
             "ok": True,

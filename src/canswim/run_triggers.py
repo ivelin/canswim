@@ -72,8 +72,9 @@ PREVIEW_START_BUTTON = "Check start date"
 
 INCOMPLETE_DATA_MSG = (
     "Market history is incomplete or not ready for: {symbols}. "
-    "Use Get market data / gather for these symbols, then run the forecast again. "
-    "Forecasts never invent missing prices."
+    "Use Update market data for these symbols, then run the forecast again. "
+    "Forecasts never invent missing prices. "
+    "Recent IPOs often lack enough history (~2 years of sessions)."
 )
 
 COVARIATE_FAIL_MSG = (
@@ -397,14 +398,27 @@ def gather_for_tickers(
         pre_plans = getattr(g, "last_price_fetch_plans", []) or []
         post_plans = getattr(g, "last_post_fetch_plans", None) or pre_plans
         written = list(getattr(g, "last_remote_symbols_written", None) or [])
+        cov = getattr(g, "last_incomplete_coverage", None) or {}
 
-        from canswim.gather_policy import incomplete_symbols
+        from canswim.gather_policy import (
+            format_incomplete_gather_message,
+            incomplete_symbols,
+        )
 
         skipped = [p.symbol for p in pre_plans if p.action == "skip"]
         # Only count as downloaded when remote actually returned bars for the symbol
         planned_fetch = {p.symbol for p in pre_plans if p.action == "fetch"}
         fetched = sorted(planned_fetch & set(written))
         still_incomplete = incomplete_symbols(post_plans)
+        ready = [p.symbol for p in post_plans if p.action == "skip"]
+        short_hist = list(cov.get("short_history") or [])
+        no_hist = list(cov.get("no_history") or [])
+        if not short_hist and not no_hist and still_incomplete:
+            from canswim.gather_policy import classify_incomplete_plans
+
+            buckets = classify_incomplete_plans(post_plans)
+            short_hist = buckets["short_history"]
+            no_hist = buckets["no_history"]
 
         if skipped:
             messages.append(
@@ -421,11 +435,17 @@ def gather_for_tickers(
             messages.append("No remote price download needed.")
 
         if still_incomplete:
+            friendly = cov.get("message") or format_incomplete_gather_message(
+                post_plans
+            )
+        else:
+            friendly = ""
+
+        if still_incomplete and not ready:
             return {
                 "ok": False,
-                "error": INCOMPLETE_DATA_MSG.format(
-                    symbols=", ".join(still_incomplete)
-                ),
+                "error": friendly
+                or INCOMPLETE_DATA_MSG.format(symbols=", ".join(still_incomplete)),
                 "tickers": tickers,
                 "rejected": parsed.get("rejected", []),
                 "messages": messages,
@@ -433,34 +453,47 @@ def gather_for_tickers(
                 "fetched": fetched,
                 "skipped_remote": skipped,
                 "incomplete": still_incomplete,
+                "short_history": short_hist,
+                "no_history": no_hist,
+                "ready": [],
                 "need_gather": True,
             }
 
-        if include_covariates:
-            # Fundamentals required by the model stack (not just OHLCV)
-            for name, fn in (
-                ("dividends", g.gather_stock_dividends),
-                ("splits", g.gather_stock_splits),
-                ("earnings", g.gather_earnings_data),
-                ("key_metrics", g.gather_stock_key_metrics),
-                ("institutional_ownership", g.gather_institutional_stock_ownership),
-                ("analyst_estimates", g.gather_analyst_estimates),
-            ):
-                try:
-                    fn()
-                except Exception as e:
-                    messages.append(f"{name} note: {e}")
+        if still_incomplete and ready:
+            messages.append(friendly)
+            messages.append(
+                "Saved data for symbols that are ready; skipped forecasting "
+                "for names that need more history."
+            )
 
-        # Ensure symbols appear on a stock list CSV for forecast path
-        _ensure_symbols_on_list(tickers)
+        # Covariates + DB sync only for forecast-ready symbols
+        work_tickers = ready if ready else tickers
+        if include_covariates and work_tickers:
+            prev_set = g.stocks_ticker_set
+            g.stocks_ticker_set = list(work_tickers)
+            try:
+                for name, fn in (
+                    ("dividends", g.gather_stock_dividends),
+                    ("splits", g.gather_stock_splits),
+                    ("earnings", g.gather_earnings_data),
+                    ("key_metrics", g.gather_stock_key_metrics),
+                    ("institutional_ownership", g.gather_institutional_stock_ownership),
+                    ("analyst_estimates", g.gather_analyst_estimates),
+                ):
+                    try:
+                        fn()
+                    except Exception as e:
+                        messages.append(f"{name} note: {e}")
+            finally:
+                g.stocks_ticker_set = prev_set
 
-        # Sync DuckDB search tables so Charts/Scans dropdown includes new symbols
-        # (dashboard --same_data reuses DB and would otherwise stay on old list)
+        _ensure_symbols_on_list(work_tickers)
+
         db_sync: dict[str, Any] | None = None
         try:
             from canswim.db import sync_gathered_symbols, get_db_path
 
-            db_sync = sync_gathered_symbols(get_db_path(), tickers)
+            db_sync = sync_gathered_symbols(get_db_path(), work_tickers)
             if db_sync.get("ok"):
                 if db_sync.get("added"):
                     messages.append(
@@ -482,21 +515,26 @@ def gather_for_tickers(
 
         return {
             "ok": True,
+            "partial": bool(still_incomplete),
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "messages": messages,
-            "processed": tickers,
+            "processed": work_tickers,
             "price_plans": [p.as_dict() for p in post_plans],
             "fetched": fetched,
             "skipped_remote": skipped,
-            "incomplete": [],
+            "incomplete": still_incomplete,
+            "short_history": short_hist,
+            "no_history": no_hist,
+            "ready": ready,
             "db_sync": db_sync,
         }
     except Exception as e:
         logger.exception("gather_for_tickers failed")
+        err = str(e)
         return {
             "ok": False,
-            "error": str(e),
+            "error": err,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "messages": messages,
