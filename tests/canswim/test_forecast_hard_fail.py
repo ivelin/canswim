@@ -35,8 +35,12 @@ def test_forecast_hard_fail_when_no_groups(monkeypatch):
             "latest_close_used": None,
         },
     ):
-        with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-            r = forecast_for_tickers("AAPL", forecast_start_date="2026-03-02")
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            return_value=set(),
+        ):
+            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                r = forecast_for_tickers("AAPL", forecast_start_date="2026-03-02")
 
     assert r["ok"] is False
     assert r.get("need_gather") is True
@@ -70,10 +74,14 @@ def test_forecast_hard_fail_when_partial_skip(monkeypatch):
             "latest_close_used": None,
         },
     ):
-        with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-            r = forecast_for_tickers(
-                "AAPL,MSFT", forecast_start_date="2026-03-02"
-            )
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            return_value=set(),
+        ):
+            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                r = forecast_for_tickers(
+                    "AAPL,MSFT", forecast_start_date="2026-03-02"
+                )
 
     assert r["ok"] is False
     assert r.get("need_gather") is True

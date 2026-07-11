@@ -16,6 +16,7 @@ returns structured dicts consumed by all three surfaces.
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 import tempfile
@@ -75,10 +76,66 @@ INCOMPLETE_DATA_MSG = (
     "Forecasts never invent missing prices."
 )
 
+ALREADY_FORECAST_MSG = (
+    "Forecast already on file for {symbols} (start {start}). "
+    "Skipped re-run to save time and avoid duplicate data."
+)
+
 RUNS_OPT_IN_HELP = (
     "MCP data/forecast tools need MCP_ALLOW_RUNS=1. "
     "CLI and the dashboard do not. MCP stays read-only by default."
 )
+
+# Default min rows in a saved forecast partition (= typical pred_horizon)
+DEFAULT_MIN_FORECAST_ROWS = 42
+
+
+def list_symbols_with_saved_forecast(
+    tickers: Sequence[str],
+    start_date: str,
+    *,
+    data_dir: Optional[str] = None,
+    forecast_subdir: Optional[str] = None,
+    min_horizon_rows: int = DEFAULT_MIN_FORECAST_ROWS,
+) -> set[str]:
+    """Return symbols that already have a complete forecast partition for start_date.
+
+    Lightweight (duckdb + parquet only) — no torch / model load. Used to skip
+    expensive re-forecasts for the same origin.
+    """
+    import duckdb
+
+    syms = sorted({str(t).strip().upper() for t in tickers if t and str(t).strip()})
+    if not syms:
+        return set()
+    data_dir = data_dir or os.getenv("data_dir", "data")
+    forecast_subdir = forecast_subdir or os.getenv("forecast_subdir", "forecast/")
+    fsd = pd.Timestamp(start_date).tz_localize(None).normalize()
+    y, m, d = int(fsd.year), int(fsd.month), int(fsd.day)
+    forecast_glob = f"{data_dir}/{forecast_subdir}**/*.parquet"
+    if not glob.glob(forecast_glob, recursive=True):
+        return set()
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    try:
+        df = duckdb.sql(
+            f"""--sql
+            SELECT upper(cast(symbol AS VARCHAR)) AS symbol, count(*) AS n
+            FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+            WHERE upper(cast(f.symbol AS VARCHAR)) IN ({in_list})
+              AND forecast_start_year = {y}
+              AND forecast_start_month = {m}
+              AND forecast_start_day = {d}
+            GROUP BY 1
+            HAVING count(*) >= {int(min_horizon_rows)}
+            """
+        ).df()
+    except Exception as e:
+        logger.warning(f"Could not scan existing forecasts ({e}); will not skip")
+        return set()
+    if df is None or df.empty:
+        return set()
+    col = "symbol" if "symbol" in df.columns else df.columns[0]
+    return {str(s).upper() for s in df[col].tolist()}
 
 
 def parse_ticker_list(
@@ -449,7 +506,11 @@ def forecast_for_tickers(
         }
 
     resolved = start_info["start"]
+    messages: list[str] = list(parsed.get("messages") or [])
+    messages.append(f"Using start date {resolved}.")
+
     if dry_run:
+        already = list_symbols_with_saved_forecast(tickers, resolved)
         return {
             "ok": True,
             "dry_run": True,
@@ -458,32 +519,61 @@ def forecast_for_tickers(
             "resolved_start": start_info,
             "forecasted": [],
             "skipped": [],
-            "messages": ["Check only: no forecast model was run."],
+            "already_have_forecast": sorted(already),
+            "messages": [
+                "Check only: no forecast model was run.",
+                (
+                    ALREADY_FORECAST_MSG.format(
+                        symbols=", ".join(sorted(already)), start=resolved
+                    )
+                    if already
+                    else "No existing forecast found for this start; a full run would load the model."
+                ),
+            ],
         }
 
-    # Write a temporary symbol list and point stock_tickers_list at it
-    tmp_dir = Path(tempfile.mkdtemp(prefix="canswim_fc_"))
-    list_path = tmp_dir / "run_tickers.csv"
-    pd.DataFrame({"Symbol": tickers}).to_csv(list_path, index=False)
+    # --- Skip expensive model work when partitions already exist ---
+    already = list_symbols_with_saved_forecast(tickers, resolved)
+    to_run = [t for t in tickers if t not in already]
+    if already:
+        messages.append(
+            ALREADY_FORECAST_MSG.format(
+                symbols=", ".join(sorted(already)), start=resolved
+            )
+        )
+    if not to_run:
+        return {
+            "ok": True,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": [],
+            "skipped": [],
+            "already_have_forecast": sorted(already),
+            "messages": messages,
+            "already_saved": True,
+            "model_loaded": False,
+        }
 
-    # CanswimForecaster reads data_dir/data-3rd-party/stock_tickers_list
+    messages.append(
+        f"Will forecast (not on file yet): {', '.join(to_run)}"
+    )
+
+    # Write a temporary symbol list and point stock_tickers_list at it
     data_dir = os.getenv("data_dir", "data")
     third = os.getenv("data-3rd-party", "data-3rd-party")
     dest_dir = Path(data_dir) / third
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_list = dest_dir / "run_tickers.csv"
-    pd.DataFrame({"Symbol": tickers}).to_csv(dest_list, index=False)
+    pd.DataFrame({"Symbol": to_run}).to_csv(dest_list, index=False)
 
     prev_list = os.environ.get("stock_tickers_list")
     os.environ["stock_tickers_list"] = "run_tickers.csv"
-    # Keep n_stocks large enough for the batch
     prev_n = os.environ.get("n_stocks")
-    os.environ["n_stocks"] = str(max(len(tickers), 1))
+    os.environ["n_stocks"] = str(max(len(to_run), 1))
 
     forecasted: list[str] = []
     skipped: list[str] = []
-    messages: list[str] = list(parsed.get("messages") or [])
-    messages.append(f"Using start date {resolved}.")
 
     def _incomplete_result(
         *,
@@ -503,9 +593,11 @@ def forecast_for_tickers(
             "resolved_start": start_info,
             "forecasted": forecasted_syms,
             "skipped": incomplete_syms,
+            "already_have_forecast": sorted(already),
             "messages": messages,
             "already_saved": already_saved,
             "need_gather": True,
+            "model_loaded": True,
         }
 
     try:
@@ -541,10 +633,13 @@ def forecast_for_tickers(
                     forecasted.extend(clean.keys())
                     any_saved = True
             else:
-                messages.append("No symbols had enough complete history in this batch.")
+                messages.append(
+                    "No symbols had enough complete history in this batch."
+                )
 
         if not any_group:
             if getattr(cf, "all_already_saved", False):
+                # Race: files appeared after our pre-check
                 messages.append("Forecasts for this start date already exist.")
                 return {
                     "ok": True,
@@ -553,30 +648,31 @@ def forecast_for_tickers(
                     "resolved_start": start_info,
                     "forecasted": [],
                     "skipped": [],
+                    "already_have_forecast": sorted(set(already) | set(to_run)),
                     "messages": messages,
                     "already_saved": True,
+                    "model_loaded": True,
                 }
             return _incomplete_result(
                 forecasted_syms=[],
-                incomplete_syms=list(tickers),
+                incomplete_syms=list(to_run),
                 extra_error=INCOMPLETE_DATA_MSG.format(
-                    symbols=", ".join(tickers)
+                    symbols=", ".join(to_run)
                 ),
             )
         if not any_saved:
             return _incomplete_result(
                 forecasted_syms=[],
-                incomplete_syms=[t for t in tickers if t not in forecasted],
+                incomplete_syms=[t for t in to_run if t not in forecasted],
             )
 
-        # Optional HF upload only if enabled
         try:
             cf.upload_data()
         except Exception as e:
             messages.append(f"Cloud upload skipped: {e}")
 
-        incomplete = [t for t in tickers if t not in set(forecasted)]
-        # Hard-fail: do not report success if any requested symbol lacked clean data
+        # Incomplete only among symbols we tried to run (not ones already on file)
+        incomplete = [t for t in to_run if t not in set(forecasted)]
         if incomplete:
             return _incomplete_result(
                 forecasted_syms=list(forecasted),
@@ -590,7 +686,9 @@ def forecast_for_tickers(
             "resolved_start": start_info,
             "forecasted": forecasted,
             "skipped": [],
+            "already_have_forecast": sorted(already),
             "messages": messages,
+            "model_loaded": True,
         }
     except Exception as e:
         logger.exception("forecast_for_tickers failed")

@@ -52,6 +52,38 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     # Two separate status outputs
     assert "gatherStatus" in src
     assert "forecastStatus" in src
+    # JSON is advanced/collapsed, not primary body
+    assert "Advanced details" in src
+    assert "gatherDetails" in src
+    assert "forecastDetails" in src
+    assert "open=False" in src
+
+
+def test_summary_helpers_are_plain():
+    from canswim.dashboard.run_tab import _forecast_summary, _gather_summary
+
+    g = _gather_summary(
+        {
+            "ok": True,
+            "tickers": ["AAPL"],
+            "skipped_remote": ["AAPL"],
+            "fetched": [],
+            "db_sync": {"added": []},
+        }
+    )
+    assert "AAPL" in g
+    assert "```" not in g
+    f = _forecast_summary(
+        {
+            "ok": True,
+            "already_saved": True,
+            "forecasted": [],
+            "already_have_forecast": ["QLYS"],
+            "resolved_start": {"start": "2026-07-06"},
+        }
+    )
+    assert "Already done" in f or "already" in f.lower()
+    assert "```json" not in f
 
 
 def test_cli_help_separates_gather_and_forecast():

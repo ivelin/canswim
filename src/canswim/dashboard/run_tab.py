@@ -1,6 +1,7 @@
 """Dashboard: separate Get market data vs Run a forecast panels.
 
 Uses the same ``canswim.run_triggers`` orchestration as CLI and MCP.
+Consumer UI shows a short status line; full JSON is under Advanced details.
 """
 
 from __future__ import annotations
@@ -28,8 +29,71 @@ from canswim.run_triggers import (
 )
 
 
-def _fmt_result(payload: dict) -> str:
-    return f"```json\n{json.dumps(payload, indent=2, default=str)}\n```"
+def _json_details(payload: dict) -> str:
+    return json.dumps(payload, indent=2, default=str)
+
+
+def _gather_summary(result: dict) -> str:
+    if not result.get("ok"):
+        return f"❌ **Could not update market data.**  \n{result.get('error') or 'Unknown error.'}"
+    tickers = result.get("tickers") or []
+    skipped = result.get("skipped_remote") or []
+    fetched = result.get("fetched") or []
+    added = (result.get("db_sync") or {}).get("added") or []
+    lines = [f"✅ **Market data ready** for {', '.join(tickers) or '—' }."]
+    if skipped and not fetched:
+        lines.append("Already up to date locally — no download needed.")
+    elif skipped:
+        lines.append(f"Already local: {', '.join(skipped)}.")
+    if fetched:
+        lines.append(f"Downloaded or refreshed: {', '.join(fetched)}.")
+    if added:
+        lines.append(f"Added to Charts list: {', '.join(added)}.")
+    return "  \n".join(lines)
+
+
+def _forecast_summary(result: dict) -> str:
+    start = (result.get("resolved_start") or {}).get("start") or "—"
+    if result.get("dry_run"):
+        already = result.get("already_have_forecast") or []
+        if already:
+            return (
+                f"ℹ️ **Check only** — start date `{start}`.  \n"
+                f"Already on file (would skip): {', '.join(already)}."
+            )
+        return f"ℹ️ **Check only** — start date `{start}`. No model run."
+    if result.get("already_saved") and not result.get("forecasted"):
+        already = result.get("already_have_forecast") or result.get("tickers") or []
+        return (
+            f"✅ **Already done** for {', '.join(already)} "
+            f"(start `{start}`).  \n"
+            "Skipped re-run — no new forecast files written."
+        )
+    if not result.get("ok"):
+        need = result.get("need_gather")
+        head = (
+            "❌ **Need more market data first.**"
+            if need
+            else "❌ **Forecast failed.**"
+        )
+        return f"{head}  \n{result.get('error') or 'Unknown error.'}"
+    forecasted = result.get("forecasted") or []
+    already = result.get("already_have_forecast") or []
+    lines = [f"✅ **Forecast complete** (start `{start}`)."]
+    if forecasted:
+        lines.append(f"New: {', '.join(forecasted)}.")
+    if already:
+        lines.append(f"Already on file (skipped): {', '.join(already)}.")
+    return "  \n".join(lines)
+
+
+def _start_summary(info: dict) -> str:
+    if info.get("ok"):
+        return (
+            f"✅ **Start date:** `{info.get('start')}`  \n"
+            f"Default if left blank: `{info.get('live_default')}`."
+        )
+    return f"❌ **Could not use that date.**  \n{info.get('error') or ''}"
 
 
 class RunTab:
@@ -46,8 +110,7 @@ class RunTab:
         gr.Markdown(
             """
 ## Update data & run forecasts
-Two separate steps: **get market data**, then **run a forecast**.  
-Use the same stock symbols in both when you want a full path from download to prediction.
+Two separate steps: **get market data**, then **run a forecast**.
             """
         )
 
@@ -60,11 +123,18 @@ Use the same stock symbols in both when you want a full path from download to pr
                 placeholder="AAPL, MSFT",
                 info=TICKERS_HELP,
             )
-            # primary (not secondary): Soft theme greys secondary and looks disabled
             self.gatherBtn = gr.Button(GATHER_BUTTON, variant="primary")
             self.gatherStatus = gr.Markdown(
                 value="_Enter symbols, then click Update market data._"
             )
+            with gr.Accordion("Advanced details", open=False):
+                self.gatherDetails = gr.Code(
+                    label="Technical log",
+                    language="json",
+                    lines=8,
+                    interactive=False,
+                    value="",
+                )
 
         gr.Markdown("---")
 
@@ -89,8 +159,16 @@ Use the same stock symbols in both when you want a full path from download to pr
             self.forecastStatus = gr.Markdown(
                 value="_Enter symbols, optionally check the start date, then run a forecast._"
             )
+            with gr.Accordion("Advanced details", open=False):
+                self.forecastDetails = gr.Code(
+                    label="Technical log",
+                    language="json",
+                    lines=8,
+                    interactive=False,
+                    value="",
+                )
 
-        gather_outputs = [self.gatherStatus]
+        gather_outputs = [self.gatherStatus, self.gatherDetails]
         if self.charts_ticker_dropdown is not None:
             gather_outputs.append(self.charts_ticker_dropdown)
 
@@ -102,24 +180,20 @@ Use the same stock symbols in both when you want a full path from download to pr
         self.resolveBtn.click(
             fn=self.preview_start,
             inputs=[self.forecastDate],
-            outputs=[self.forecastStatus],
+            outputs=[self.forecastStatus, self.forecastDetails],
         )
         self.forecastBtn.click(
             fn=self.do_forecast,
             inputs=[self.forecastTickers, self.forecastDate],
-            outputs=[self.forecastStatus],
+            outputs=[self.forecastStatus, self.forecastDetails],
         )
 
     def _charts_dropdown_update(self):
-        """Refresh Charts symbol list after search-DB sync."""
         if self.charts_ticker_dropdown is None or not self.db_path:
             return None
         try:
             choices = sorted(list_tickers(self.db_path))
-            current = None
-            # keep a sensible selection if possible
-            if choices:
-                current = choices[0]
+            current = choices[0] if choices else None
             return gr.update(choices=choices, value=current)
         except Exception as e:
             logger.warning(f"Could not refresh Charts dropdown: {e}")
@@ -127,67 +201,40 @@ Use the same stock symbols in both when you want a full path from download to pr
 
     def preview_start(self, forecast_date):
         info = resolve_start_for_run(forecast_date or None)
-        if info.get("ok"):
-            return (
-                f"**Start date:** `{info.get('start')}`  \n"
-                f"Default if left blank: `{info.get('live_default')}`\n\n"
-                + _fmt_result(info)
-            )
-        return (
-            f"**Could not use that date:** {info.get('error')}\n\n"
-            + _fmt_result(info)
-        )
+        return _start_summary(info), _json_details(info)
 
     def do_gather(self, tickers_text):
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
-            msg = (
-                f"**Update failed:** {parsed.get('error')}\n\n"
-                + _fmt_result(parsed)
+            status = (
+                f"❌ **Could not update market data.**  \n"
+                f"{parsed.get('error') or 'Invalid symbols.'}"
             )
+            details = _json_details(parsed)
             if self.charts_ticker_dropdown is not None:
-                return msg, gr.update()
-            return msg
+                return status, details, gr.update()
+            return status, details
         logger.info(f"Dashboard gather for {parsed['tickers']}")
         result = gather_for_tickers(tickers_text, force_allow=True)
-        if result.get("ok"):
-            skipped = result.get("skipped_remote") or []
-            fetched = result.get("fetched") or []
-            summary = (
-                f"**Market data updated** for "
-                f"`{', '.join(result.get('tickers') or [])}`"
-            )
-            if skipped:
-                summary += f"  \nAlready local: {', '.join(skipped)}"
-            if fetched:
-                summary += f"  \nDownloaded/refreshed: {', '.join(fetched)}"
-            added = (result.get("db_sync") or {}).get("added") or []
-            if added:
-                summary += (
-                    f"  \n**Now in Charts list:** {', '.join(added)}"
-                )
-            msg = summary + "\n\n" + _fmt_result(result)
-        else:
-            msg = (
-                f"**Update failed:** {result.get('error')}\n\n"
-                + _fmt_result(result)
-            )
+        status = _gather_summary(result)
+        details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
-            return msg, self._charts_dropdown_update()
-        return msg
+            return status, details, self._charts_dropdown_update()
+        return status, details
 
     def do_forecast(self, tickers_text, forecast_date):
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             return (
-                f"**Forecast failed:** {parsed.get('error')}\n\n"
-                + _fmt_result(parsed)
+                f"❌ **Forecast failed.**  \n{parsed.get('error') or 'Invalid symbols.'}",
+                _json_details(parsed),
             )
         start_preview = resolve_start_for_run(forecast_date or None)
         if not start_preview.get("ok"):
             return (
-                f"**Forecast failed (start date):** {start_preview.get('error')}\n\n"
-                + _fmt_result(start_preview)
+                f"❌ **Forecast failed (start date).**  \n"
+                f"{start_preview.get('error') or ''}",
+                _json_details(start_preview),
             )
         logger.info(
             f"Dashboard forecast for {parsed['tickers']} "
@@ -198,13 +245,4 @@ Use the same stock symbols in both when you want a full path from download to pr
             forecast_start_date=forecast_date or None,
             force_allow=True,
         )
-        if result.get("ok"):
-            rs = (result.get("resolved_start") or {}).get("start")
-            return (
-                f"**Forecast complete** · start `{rs}` · "
-                f"symbols `{result.get('forecasted')}`\n\n"
-                + _fmt_result(result)
-            )
-        need = result.get("need_gather")
-        prefix = "**Need more market data**" if need else "**Forecast failed**"
-        return f"{prefix}: {result.get('error')}\n\n{_fmt_result(result)}"
+        return _forecast_summary(result), _json_details(result)
