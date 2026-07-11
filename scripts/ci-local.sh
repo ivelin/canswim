@@ -38,6 +38,12 @@ fi
 
 mkdir -p data/data-3rd-party data/forecast
 
+# Ensure editable install has test deps (pytest moved to extras_require[dev])
+if ! "${PY[@]}" -c "import pytest" 2>/dev/null; then
+  echo "==> installing package with [dev] extras for pytest"
+  "${PY[@]}" -m pip install -q -e ".[dev]"
+fi
+
 echo "==> pytest tests/canswim/"
 # Recurse package (includes tests/canswim/dashboard/, etc.)
 "${PY[@]}" -m pytest tests/canswim/ -q --tb=short
