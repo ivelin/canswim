@@ -93,11 +93,9 @@ class ChartTab:
         logger.info(f"rr table df: {df}")
         if df is None or df.empty:
             return df
-        return df.style.format(
-            precision=2,
-            thousands=",",
-            decimal=".",
-        )
+        from canswim.dashboard.formatting import format_forecast_metrics_table
+
+        return format_forecast_metrics_table(df)
 
     def plot_quantiles_df(
         self,

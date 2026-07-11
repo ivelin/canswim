@@ -205,9 +205,6 @@ class ScanTab:
             f"**{n} symbol{'s' if n != 1 else ''}** · as-of `{asof}` · "
             f"reward ≥ {reward}% · R/R ≥ {rr} · low conf {lowq}%"
         )
-        styled = df.style.format(
-            precision=2,
-            thousands=",",
-            decimal=".",
-        )
-        return status, styled
+        from canswim.dashboard.formatting import format_forecast_metrics_table
+
+        return status, format_forecast_metrics_table(df)
