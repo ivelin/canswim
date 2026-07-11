@@ -129,7 +129,34 @@ class CanswimPlayground:
                 ],
             )
 
-        demo.queue().launch()
+        import os
+
+        server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+        server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+        share = os.getenv("GRADIO_SHARE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        # Gradio probes localhost after bind; some hosts/sandboxes fail that
+        # check even when the server is fine. Bypass when env asks, or fall back.
+        if os.getenv("GRADIO_SKIP_LOCALHOST_CHECK", "1").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            try:
+                import gradio.networking as _gn
+
+                _gn.url_ok = lambda _url: True  # type: ignore[method-assign]
+            except Exception:
+                pass
+        demo.queue().launch(
+            server_name=server_name,
+            server_port=server_port,
+            share=share,
+            inbrowser=False,
+        )
 
 
 def main(same_data=False):
