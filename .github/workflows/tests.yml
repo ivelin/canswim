@@ -34,4 +34,4 @@ jobs:
     
     - name: Run tests
       run: |
-        python -m pytest tests/canswim/test_*.py -v
+        python -m pytest tests/canswim/ -v
