@@ -21,6 +21,8 @@ from canswim.db import (
     list_tickers,
     run_select,
     scan_forecasts,
+    sync_gathered_symbols,
+    sync_forecasts_to_search_db,
     tables_present,
 )
 
@@ -97,10 +99,84 @@ def test_list_tickers(mini_db):
     assert symbols == ["AAA", "BBB"]
 
 
+def test_sync_gathered_symbols_adds_to_charts_list(mini_db, tmp_path: Path):
+    """Gathered symbols must land in stock_tickers + close_price for Charts."""
+    import numpy as np
+
+    price_path = tmp_path / "prices.parquet"
+    idx = pd.MultiIndex.from_product(
+        [["CCC"], pd.bdate_range("2025-01-02", periods=5)],
+        names=["Symbol", "Date"],
+    )
+    pdf = pd.DataFrame(
+        {
+            "Open": 1.0,
+            "High": 1.1,
+            "Low": 0.9,
+            "Close": np.linspace(10, 14, 5),
+            "Volume": 1000.0,
+        },
+        index=idx,
+    )
+    pdf.to_parquet(price_path)
+
+    before = list_tickers(mini_db)
+    assert "CCC" not in before
+    res = sync_gathered_symbols(
+        mini_db, ["CCC"], stocks_price_path=str(price_path)
+    )
+    assert res["ok"] is True
+    assert res["added"] == ["CCC"]
+    assert res["close_rows"] == 5
+    assert "CCC" in list_tickers(mini_db)
+    # Idempotent second call
+    res2 = sync_gathered_symbols(
+        mini_db, ["CCC"], stocks_price_path=str(price_path)
+    )
+    assert res2["ok"] is True
+    assert res2["added"] == []
+    assert "CCC" in list_tickers(mini_db)
+
+
 def test_get_forecast_rows_latest(mini_db):
     df = get_forecast_rows(mini_db, "AAA", latest_only=True)
     assert len(df) == 2
     assert set(df["symbol"]) == {"AAA"}
+
+
+def test_sync_forecasts_to_search_db_from_hive_parquet(mini_db, tmp_path: Path):
+    """Forecast parquet must land in DuckDB so Charts can plot lines."""
+    # Build a tiny hive-style forecast partition for CCC
+    froot = tmp_path / "forecast" / "symbol=CCC" / "forecast_start_year=2026" / "forecast_start_month=3" / "forecast_start_day=2"
+    froot.mkdir(parents=True)
+    dates = pd.bdate_range("2026-03-02", periods=42)
+    fdf = pd.DataFrame(
+        {
+            "time": dates,
+            "symbol": "CCC",
+            "close_quantile_0.01": 90.0,
+            "close_quantile_0.05": 92.0,
+            "close_quantile_0.2": 95.0,
+            "close_quantile_0.5": 100.0,
+            "close_quantile_0.8": 105.0,
+            "close_quantile_0.95": 108.0,
+            "close_quantile_0.99": 110.0,
+            "forecast_start_year": 2026,
+            "forecast_start_month": 3,
+            "forecast_start_day": 2,
+        }
+    )
+    fdf.to_parquet(froot / "part.parquet", index=False)
+
+    before = get_forecast_rows(mini_db, "CCC", latest_only=False)
+    assert before is None or before.empty or len(before) == 0
+    res = sync_forecasts_to_search_db(
+        mini_db, ["CCC"], forecast_path=str(tmp_path / "forecast")
+    )
+    assert res["ok"] is True
+    assert res["forecast_rows"] == 42
+    after = get_forecast_rows(mini_db, "CCC", latest_only=False)
+    assert len(after) == 42
 
 
 def test_get_close_prices(mini_db):

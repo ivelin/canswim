@@ -1,0 +1,104 @@
+"""Skip re-forecast when partitions already exist (no model load)."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from canswim.run_triggers import (
+    ALREADY_FORECAST_MSG,
+    forecast_for_tickers,
+    list_symbols_with_saved_forecast,
+)
+
+
+def test_list_symbols_with_saved_forecast_empty_tree(tmp_path, monkeypatch):
+    monkeypatch.setenv("data_dir", str(tmp_path))
+    monkeypatch.setenv("forecast_subdir", "forecast/")
+    (tmp_path / "forecast").mkdir()
+    got = list_symbols_with_saved_forecast(["AAPL"], "2026-03-02")
+    assert got == set()
+
+
+def test_forecast_skips_model_when_all_already_saved(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    with patch(
+        "canswim.run_triggers.resolve_start_for_run",
+        return_value={
+            "ok": True,
+            "start": "2026-03-02",
+            "reason": "snapped_week_start",
+            "live_default": "2026-07-13",
+            "input": None,
+            "error": None,
+            "latest_close_used": None,
+        },
+    ):
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            return_value={"AAPL", "MSFT"},
+        ):
+            with patch("canswim.forecast.CanswimForecaster") as CF:
+                r = forecast_for_tickers(
+                    "AAPL,MSFT", forecast_start_date="2026-03-02"
+                )
+    assert r["ok"] is True
+    assert r.get("already_saved") is True
+    assert r.get("model_loaded") is False
+    assert set(r.get("already_have_forecast") or []) == {"AAPL", "MSFT"}
+    assert r.get("forecasted") == []
+    CF.assert_not_called()
+    assert "already" in " ".join(r.get("messages") or []).lower() or any(
+        "Skipped" in m or "already" in m.lower() for m in (r.get("messages") or [])
+    )
+
+
+def test_forecast_only_runs_missing_symbols(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    monkeypatch.setenv("data_dir", "/tmp/canswim_fc_skip_test")
+    monkeypatch.setenv("data-3rd-party", "data-3rd-party")
+
+    cf = MagicMock()
+    cf.all_already_saved = False
+    cf.prep_next_stock_group.return_value = iter([0])
+    qdf = MagicMock()
+    qdf.isna.return_value.all.return_value.all.return_value = False
+    mock_ts = MagicMock()
+    mock_ts.quantile_df.return_value = qdf
+    cf.get_forecast.return_value = {"MSFT": mock_ts}
+
+    with patch(
+        "canswim.run_triggers.resolve_start_for_run",
+        return_value={
+            "ok": True,
+            "start": "2026-03-02",
+            "reason": "snapped_week_start",
+            "live_default": "2026-07-13",
+            "input": None,
+            "error": None,
+            "latest_close_used": None,
+        },
+    ):
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            return_value={"AAPL"},  # AAPL done; only MSFT needs work
+        ):
+            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                r = forecast_for_tickers(
+                    "AAPL,MSFT", forecast_start_date="2026-03-02"
+                )
+
+    assert r["ok"] is True
+    assert r.get("model_loaded") is True
+    assert r.get("forecasted") == ["MSFT"]
+    assert "AAPL" in (r.get("already_have_forecast") or [])
+    # Only MSFT should have been in the run list (prep still called once)
+    cf.prep_next_stock_group.assert_called_once()
+
+
+def test_consumer_already_msg_plain():
+    msg = ALREADY_FORECAST_MSG.format(symbols="QLYS", start="2026-07-06")
+    assert "QLYS" in msg
+    assert "TiDE" not in msg
+    assert "parquet" not in msg.lower()

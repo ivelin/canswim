@@ -258,29 +258,63 @@ class ChartTab:
         return ax
 
     def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
-        load_start_date = pd.Timestamp.now() - BDay(
-            n=self.canswim_model.min_samples + self.canswim_model.train_history
+        # Chart / forecast display only needs forecast-horizon history, not full train min_samples
+        # (train min_samples ≈ lookback*2 + horizons; scoped gather keeps ~2y of prices).
+        th = int(self.canswim_model.train_history)
+        ph = int(self.canswim_model.pred_horizon)
+        chart_min_samples = th + ph + ph  # same floor as forecast_only mode
+        load_start_date = pd.Timestamp.now() - BDay(n=chart_min_samples + th)
+        self.canswim_model.load_data(
+            stock_tickers=[ticker],
+            start_date=load_start_date,
+            min_samples=chart_min_samples,
         )
-        self.canswim_model.load_data(stock_tickers=[ticker], start_date=load_start_date)
         # prepare timeseries for forecast
         self.canswim_model.prepare_stock_price_data(start_date=load_start_date)
         fig, axes = plt.subplots(figsize=(20, 12))
         target = self.get_target(ticker)
         # reward risk df
         rr_df = None
+        plot_start_date = pd.Timestamp.now() - BDay(th)
+        lq = (100 - lowq) / 100
         if target is None:
-            msg = f"Not enough data available to forecast {ticker}"
-            gr.Info(msg)
-            plt.text(0.5, 0.5, msg, fontsize="large")
+            # Fallback: plot closes from search DB so newly gathered symbols still show a price chart
+            from canswim.db import get_close_prices
+
+            try:
+                close_df = get_close_prices(
+                    self.db_path,
+                    ticker,
+                    start=plot_start_date.strftime("%Y-%m-%d"),
+                )
+            except Exception as e:
+                logger.warning(f"close_price fallback failed for {ticker}: {e}")
+                close_df = None
+            if close_df is not None and len(close_df) > 0:
+                date_col = "date" if "date" in close_df.columns else "Date"
+                close_col = "close" if "close" in close_df.columns else "Close"
+                s = close_df.set_index(date_col)[close_col].sort_index()
+                s.index = pd.to_datetime(s.index)
+                axes.plot(s.index, s.values, label=f"{ticker} Close actual")
+                msg = (
+                    f"{ticker}: showing local prices. "
+                    f"No forecast lines yet — run a forecast for this symbol on the Run tab."
+                )
+                gr.Info(msg)
+                axes.set_title(msg)
+            else:
+                msg = (
+                    f"Not enough local price history for {ticker} to chart. "
+                    f"Use Run → Update market data first."
+                )
+                gr.Info(msg)
+                plt.text(0.5, 0.5, msg, fontsize="large", ha="center", va="center")
         else:
-            plot_start_date = pd.Timestamp.now() - BDay(
-                self.canswim_model.train_history
-            )
             visible_target = target.drop_before(plot_start_date)
-            saved_forecast_df_list = self.get_saved_forecasts(ticker=ticker, start_date=plot_start_date)
-            lq = (100 - lowq) / 100
+            saved_forecast_df_list = self.get_saved_forecasts(
+                ticker=ticker, start_date=plot_start_date
+            )
             visible_target.plot(label=f"{ticker} Close actual")
-            # logger.debug(f"Plotting saved forecast: {saved_forecast_df_list}")
             if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
                 for forecast in saved_forecast_df_list:
                     self.plot_quantiles_df(
@@ -289,6 +323,11 @@ class ChartTab:
                         high_quantile=0.95,
                         label=f"{ticker} Close forecast",
                     )
+            else:
+                gr.Info(
+                    f"{ticker}: prices shown. No saved forecasts yet — "
+                    f"run a forecast on the Run tab to add prediction lines."
+                )
             # Reward/Risk for all uptrending forecast starts (incl. monthly backtests),
             # not only the global latest start (which may be flat/down while older
             # starts still plot on the chart).
@@ -305,10 +344,12 @@ class ChartTab:
             # Specify formatter
             X.set_major_formatter(major_fmt)
             X.set_minor_formatter(minor_fmt)
-            # plt.show()
             # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
             plt.grid(which="minor", color="lightgrey", linestyle="--")
             plt.legend()
+        if target is None:
+            axes.legend()
+            axes.grid(True, which="major", linestyle="-", alpha=0.3)
         return {self.plotComponent: fig, self.rrTable: rr_df}
 
     def get_saved_forecasts(self, ticker: str = None, start_date=None):

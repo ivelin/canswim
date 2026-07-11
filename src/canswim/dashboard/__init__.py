@@ -7,6 +7,7 @@ from loguru import logger
 from canswim.dashboard.charts import ChartTab
 from canswim.dashboard.scans import ScanTab
 from canswim.dashboard.advanced import AdvancedTab
+from canswim.dashboard.run_tab import RunTab
 from canswim.db import DataPaths, init_search_db
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
@@ -76,6 +77,12 @@ class CanswimPlayground:
                 scans_tab = ScanTab(
                     self.canswim_model,
                     db_path=self.db_path,
+                )
+            with gr.Tab("Run"):
+                RunTab(
+                    self.canswim_model,
+                    db_path=self.db_path,
+                    charts_ticker_dropdown=charts_tab.tickerDropdown,
                 )
             with gr.Tab("Advanced Queries"):
                 AdvancedTab(

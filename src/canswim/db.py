@@ -265,6 +265,226 @@ def list_tickers(db_path: str) -> list[str]:
     return stock_list
 
 
+def sync_gathered_symbols(
+    db_path: str,
+    symbols: Sequence[str],
+    *,
+    stocks_price_path: Optional[str] = None,
+    target_column: str = "Close",
+) -> dict[str, Any]:
+    """Add gathered symbols to the search DB (Charts/Scans dropdown source).
+
+    Dashboard init with ``--same_data True`` reuses DuckDB and never reloads
+    ``stock_tickers`` / ``close_price`` from parquet. After a scoped gather,
+    call this so new symbols (e.g. QLYS) appear in Charts without a full rebuild.
+    """
+    syms = sorted({str(s).strip().upper() for s in symbols if s and str(s).strip()})
+    if not syms:
+        return {"ok": True, "added": [], "symbols": [], "close_rows": 0}
+
+    paths = DataPaths.from_env()
+    price_path = stocks_price_path or paths.stocks_price_path
+    if not Path(price_path).is_file():
+        return {
+            "ok": False,
+            "error": f"Price parquet not found: {price_path}",
+            "added": [],
+            "symbols": syms,
+            "close_rows": 0,
+        }
+
+    # Escape for SQL string list
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    added: list[str] = []
+    close_rows = 0
+
+    with connect_readwrite(db_path) as db_con:
+        # Detect symbol column casing
+        cols = [
+            r[0]
+            for r in db_con.execute("DESCRIBE stock_tickers").fetchall()
+        ]
+        sym_col = "Symbol" if "Symbol" in cols else "symbol"
+
+        existing = {
+            str(r[0]).upper()
+            for r in db_con.execute(
+                f'SELECT "{sym_col}" FROM stock_tickers WHERE "{sym_col}" IS NOT NULL'
+            ).fetchall()
+            if r[0] is not None
+        }
+        to_add = [s for s in syms if s not in existing]
+        for s in to_add:
+            db_con.execute(
+                f'INSERT INTO stock_tickers ("{sym_col}") VALUES (?)',
+                [s],
+            )
+            added.append(s)
+
+        # Refresh close prices for all requested symbols from parquet
+        # (replace rows so incremental gather is reflected)
+        db_con.execute(
+            f"""--sql
+            DELETE FROM close_price
+            WHERE upper(CAST(Symbol AS VARCHAR)) IN ({in_list})
+            """
+        )
+        # Parquet may use Close or Adj Close; prefer requested target_column
+        pq_cols = db_con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{price_path}') LIMIT 0"
+        ).fetchall()
+        pq_names = {r[0] for r in pq_cols}
+        price_col = target_column if target_column in pq_names else (
+            "Close" if "Close" in pq_names else None
+        )
+        if price_col is None:
+            return {
+                "ok": False,
+                "error": f"No price column in {price_path}; cols={sorted(pq_names)}",
+                "added": added,
+                "symbols": syms,
+                "close_rows": 0,
+            }
+        db_con.execute(
+            f"""--sql
+            INSERT INTO close_price (Date, Symbol, Close)
+            SELECT CAST(Date AS TIMESTAMP) AS Date,
+                   upper(CAST(Symbol AS VARCHAR)) AS Symbol,
+                   CAST("{price_col}" AS DOUBLE) AS Close
+            FROM read_parquet('{price_path}')
+            WHERE upper(CAST(Symbol AS VARCHAR)) IN ({in_list})
+              AND "{price_col}" IS NOT NULL
+            """
+        )
+        close_rows = db_con.execute(
+            f"""--sql
+            SELECT count(*) FROM close_price
+            WHERE upper(CAST(Symbol AS VARCHAR)) IN ({in_list})
+            """
+        ).fetchone()[0]
+
+    logger.info(
+        f"Synced search DB symbols: added={added}, "
+        f"close_rows={close_rows} for {syms}"
+    )
+    return {
+        "ok": True,
+        "added": added,
+        "symbols": syms,
+        "close_rows": int(close_rows),
+    }
+
+
+def sync_forecasts_to_search_db(
+    db_path: str,
+    symbols: Sequence[str],
+    *,
+    forecast_path: Optional[str] = None,
+) -> dict[str, Any]:
+    """Load forecast parquet partitions for symbols into the DuckDB search table.
+
+    Charts/Scans read ``forecast`` / ``latest_forecast`` from DuckDB. Scoped
+    forecast runs write hive parquet only; with ``--same_data`` the search DB
+    is not rebuilt, so charts would stay empty of forecast lines without this.
+    """
+    import glob
+
+    syms = sorted({str(s).strip().upper() for s in symbols if s and str(s).strip()})
+    if not syms:
+        return {"ok": True, "symbols": [], "forecast_rows": 0}
+
+    paths = DataPaths.from_env()
+    fpath = forecast_path or paths.forecast_path
+    # Normalize trailing slash
+    fpath = str(fpath)
+    if not fpath.endswith("/"):
+        fpath = fpath + "/"
+    forecast_glob = f"{fpath}**/*.parquet"
+    if not glob.glob(forecast_glob, recursive=True):
+        return {
+            "ok": True,
+            "symbols": syms,
+            "forecast_rows": 0,
+            "message": "No forecast parquet files found",
+        }
+
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    with connect_readwrite(db_path) as db_con:
+        # Ensure symbols exist in stock_tickers
+        cols = [r[0] for r in db_con.execute("DESCRIBE stock_tickers").fetchall()]
+        sym_col = "Symbol" if "Symbol" in cols else "symbol"
+        existing = {
+            str(r[0]).upper()
+            for r in db_con.execute(
+                f'SELECT "{sym_col}" FROM stock_tickers WHERE "{sym_col}" IS NOT NULL'
+            ).fetchall()
+            if r[0] is not None
+        }
+        for s in syms:
+            if s not in existing:
+                db_con.execute(
+                    f'INSERT INTO stock_tickers ("{sym_col}") VALUES (?)', [s]
+                )
+
+        db_con.execute(
+            f"""--sql
+            DELETE FROM forecast
+            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+            """
+        )
+        # Hive parquet: time column may be "time" or already "date"
+        # Darts forecast parquet uses time index column "time" + hive partition cols
+        db_con.execute(
+            f"""--sql
+            INSERT INTO forecast
+            SELECT
+                CAST(f.time AS DATE) AS date,
+                upper(CAST(f.symbol AS VARCHAR)) AS symbol,
+                CAST(
+                    make_date(
+                        CAST(f.forecast_start_year AS INTEGER),
+                        CAST(f.forecast_start_month AS INTEGER),
+                        CAST(f.forecast_start_day AS INTEGER)
+                    ) AS DATE
+                ) AS start_date,
+                f."close_quantile_0.01",
+                f."close_quantile_0.05",
+                f."close_quantile_0.2",
+                f."close_quantile_0.5",
+                f."close_quantile_0.8",
+                f."close_quantile_0.95",
+                f."close_quantile_0.99"
+            FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+            WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+            """
+        )
+        n = db_con.execute(
+            f"""--sql
+            SELECT count(*) FROM forecast
+            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+            """
+        ).fetchone()[0]
+        # Refresh latest_forecast for these symbols
+        db_con.execute(
+            f"""--sql
+            DELETE FROM latest_forecast
+            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+            """
+        )
+        db_con.execute(
+            f"""--sql
+            INSERT INTO latest_forecast
+            SELECT symbol, max(start_date) AS date
+            FROM forecast
+            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+            GROUP BY symbol
+            """
+        )
+
+    logger.info(f"Synced forecast search rows={n} for {syms}")
+    return {"ok": True, "symbols": syms, "forecast_rows": int(n)}
+
+
 def get_reward_risk(
     db_path: str,
     symbol: str,

@@ -1,0 +1,818 @@
+"""Shared CLI / GUI / MCP orchestration for scoped gather and forecast runs.
+
+One contract, three surfaces
+----------------------------
+- **CLI** — ``python -m canswim gatherdata|forecast --tickers "AAPL,MSFT"``
+- **GUI** — Dashboard **Run** tab (same functions; always allowed in-process)
+- **MCP** — ``gather_tickers`` / ``forecast_tickers`` (require ``MCP_ALLOW_RUNS=1``)
+
+Without ``--tickers``, CLI ``gatherdata`` / ``forecast`` keep their legacy
+full-universe behavior (symbol list env / all stocks; forecast start = next
+open after latest bar when date omitted).
+
+Pure helpers (parse + calendar) stay free of torch/network. Orchestration
+returns structured dicts consumed by all three surfaces.
+"""
+
+from __future__ import annotations
+
+import glob
+import os
+import re
+import tempfile
+from pathlib import Path
+from typing import Any, Optional, Sequence, Union
+
+import pandas as pd
+from loguru import logger
+
+from canswim.calendar_weeks import resolve_forecast_start
+from canswim.eligibility import is_valid_ticker_symbol
+from canswim.hfhub import _env_bool
+
+# Soft cap so accidental pastes do not launch huge jobs
+DEFAULT_MAX_TICKERS = 50
+
+# --- Consumer-facing copy (CLI help, GUI, MCP). Operator detail → docs. --------
+
+TICKERS_HELP = (
+    "Stock symbols separated by commas or new lines. "
+    f"Example: AAPL, MSFT. Up to {DEFAULT_MAX_TICKERS} at a time."
+)
+
+FORECAST_START_HELP = (
+    "Optional start date (YYYY-MM-DD). Leave blank to use the next available "
+    "market-week start after the latest completed trading week. "
+    "Past dates are moved to the start of that market week "
+    "(if Monday is a holiday, the next open day that week is used). "
+    "Future dates are not allowed."
+)
+
+# Kept for docs/CLI epilog only — not primary GUI body copy
+DATE_POLICY_SUMMARY = (
+    "Start dates use market weeks (see docs/run_triggers.md)."
+)
+
+GATHER_SECTION_TITLE = "Get market data"
+GATHER_SECTION_HELP = (
+    "Download recent prices for the symbols you list. "
+    "Uses local files when they already cover about the last two years; "
+    "only requests from the internet what is missing or out of date."
+)
+GATHER_BUTTON = "Update market data"
+
+FORECAST_SECTION_TITLE = "Run a forecast"
+FORECAST_SECTION_HELP = (
+    "Create forecasts for the symbols you list. "
+    "Needs complete local market history—if anything is missing, "
+    "update market data first, then try again."
+)
+FORECAST_BUTTON = "Run forecast"
+PREVIEW_START_BUTTON = "Check start date"
+
+INCOMPLETE_DATA_MSG = (
+    "Market history is incomplete or not ready for: {symbols}. "
+    "Use Get market data / gather for these symbols, then run the forecast again. "
+    "Forecasts never invent missing prices."
+)
+
+COVARIATE_FAIL_MSG = (
+    "Could not build a forecast for: {symbols}. "
+    "Prices may be fine, but model inputs (ownership, estimates, or other fundamentals) "
+    "are missing or could not be aligned. "
+    "Try Update market data again (includes fundamentals), then re-run the forecast."
+)
+
+STALE_PRICE_START_MSG = (
+    "Could not forecast {symbols} for start {start}: local prices end before that date. "
+    "Update market data for a fresher close, or pick an earlier start date."
+)
+
+ALREADY_FORECAST_MSG = (
+    "Forecast already on file for {symbols} (start {start}). "
+    "Skipped re-run to save time and avoid duplicate data."
+)
+
+RUNS_OPT_IN_HELP = (
+    "MCP data/forecast tools need MCP_ALLOW_RUNS=1. "
+    "CLI and the dashboard do not. MCP stays read-only by default."
+)
+
+# Default min rows in a saved forecast partition (= typical pred_horizon)
+DEFAULT_MIN_FORECAST_ROWS = 42
+
+
+def _cap_start_to_local_prices(
+    tickers: Sequence[str],
+    resolved_start: str,
+) -> tuple[str, Optional[str]]:
+    """If resolved start is after next open following latest local close, pull it back.
+
+    Returns (possibly_adjusted_iso_start, optional_note).
+    """
+    import duckdb
+    from canswim.forecast import get_next_open_market_day
+
+    data_dir = os.getenv("data_dir", "data")
+    third = os.getenv("data-3rd-party", "data-3rd-party")
+    price_name = os.getenv("price_data", "all_stocks_price_hist_1d.parquet")
+    path = Path(data_dir) / third / price_name
+    if not path.is_file():
+        return resolved_start, None
+    syms = sorted({str(t).upper() for t in tickers})
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    row = duckdb.sql(
+        f"""--sql
+        SELECT max(CAST(Date AS DATE))
+        FROM read_parquet('{path}')
+        WHERE upper(CAST(Symbol AS VARCHAR)) IN ({in_list})
+        """
+    ).fetchone()
+    if not row or row[0] is None:
+        return resolved_start, None
+    last_close = pd.Timestamp(row[0]).normalize()
+    cutoff = get_next_open_market_day(after_date=last_close)
+    if cutoff is None:
+        return resolved_start, None
+    cutoff = pd.Timestamp(cutoff).tz_localize(None).normalize()
+    fsd = pd.Timestamp(resolved_start).normalize()
+    if fsd <= cutoff:
+        return resolved_start, None
+    note = (
+        f"Start {resolved_start} is after the next session following your latest "
+        f"local close ({last_close.date()}); using {cutoff.date()} instead."
+    )
+    return cutoff.strftime("%Y-%m-%d"), note
+
+
+def list_symbols_with_saved_forecast(
+    tickers: Sequence[str],
+    start_date: str,
+    *,
+    data_dir: Optional[str] = None,
+    forecast_subdir: Optional[str] = None,
+    min_horizon_rows: int = DEFAULT_MIN_FORECAST_ROWS,
+) -> set[str]:
+    """Return symbols that already have a complete forecast partition for start_date.
+
+    Lightweight (duckdb + parquet only) — no torch / model load. Used to skip
+    expensive re-forecasts for the same origin.
+    """
+    import duckdb
+
+    syms = sorted({str(t).strip().upper() for t in tickers if t and str(t).strip()})
+    if not syms:
+        return set()
+    data_dir = data_dir or os.getenv("data_dir", "data")
+    forecast_subdir = forecast_subdir or os.getenv("forecast_subdir", "forecast/")
+    fsd = pd.Timestamp(start_date).tz_localize(None).normalize()
+    y, m, d = int(fsd.year), int(fsd.month), int(fsd.day)
+    forecast_glob = f"{data_dir}/{forecast_subdir}**/*.parquet"
+    if not glob.glob(forecast_glob, recursive=True):
+        return set()
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    try:
+        df = duckdb.sql(
+            f"""--sql
+            SELECT upper(cast(symbol AS VARCHAR)) AS symbol, count(*) AS n
+            FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+            WHERE upper(cast(f.symbol AS VARCHAR)) IN ({in_list})
+              AND forecast_start_year = {y}
+              AND forecast_start_month = {m}
+              AND forecast_start_day = {d}
+            GROUP BY 1
+            HAVING count(*) >= {int(min_horizon_rows)}
+            """
+        ).df()
+    except Exception as e:
+        logger.warning(f"Could not scan existing forecasts ({e}); will not skip")
+        return set()
+    if df is None or df.empty:
+        return set()
+    col = "symbol" if "symbol" in df.columns else df.columns[0]
+    return {str(s).upper() for s in df[col].tolist()}
+
+
+def parse_ticker_list(
+    text: Union[str, Sequence[str], None],
+    *,
+    max_tickers: int = DEFAULT_MAX_TICKERS,
+) -> dict[str, Any]:
+    """Parse comma- and/or newline-separated ticker text.
+
+    Returns
+    -------
+    dict with keys:
+      ok, tickers (accepted unique upper), rejected (list of {token, reason}),
+      truncated (bool), messages (list[str])
+    """
+    if text is None:
+        return {
+            "ok": False,
+            "tickers": [],
+            "rejected": [],
+            "truncated": False,
+            "messages": ["No tickers provided."],
+            "error": "No tickers provided.",
+        }
+
+    if isinstance(text, (list, tuple, set)):
+        raw_tokens = [str(x) for x in text]
+    else:
+        # Split on comma, semicolon, whitespace/newlines
+        raw_tokens = re.split(r"[\s,;]+", str(text).strip())
+
+    accepted: list[str] = []
+    seen: set[str] = set()
+    rejected: list[dict[str, str]] = []
+
+    for tok in raw_tokens:
+        t = tok.strip().upper()
+        if not t:
+            continue
+        if not is_valid_ticker_symbol(t):
+            rejected.append({"token": tok.strip(), "reason": "invalid_symbol"})
+            continue
+        if t in seen:
+            rejected.append({"token": t, "reason": "duplicate"})
+            continue
+        seen.add(t)
+        accepted.append(t)
+
+    truncated = False
+    if len(accepted) > max_tickers:
+        truncated = True
+        accepted = accepted[:max_tickers]
+
+    messages: list[str] = []
+    if not accepted:
+        messages.append("No valid tickers after parsing.")
+        return {
+            "ok": False,
+            "tickers": [],
+            "rejected": rejected,
+            "truncated": truncated,
+            "messages": messages,
+            "error": "No valid tickers after parsing.",
+        }
+    if rejected:
+        messages.append(f"{len(rejected)} token(s) rejected.")
+    if truncated:
+        messages.append(f"Truncated to first {max_tickers} tickers.")
+
+    return {
+        "ok": True,
+        "tickers": accepted,
+        "rejected": rejected,
+        "truncated": truncated,
+        "messages": messages,
+    }
+
+
+def runs_allowed() -> bool:
+    """True when MCP/GUI write triggers are enabled via env."""
+    return _env_bool("MCP_ALLOW_RUNS", default=False) or _env_bool(
+        "CANSWIM_ALLOW_RUNS", default=False
+    )
+
+
+def require_runs_allowed() -> Optional[dict[str, Any]]:
+    """Return an error result dict if runs are disabled, else None."""
+    if runs_allowed():
+        return None
+    return {
+        "ok": False,
+        "error": (
+            "Run triggers are disabled. Set MCP_ALLOW_RUNS=1 (or CANSWIM_ALLOW_RUNS=1) "
+            "to enable gather/forecast tools. Default remains read-only."
+        ),
+        "runs_allowed": False,
+    }
+
+
+def _latest_close_from_local() -> Optional[pd.Timestamp]:
+    """Best-effort latest close from DuckDB or price parquet (no network)."""
+    try:
+        from canswim.db import connect_readonly, get_db_path, tables_present
+
+        db_path = get_db_path()
+        if tables_present(db_path):
+            with connect_readonly(db_path) as con:
+                row = con.execute(
+                    "SELECT max(CAST(Date AS DATE)) FROM close_price"
+                ).fetchone()
+            if row and row[0] is not None:
+                return pd.Timestamp(row[0]).normalize()
+    except Exception as e:
+        logger.debug(f"latest_close from DuckDB skipped: {e}")
+
+    try:
+        data_dir = os.getenv("data_dir", "data")
+        third = os.getenv("data-3rd-party", "data-3rd-party")
+        path = Path(data_dir) / third / "all_stocks_price_hist_1d.parquet"
+        if path.is_file():
+            # Only need max date — duckdb or pyarrow
+            import duckdb
+
+            row = duckdb.sql(
+                f"SELECT max(Date) FROM read_parquet('{path}')"
+            ).fetchone()
+            if row and row[0] is not None:
+                return pd.Timestamp(row[0]).normalize()
+    except Exception as e:
+        logger.debug(f"latest_close from parquet skipped: {e}")
+    return None
+
+
+def resolve_start_for_run(
+    user_date: Optional[str] = None,
+    *,
+    asof: Optional[str] = None,
+    latest_close: Optional[str] = None,
+) -> dict[str, Any]:
+    """Public resolve wrapper for GUI/MCP preview (uses local latest close)."""
+    lc = latest_close
+    if lc is None:
+        ts = _latest_close_from_local()
+        lc = ts.strftime("%Y-%m-%d") if ts is not None else None
+    resolved = resolve_forecast_start(user_date, asof=asof, latest_close=lc)
+    out = resolved.as_dict()
+    out["latest_close_used"] = lc
+    return out
+
+
+def gather_for_tickers(
+    tickers_text: Union[str, Sequence[str], None],
+    *,
+    include_covariates: bool = True,
+    max_tickers: int = DEFAULT_MAX_TICKERS,
+    force_allow: bool = False,
+) -> dict[str, Any]:
+    """Gather market data for an explicit ticker list (local-first).
+
+    ``force_allow=True`` skips the MCP_ALLOW_RUNS gate (used by dashboard which
+    is an explicit user action in a local process).
+    """
+    if not force_allow:
+        blocked = require_runs_allowed()
+        if blocked is not None:
+            return blocked
+
+    parsed = parse_ticker_list(tickers_text, max_tickers=max_tickers)
+    if not parsed["ok"]:
+        return {
+            "ok": False,
+            "error": parsed.get("error", "Invalid tickers"),
+            "tickers": [],
+            "rejected": parsed.get("rejected", []),
+            "messages": parsed.get("messages", []),
+        }
+
+    tickers: list[str] = parsed["tickers"]
+    messages = list(parsed.get("messages") or [])
+
+    # Local-first defaults
+    if not _env_bool("hfhub_sync", default=False):
+        messages.append("Using local files first (no cloud dataset sync).")
+
+    try:
+        from canswim.gather_data import MarketDataGatherer
+
+        g = MarketDataGatherer()
+        g.stocks_ticker_set = list(tickers)
+        # Scoped user runs: ~2y missing-only (not multi-decade train history)
+        g.gather_mode = "forecast"
+
+        # Broad market / sectors: reuse local files on small scopes
+        try:
+            g.gather_broad_market_data()
+        except Exception as e:
+            messages.append(f"Broad market data note: {e}")
+        try:
+            g.gather_sectors_data()
+        except Exception as e:
+            messages.append(f"Sector data note: {e}")
+
+        g.gather_stock_price_data()
+        pre_plans = getattr(g, "last_price_fetch_plans", []) or []
+        post_plans = getattr(g, "last_post_fetch_plans", None) or pre_plans
+        written = list(getattr(g, "last_remote_symbols_written", None) or [])
+
+        from canswim.gather_policy import incomplete_symbols
+
+        skipped = [p.symbol for p in pre_plans if p.action == "skip"]
+        # Only count as downloaded when remote actually returned bars for the symbol
+        planned_fetch = {p.symbol for p in pre_plans if p.action == "fetch"}
+        fetched = sorted(planned_fetch & set(written))
+        still_incomplete = incomplete_symbols(post_plans)
+
+        if skipped:
+            messages.append(
+                f"Already up to date locally (no download): {', '.join(skipped)}"
+            )
+        if fetched:
+            messages.append(f"Downloaded or refreshed: {', '.join(fetched)}")
+        planned_but_empty = sorted(planned_fetch - set(written))
+        if planned_but_empty and still_incomplete:
+            messages.append(
+                "No usable download for: " + ", ".join(planned_but_empty)
+            )
+        if pre_plans and not planned_fetch:
+            messages.append("No remote price download needed.")
+
+        if still_incomplete:
+            return {
+                "ok": False,
+                "error": INCOMPLETE_DATA_MSG.format(
+                    symbols=", ".join(still_incomplete)
+                ),
+                "tickers": tickers,
+                "rejected": parsed.get("rejected", []),
+                "messages": messages,
+                "price_plans": [p.as_dict() for p in post_plans],
+                "fetched": fetched,
+                "skipped_remote": skipped,
+                "incomplete": still_incomplete,
+                "need_gather": True,
+            }
+
+        if include_covariates:
+            # Fundamentals required by the model stack (not just OHLCV)
+            for name, fn in (
+                ("dividends", g.gather_stock_dividends),
+                ("splits", g.gather_stock_splits),
+                ("earnings", g.gather_earnings_data),
+                ("key_metrics", g.gather_stock_key_metrics),
+                ("institutional_ownership", g.gather_institutional_stock_ownership),
+                ("analyst_estimates", g.gather_analyst_estimates),
+            ):
+                try:
+                    fn()
+                except Exception as e:
+                    messages.append(f"{name} note: {e}")
+
+        # Ensure symbols appear on a stock list CSV for forecast path
+        _ensure_symbols_on_list(tickers)
+
+        # Sync DuckDB search tables so Charts/Scans dropdown includes new symbols
+        # (dashboard --same_data reuses DB and would otherwise stay on old list)
+        db_sync: dict[str, Any] | None = None
+        try:
+            from canswim.db import sync_gathered_symbols, get_db_path
+
+            db_sync = sync_gathered_symbols(get_db_path(), tickers)
+            if db_sync.get("ok"):
+                if db_sync.get("added"):
+                    messages.append(
+                        "Added to Charts symbol list: "
+                        + ", ".join(db_sync["added"])
+                    )
+                else:
+                    messages.append("Charts symbol list already included these.")
+                messages.append(
+                    f"Synced {db_sync.get('close_rows', 0)} local close prices "
+                    "into search DB."
+                )
+            else:
+                messages.append(
+                    f"Could not update Charts list: {db_sync.get('error')}"
+                )
+        except Exception as e:
+            messages.append(f"Charts list sync note: {e}")
+
+        return {
+            "ok": True,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "messages": messages,
+            "processed": tickers,
+            "price_plans": [p.as_dict() for p in post_plans],
+            "fetched": fetched,
+            "skipped_remote": skipped,
+            "incomplete": [],
+            "db_sync": db_sync,
+        }
+    except Exception as e:
+        logger.exception("gather_for_tickers failed")
+        return {
+            "ok": False,
+            "error": str(e),
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "messages": messages,
+            "need_gather": True,
+        }
+
+
+def _ensure_symbols_on_list(tickers: Sequence[str]) -> Path:
+    """Append symbols to watchlist (and data-3rd-party copy) if missing."""
+    from canswim.paths import data_3rd_party_dir, symbol_lists_dir
+
+    rows = sorted({t.upper() for t in tickers})
+    for base in (symbol_lists_dir(), data_3rd_party_dir()):
+        base.mkdir(parents=True, exist_ok=True)
+        path = base / "watchlist.csv"
+        existing: set[str] = set()
+        if path.is_file():
+            try:
+                df = pd.read_csv(path, dtype=str)
+                if "Symbol" in df.columns:
+                    existing = set(df["Symbol"].dropna().astype(str).str.upper())
+            except Exception:
+                pass
+        merged = sorted(existing | set(rows))
+        pd.DataFrame({"Symbol": merged}).to_csv(path, index=False)
+    return symbol_lists_dir() / "watchlist.csv"
+
+
+def forecast_for_tickers(
+    tickers_text: Union[str, Sequence[str], None],
+    forecast_start_date: Optional[str] = None,
+    *,
+    max_tickers: int = DEFAULT_MAX_TICKERS,
+    force_allow: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Run forecast for an explicit ticker list with week-aligned start.
+
+    ``dry_run=True`` only resolves start + validates tickers (no torch).
+    """
+    if not force_allow:
+        blocked = require_runs_allowed()
+        if blocked is not None:
+            return blocked
+
+    parsed = parse_ticker_list(tickers_text, max_tickers=max_tickers)
+    if not parsed["ok"]:
+        return {
+            "ok": False,
+            "error": parsed.get("error", "Invalid tickers"),
+            "tickers": [],
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": None,
+        }
+
+    tickers: list[str] = parsed["tickers"]
+    start_info = resolve_start_for_run(forecast_start_date)
+    if not start_info.get("ok"):
+        return {
+            "ok": False,
+            "error": start_info.get("error") or "Could not resolve forecast start",
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+        }
+
+    resolved = start_info["start"]
+    messages: list[str] = list(parsed.get("messages") or [])
+    messages.append(f"Using start date {resolved}.")
+
+    # Cap start to what local prices can support (live week default can land
+    # after the latest close; the model refuses pure-future origins).
+    try:
+        adj, adj_note = _cap_start_to_local_prices(tickers, resolved)
+        if adj != resolved:
+            messages.append(adj_note or f"Adjusted start to {adj} for local prices.")
+            resolved = adj
+            start_info = dict(start_info)
+            start_info["start"] = resolved
+            start_info["reason"] = (start_info.get("reason") or "") + "+capped_to_prices"
+    except Exception as e:
+        logger.debug(f"start cap skipped: {e}")
+
+    if dry_run:
+        already = list_symbols_with_saved_forecast(tickers, resolved)
+        return {
+            "ok": True,
+            "dry_run": True,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": [],
+            "skipped": [],
+            "already_have_forecast": sorted(already),
+            "messages": [
+                "Check only: no forecast model was run.",
+                (
+                    ALREADY_FORECAST_MSG.format(
+                        symbols=", ".join(sorted(already)), start=resolved
+                    )
+                    if already
+                    else "No existing forecast found for this start; a full run would load the model."
+                ),
+            ],
+        }
+
+    # --- Skip expensive model work when partitions already exist ---
+    already = list_symbols_with_saved_forecast(tickers, resolved)
+    to_run = [t for t in tickers if t not in already]
+    if already:
+        messages.append(
+            ALREADY_FORECAST_MSG.format(
+                symbols=", ".join(sorted(already)), start=resolved
+            )
+        )
+    if not to_run:
+        try:
+            from canswim.db import get_db_path, sync_forecasts_to_search_db
+
+            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(already))
+            if sync_fc.get("ok") and sync_fc.get("forecast_rows"):
+                messages.append(
+                    f"Charts updated with {sync_fc.get('forecast_rows')} forecast rows."
+                )
+        except Exception as e:
+            messages.append(f"Charts forecast sync note: {e}")
+        return {
+            "ok": True,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": [],
+            "skipped": [],
+            "already_have_forecast": sorted(already),
+            "messages": messages,
+            "already_saved": True,
+            "model_loaded": False,
+        }
+
+    messages.append(
+        f"Will forecast (not on file yet): {', '.join(to_run)}"
+    )
+
+    # Write a temporary symbol list and point stock_tickers_list at it
+    data_dir = os.getenv("data_dir", "data")
+    third = os.getenv("data-3rd-party", "data-3rd-party")
+    dest_dir = Path(data_dir) / third
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_list = dest_dir / "run_tickers.csv"
+    pd.DataFrame({"Symbol": to_run}).to_csv(dest_list, index=False)
+
+    prev_list = os.environ.get("stock_tickers_list")
+    os.environ["stock_tickers_list"] = "run_tickers.csv"
+    prev_n = os.environ.get("n_stocks")
+    os.environ["n_stocks"] = str(max(len(to_run), 1))
+
+    forecasted: list[str] = []
+    skipped: list[str] = []
+
+    def _incomplete_result(
+        *,
+        forecasted_syms: list[str],
+        incomplete_syms: list[str],
+        extra_error: Optional[str] = None,
+        already_saved: bool = False,
+        reason: str = "prices",
+    ) -> dict[str, Any]:
+        if extra_error:
+            err = extra_error
+        elif reason == "covariates":
+            err = COVARIATE_FAIL_MSG.format(
+                symbols=", ".join(incomplete_syms) or "requested symbols"
+            )
+        else:
+            err = INCOMPLETE_DATA_MSG.format(
+                symbols=", ".join(incomplete_syms) or "requested symbols"
+            )
+        return {
+            "ok": False,
+            "error": err,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": forecasted_syms,
+            "skipped": incomplete_syms,
+            "already_have_forecast": sorted(already),
+            "messages": messages,
+            "already_saved": already_saved,
+            # True only when price history is the likely gap
+            "need_gather": reason == "prices",
+            "need_covariates": reason == "covariates",
+            "model_loaded": True,
+            "fail_reason": reason,
+        }
+
+    try:
+        from canswim.forecast import CanswimForecaster
+
+        cf = CanswimForecaster()
+        cf.all_already_saved = False
+        cf.download_model()
+        cf.download_data()
+        fsd = pd.Timestamp(resolved)
+        any_saved = False
+        any_group = False
+        for _pos in cf.prep_next_stock_group(forecast_start_date=fsd):
+            any_group = True
+            forecasts = cf.get_forecast(forecast_start_date=fsd)
+            if forecasts:
+                clean = {}
+                for t, ts in forecasts.items():
+                    try:
+                        qdf = (
+                            ts.quantile_df(0.5)
+                            if hasattr(ts, "quantile_df")
+                            else ts.pd_dataframe()
+                        )
+                        if qdf.isna().all().all():
+                            skipped.append(t)
+                            continue
+                    except Exception:
+                        pass
+                    clean[t] = ts
+                if clean:
+                    cf.save_forecast(clean, asof_start=fsd)
+                    forecasted.extend(clean.keys())
+                    any_saved = True
+            else:
+                messages.append(
+                    "No symbols had enough complete history in this batch."
+                )
+
+        if not any_group:
+            if getattr(cf, "all_already_saved", False):
+                # Race: files appeared after our pre-check
+                messages.append("Forecasts for this start date already exist.")
+                return {
+                    "ok": True,
+                    "tickers": tickers,
+                    "rejected": parsed.get("rejected", []),
+                    "resolved_start": start_info,
+                    "forecasted": [],
+                    "skipped": [],
+                    "already_have_forecast": sorted(set(already) | set(to_run)),
+                    "messages": messages,
+                    "already_saved": True,
+                    "model_loaded": True,
+                }
+            return _incomplete_result(
+                forecasted_syms=[],
+                incomplete_syms=list(to_run),
+                reason="covariates",
+            )
+        if not any_saved:
+            # Prices often present; model dropped symbols during covariate align
+            return _incomplete_result(
+                forecasted_syms=[],
+                incomplete_syms=[t for t in to_run if t not in forecasted],
+                reason="covariates",
+            )
+
+        try:
+            cf.upload_data()
+        except Exception as e:
+            messages.append(f"Cloud upload skipped: {e}")
+
+        # Incomplete only among symbols we tried to run (not ones already on file)
+        incomplete = [t for t in to_run if t not in set(forecasted)]
+        if incomplete:
+            return _incomplete_result(
+                forecasted_syms=list(forecasted),
+                incomplete_syms=incomplete,
+            )
+
+        # Push new forecast parquet into DuckDB so Charts/Scans see lines
+        try:
+            from canswim.db import get_db_path, sync_forecasts_to_search_db
+
+            sync_fc = sync_forecasts_to_search_db(
+                get_db_path(), list(set(forecasted) | set(already))
+            )
+            if sync_fc.get("ok"):
+                messages.append(
+                    f"Charts updated with {sync_fc.get('forecast_rows', 0)} forecast rows."
+                )
+        except Exception as e:
+            messages.append(f"Charts forecast sync note: {e}")
+
+        return {
+            "ok": True,
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": start_info,
+            "forecasted": forecasted,
+            "skipped": [],
+            "already_have_forecast": sorted(already),
+            "messages": messages,
+            "model_loaded": True,
+        }
+    except Exception as e:
+        logger.exception("forecast_for_tickers failed")
+        return {
+            "ok": False,
+            "error": str(e),
+            "tickers": tickers,
+            "resolved_start": start_info,
+            "forecasted": forecasted,
+            "skipped": skipped,
+            "messages": messages,
+        }
+    finally:
+        if prev_list is None:
+            os.environ.pop("stock_tickers_list", None)
+        else:
+            os.environ["stock_tickers_list"] = prev_list
+        if prev_n is None:
+            os.environ.pop("n_stocks", None)
+        else:
+            os.environ["n_stocks"] = prev_n

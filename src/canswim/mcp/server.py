@@ -1,8 +1,8 @@
 """CANSWIM MCP server entrypoint.
 
-READ-ONLY — exposes precomputed TiDE forecasts and market data from the local
-DuckDB search database used by the Gradio dashboard. Does not load the torch
-model or run train/gather/forecast tasks.
+Default is READ-ONLY — precomputed TiDE forecasts and market data from the
+local DuckDB search database. Optional write tools (gather/forecast) are
+registered for discoverability but require ``MCP_ALLOW_RUNS=1`` to execute.
 """
 
 from __future__ import annotations
@@ -18,11 +18,21 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 
 from canswim.mcp import __version__ as SERVER_VERSION  # noqa: E402
 from canswim.mcp.tools import forecasts, meta, prices, query, tickers  # noqa: E402
+from canswim.mcp.tools import runs as run_tools  # noqa: E402
+from canswim.run_triggers import runs_allowed  # noqa: E402
 
-logger.warning(
-    "canswim-mcp starting in READ-ONLY MODE. "
-    "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
-)
+if runs_allowed():
+    logger.warning(
+        "canswim-mcp starting with MCP_ALLOW_RUNS enabled "
+        "(gather/forecast tools may mutate local data and load torch). "
+        "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
+    )
+else:
+    logger.warning(
+        "canswim-mcp starting in READ-ONLY MODE "
+        "(set MCP_ALLOW_RUNS=1 to enable gather/forecast triggers). "
+        "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK."
+    )
 
 mcp: FastMCP = FastMCP("canswim-mcp")
 mcp._mcp_server.version = SERVER_VERSION
@@ -143,6 +153,56 @@ def get_backtest_error(
 )
 def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
     return query.run_select_impl(sql=sql, row_limit=row_limit)
+
+
+@mcp.tool(
+    name="resolve_forecast_start",
+    description=(
+        "Check which forecast start date will be used. "
+        "Optional start_date (YYYY-MM-DD); blank uses the default next market-week start. "
+        "Same as CLI resolve_start and dashboard “Check start date”. Read-only."
+    ),
+)
+def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
+    return run_tools.resolve_forecast_start_impl(start_date=start_date)
+
+
+@mcp.tool(
+    name="gather_tickers",
+    description=(
+        "Get / update market data for listed stock symbols (comma or newline separated). "
+        "Only downloads what is missing or out of date (~last 2 years for forecast use). "
+        "Same as CLI `gatherdata --tickers` and dashboard “Update market data”. "
+        "Requires MCP_ALLOW_RUNS=1."
+    ),
+)
+def gather_tickers(
+    tickers: str,
+    include_covariates: bool = True,
+) -> dict[str, Any]:
+    return run_tools.gather_tickers_impl(
+        tickers=tickers, include_covariates=include_covariates
+    )
+
+
+@mcp.tool(
+    name="forecast_tickers",
+    description=(
+        "Run a forecast for listed stock symbols. "
+        "Fails clearly if market history is incomplete—update market data first. "
+        "Same as CLI `forecast --tickers` and dashboard “Run forecast”. "
+        "Requires MCP_ALLOW_RUNS=1. May take several minutes. "
+        "Optional start_date (YYYY-MM-DD). dry_run=true only checks symbols and start date."
+    ),
+)
+def forecast_tickers(
+    tickers: str,
+    start_date: Optional[str] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    return run_tools.forecast_tickers_impl(
+        tickers=tickers, start_date=start_date, dry_run=dry_run
+    )
 
 
 def main() -> None:
