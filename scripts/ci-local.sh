@@ -39,7 +39,7 @@ fi
 mkdir -p data/data-3rd-party data/forecast
 
 echo "==> pytest tests/canswim/"
-# Same module set as CI: tests/canswim/test_*.py
-"${PY[@]}" -m pytest tests/canswim/test_*.py -q --tb=short
+# Recurse package (includes tests/canswim/dashboard/, etc.)
+"${PY[@]}" -m pytest tests/canswim/ -q --tb=short
 
 echo "==> local CI OK"
