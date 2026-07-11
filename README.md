@@ -26,13 +26,16 @@ Flags: `python -m canswim -h` is the source of truth. Local site preview: `pip i
 
 ```bash
 pip install canswim
+# pin a release: pip install canswim==0.0.20260711
 
 # dev checkout
-pip install -e ./
+pip install -e ".[dev]"
 
 # recommended for this repo
 conda activate canswim
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes. Docs: [https://ivelin.github.io/canswim/](https://ivelin.github.io/canswim/).
 
 ## Local-first market data
 
