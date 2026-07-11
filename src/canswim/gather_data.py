@@ -322,16 +322,33 @@ class MarketDataGatherer:
         """True if few-symbol scope should reuse an existing multi-index yf parquet.
 
         Avoids long yfinance rate-limit hangs on broad/sectors/industry during
-        scoped verification runs while still refreshing stock prices (yf/FMP).
+        scoped runs **only when the file is still fresh**. Stale broad market
+        truncates stock series at align time and blocks live forecast starts.
         """
         n = len(getattr(self, "stocks_ticker_set", []) or [])
         p = Path(data_file)
-        if n <= 20 and p.is_file() and p.stat().st_size > 0:
+        if not (n <= 20 and p.is_file() and p.stat().st_size > 0):
+            return False
+        try:
+            df = pd.read_parquet(p)
+            if df is None or df.empty:
+                return False
+            last = pd.Timestamp(df.index.max()).normalize()
+            age = (pd.Timestamp.now().normalize() - last).days
+            if age <= 5:
+                logger.info(
+                    f"Scoped gather ({n} stocks): keeping fresh {label} file "
+                    f"{data_file} (last={last.date()}, age={age}d)"
+                )
+                return True
             logger.info(
-                f"Scoped gather ({n} stocks): keeping existing {label} file {data_file}"
+                f"Scoped gather: refreshing stale {label} "
+                f"(last={last.date()}, age={age}d)"
             )
-            return True
-        return False
+            return False
+        except Exception as e:
+            logger.info(f"Scoped gather: will refresh {label} ({e})")
+            return False
 
     def gather_broad_market_data(self):
         ## Prepare data for broad market indicies
@@ -641,6 +658,35 @@ class MarketDataGatherer:
             f"latest={merged_df.index.get_level_values('Date').max()})"
         )
 
+    def _merge_symbol_date_parquet(
+        self, path: str, new_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Merge refreshed Symbol/Date rows into an existing multi-index parquet."""
+        if new_df is None or new_df.empty:
+            return new_df
+        new_df = new_df.copy()
+        if list(new_df.index.names) != ["Symbol", "Date"]:
+            new_df.index.names = ["Symbol", "Date"]
+        try:
+            old_df = pd.read_parquet(path)
+            if old_df is not None and not old_df.empty:
+                if list(old_df.index.names) != ["Symbol", "Date"]:
+                    old_df.index.names = ["Symbol", "Date"]
+                refreshed = set(
+                    new_df.index.get_level_values(0).astype(str).str.upper()
+                )
+                keep = old_df[
+                    ~old_df.index.get_level_values(0)
+                    .astype(str)
+                    .str.upper()
+                    .isin(refreshed)
+                ]
+                new_df = pd.concat([keep, new_df], axis=0)
+        except Exception as e:
+            logger.info(f"No existing file to merge at {path} ({e})")
+        new_df = new_df[~new_df.index.duplicated(keep="last")]
+        return new_df.sort_index()
+
     def gather_earnings_data(self):
         logger.info("Gathering earnings and sales data...")
         earnings_all_df = None
@@ -672,14 +718,17 @@ class MarketDataGatherer:
         logger.info(f"Earnings sample report for last ticker: \n{last_raw}")
         earnings_all_df.index.names = ["Symbol", "Date"]
         earnings_all_df = earnings_all_df.sort_index()
-        logger.info(
-            f"Total number of earnings records for all stocks: \n{len(earnings_all_df)}"
-        )
         earnings_file = self._data_file("earnings_calendar.parquet")
         # Remove broken symlink if present
         p = Path(earnings_file)
         if p.is_symlink() and not p.exists():
             p.unlink()
+        earnings_all_df = self._merge_symbol_date_parquet(
+            earnings_file, earnings_all_df
+        )
+        logger.info(
+            f"Total number of earnings records for all stocks: \n{len(earnings_all_df)}"
+        )
         earnings_all_df.to_parquet(earnings_file)
         tmp_earn_df = pd.read_parquet(earnings_file)
         pd.testing.assert_frame_equal(tmp_earn_df, earnings_all_df)
@@ -723,6 +772,9 @@ class MarketDataGatherer:
         p = Path(kms_file)
         if p.is_symlink() and not p.exists():
             p.unlink()
+        keymetrics_all_df = self._merge_symbol_date_parquet(
+            kms_file, keymetrics_all_df
+        )
         keymetrics_all_df.to_parquet(kms_file, engine="pyarrow")
         temp_kms_df = pd.read_parquet(kms_file)
         pd.testing.assert_frame_equal(temp_kms_df, keymetrics_all_df)
@@ -806,6 +858,20 @@ class MarketDataGatherer:
 
     def gather_institutional_stock_ownership(self):
         logger.info("Gathering institutional ownership data...")
+        inst_ownership_file = self._data_file("institutional_symbol_ownership.parquet")
+        old_df = None
+        try:
+            old_df = pd.read_parquet(inst_ownership_file)
+            if old_df is not None and not old_df.empty:
+                if list(old_df.index.names) != ["Symbol", "Date"]:
+                    old_df.index.names = ["Symbol", "Date"]
+                logger.info(
+                    f"Loaded existing ownership for "
+                    f"{old_df.index.get_level_values(0).nunique()} symbols"
+                )
+        except Exception as e:
+            logger.info(f"No existing institutional ownership file ({e})")
+
         inst_ownership_all_df = None
         for ticker in self.stocks_ticker_set:
             inst_ownership = institutional_symbol_ownership(
@@ -814,12 +880,15 @@ class MarketDataGatherer:
                 limit=-1,
                 includeCurrentQuarter=False,
             )
-            # logger.info("inst_ownership: ", inst_ownership)
             if inst_ownership is not None and len(inst_ownership) > 0:
                 inst_ownership_df = pd.DataFrame(inst_ownership)
                 inst_ownership_df["date"] = pd.to_datetime(inst_ownership_df["date"])
+                # normalize symbol casing for MultiIndex join
+                if "symbol" in inst_ownership_df.columns:
+                    inst_ownership_df["symbol"] = (
+                        inst_ownership_df["symbol"].astype(str).str.upper()
+                    )
                 inst_ownership_df = inst_ownership_df.set_index(["symbol", "date"])
-                # logger.info(f"Institutional ownership for {ticker} # columns: \n{len(inst_ownership_df.columns)}")
                 n_iown = len(inst_ownership_df)
                 logger.info(
                     f"Total institutional ownership reports for {ticker}: {n_iown}"
@@ -827,68 +896,67 @@ class MarketDataGatherer:
                 inst_ownership_all_df = pd.concat(
                     [inst_ownership_all_df, inst_ownership_df]
                 )
-                # logger.info(f"Institutional ownership concatenated {ticker} # columns: \n{inst_ownership_all_df.columns}")
             else:
                 logger.info(
-                    f"No {ticker} institutional ownership reports: inst_ownership={inst_ownership}"
+                    f"No {ticker} institutional ownership reports: "
+                    f"inst_ownership={inst_ownership}"
                 )
+
+        if inst_ownership_all_df is None or inst_ownership_all_df.empty:
+            if old_df is not None and not old_df.empty:
+                logger.warning(
+                    "No new institutional ownership fetched; keeping existing file"
+                )
+                return
+            logger.warning("No institutional ownership data gathered")
+            return
+
         inst_own_df = inst_ownership_all_df.copy()
         # prevent parquet serialization issues
-        inst_own_df["totalInvestedChange"] = pd.to_numeric(
-            inst_own_df["totalInvestedChange"],
-            dtype_backend="pyarrow",
-            downcast="integer",
-        )
+        if "totalInvestedChange" in inst_own_df.columns:
+            inst_own_df["totalInvestedChange"] = pd.to_numeric(
+                inst_own_df["totalInvestedChange"],
+                errors="coerce",
+            ).fillna(0)
 
-        def find_bad_cell():
-            for index, row in inst_own_df.iterrows():
-                try:
-                    x = row["totalPutsChange"]
-                    assert isinstance(x, int)
-                except Exception as e:
-                    logger.info(
-                        f"Unable to convert to numeric type value:({x}), type({type(x)}), index({index}, \nerror:{e}\nrow:{row})"
-                    )
-                    break
-
-        find_bad_cell()
-        # type(inst_own_df["totalInvestedChange"][0])
         # clean up bad data from the third party source feed
-        inst_own_df["totalInvestedChange"] = inst_own_df["totalInvestedChange"].astype(
-            "float64"
-        )
-        inst_own_df["totalInvestedChange"] = inst_own_df["totalInvestedChange"].astype(
-            "int64"
-        )
-        inst_own_df["cik"] = inst_own_df["cik"].replace("", -1)
-        inst_own_df["cik"] = inst_own_df["cik"].astype("int64")
-        inst_own_df["totalPutsChange"] = inst_own_df["totalPutsChange"].astype(
-            "float64"
-        )
-        inst_own_df["totalPutsChange"] = inst_own_df["totalPutsChange"].astype("int64")
-        # inst_own_df["totalPutsChange"] = pd.to_numeric(inst_own_df["totalPutsChange"], dtype_backend="pyarrow", downcast = 'integer')
-        inst_own_df["totalCallsChange"] = inst_own_df["totalCallsChange"].astype(
-            "float64"
-        )
-        inst_own_df["totalCallsChange"] = inst_own_df["totalCallsChange"].astype(
-            "int64"
-        )
-        # inst_own_df.dtypes
-        # inst_own_df
-        inst_own_df.index.names = ["Symbol", "Date"]
-        inst_own_df = inst_own_df.sort_index()
-        # inst_own_df.index.names
-        inst_ownership_file = (
-            self._data_file("institutional_symbol_ownership.parquet")
-        )
-        inst_own_df.to_parquet(inst_ownership_file, engine="pyarrow")
+        for col, default in (
+            ("totalInvestedChange", 0),
+            ("totalPutsChange", 0),
+            ("totalCallsChange", 0),
+            ("cik", -1),
+        ):
+            if col not in inst_own_df.columns:
+                continue
+            if col == "cik":
+                inst_own_df[col] = inst_own_df[col].replace("", -1)
+            inst_own_df[col] = (
+                pd.to_numeric(inst_own_df[col], errors="coerce")
+                .fillna(default)
+                .astype("int64")
+            )
 
-        ### Read back data and verify it
+        inst_own_df.index.names = ["Symbol", "Date"]
+        # Merge with existing so scoped gather does not wipe other symbols
+        if old_df is not None and not old_df.empty:
+            # Drop old rows for symbols we just refreshed
+            refreshed = set(inst_own_df.index.get_level_values(0).astype(str).str.upper())
+            keep = old_df[
+                ~old_df.index.get_level_values(0)
+                .astype(str)
+                .str.upper()
+                .isin(refreshed)
+            ]
+            inst_own_df = pd.concat([keep, inst_own_df], axis=0)
+        inst_own_df = inst_own_df[~inst_own_df.index.duplicated(keep="last")]
+        inst_own_df = inst_own_df.sort_index()
+
+        inst_own_df.to_parquet(inst_ownership_file, engine="pyarrow")
         tmp_int_own_df = pd.read_parquet(inst_ownership_file)
-        logger.info(f"tmp_int_own_df: \n{tmp_int_own_df}")
         pd.testing.assert_frame_equal(tmp_int_own_df, inst_own_df)
         logger.info(
-            f"Sanity check passed for institutional ownership data. Loaded OK from file: {inst_ownership_file}"
+            f"Saved institutional ownership to {inst_ownership_file} "
+            f"({inst_own_df.index.get_level_values(0).nunique()} symbols)"
         )
 
     def gather_analyst_estimates(self):
@@ -938,12 +1006,12 @@ class MarketDataGatherer:
                 continue
             estimates_all_df.index.names = ["Symbol", "Date"]
             estimates_all_df = estimates_all_df.sort_index()
-            # est_file_name= f'data/analyst_estimates_{p}.csv.bz2'
-            # estimates_all_df.to_csv(est_file_name)
+            estimates_all_df = self._merge_symbol_date_parquet(
+                est_file_name, estimates_all_df
+            )
             estimates_all_df.to_parquet(est_file_name)
             logger.info(f"Saved analyst estimates to: {est_file_name}")
             logger.info(f"all {p} estimates count: {len(estimates_all_df)}")
-            # logger.info(f"{p} estimates sample:\n{estimates_all_df}")
             tmp_est_df = pd.read_parquet(est_file_name)
             pd.testing.assert_frame_equal(tmp_est_df, estimates_all_df)
             logger.info(

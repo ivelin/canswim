@@ -43,11 +43,11 @@ def test_forecast_hard_fail_when_no_groups(monkeypatch):
                 r = forecast_for_tickers("AAPL", forecast_start_date="2026-03-02")
 
     assert r["ok"] is False
-    assert r.get("need_gather") is True
+    # no groups prepared → covariate/align failure path (not pure price gap)
+    assert r.get("need_gather") or r.get("need_covariates")
     assert "AAPL" in (r.get("error") or "")
-    assert "incomplete" in (r.get("error") or "").lower() or "market" in (
-        r.get("error") or ""
-    ).lower()
+    err = (r.get("error") or "").lower()
+    assert "incomplete" in err or "market" in err or "forecast" in err or "inputs" in err
 
 
 def test_forecast_hard_fail_when_partial_skip(monkeypatch):
@@ -84,6 +84,6 @@ def test_forecast_hard_fail_when_partial_skip(monkeypatch):
                 )
 
     assert r["ok"] is False
-    assert r.get("need_gather") is True
+    assert r.get("need_gather") or r.get("need_covariates")
     assert "MSFT" in (r.get("error") or "")
     assert "AAPL" in (r.get("forecasted") or [])

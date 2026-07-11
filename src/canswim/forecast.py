@@ -95,13 +95,14 @@ class CanswimForecaster:
                         after_date=ts.end_time()
                     )
                     if fsd > cutoff_forecast_start_date:
+                        # Pull start back to the latest legal origin for this series
+                        # (common when live week default is after cov-aligned end)
                         logger.info(
-                            f"Skipping {tickers_list[i]}: forecast start {fsd.date()} "
-                            f"is after next open market day after last bar "
-                            f"({cutoff_forecast_start_date}; series ends {ts.end_time()}). "
-                            f"Gather more recent ground-truth prices first."
+                            f"{tickers_list[i]}: forecast start {fsd.date()} is after "
+                            f"next open after last bar ({cutoff_forecast_start_date}; "
+                            f"series ends {ts.end_time()}). Using {cutoff_forecast_start_date}."
                         )
-                        continue
+                        fsd = pd.Timestamp(cutoff_forecast_start_date).normalize()
 
                     if fsd == pd.Timestamp(cutoff_forecast_start_date).normalize():
                         # Forecast from end of available history (no truncation)

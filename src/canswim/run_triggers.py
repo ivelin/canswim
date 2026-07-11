@@ -76,6 +76,18 @@ INCOMPLETE_DATA_MSG = (
     "Forecasts never invent missing prices."
 )
 
+COVARIATE_FAIL_MSG = (
+    "Could not build a forecast for: {symbols}. "
+    "Prices may be fine, but model inputs (ownership, estimates, or other fundamentals) "
+    "are missing or could not be aligned. "
+    "Try Update market data again (includes fundamentals), then re-run the forecast."
+)
+
+STALE_PRICE_START_MSG = (
+    "Could not forecast {symbols} for start {start}: local prices end before that date. "
+    "Update market data for a fresher close, or pick an earlier start date."
+)
+
 ALREADY_FORECAST_MSG = (
     "Forecast already on file for {symbols} (start {start}). "
     "Skipped re-run to save time and avoid duplicate data."
@@ -88,6 +100,49 @@ RUNS_OPT_IN_HELP = (
 
 # Default min rows in a saved forecast partition (= typical pred_horizon)
 DEFAULT_MIN_FORECAST_ROWS = 42
+
+
+def _cap_start_to_local_prices(
+    tickers: Sequence[str],
+    resolved_start: str,
+) -> tuple[str, Optional[str]]:
+    """If resolved start is after next open following latest local close, pull it back.
+
+    Returns (possibly_adjusted_iso_start, optional_note).
+    """
+    import duckdb
+    from canswim.forecast import get_next_open_market_day
+
+    data_dir = os.getenv("data_dir", "data")
+    third = os.getenv("data-3rd-party", "data-3rd-party")
+    price_name = os.getenv("price_data", "all_stocks_price_hist_1d.parquet")
+    path = Path(data_dir) / third / price_name
+    if not path.is_file():
+        return resolved_start, None
+    syms = sorted({str(t).upper() for t in tickers})
+    in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    row = duckdb.sql(
+        f"""--sql
+        SELECT max(CAST(Date AS DATE))
+        FROM read_parquet('{path}')
+        WHERE upper(CAST(Symbol AS VARCHAR)) IN ({in_list})
+        """
+    ).fetchone()
+    if not row or row[0] is None:
+        return resolved_start, None
+    last_close = pd.Timestamp(row[0]).normalize()
+    cutoff = get_next_open_market_day(after_date=last_close)
+    if cutoff is None:
+        return resolved_start, None
+    cutoff = pd.Timestamp(cutoff).tz_localize(None).normalize()
+    fsd = pd.Timestamp(resolved_start).normalize()
+    if fsd <= cutoff:
+        return resolved_start, None
+    note = (
+        f"Start {resolved_start} is after the next session following your latest "
+        f"local close ({last_close.date()}); using {cutoff.date()} instead."
+    )
+    return cutoff.strftime("%Y-%m-%d"), note
 
 
 def list_symbols_with_saved_forecast(
@@ -382,11 +437,14 @@ def gather_for_tickers(
             }
 
         if include_covariates:
+            # Fundamentals required by the model stack (not just OHLCV)
             for name, fn in (
                 ("dividends", g.gather_stock_dividends),
                 ("splits", g.gather_stock_splits),
                 ("earnings", g.gather_earnings_data),
                 ("key_metrics", g.gather_stock_key_metrics),
+                ("institutional_ownership", g.gather_institutional_stock_ownership),
+                ("analyst_estimates", g.gather_analyst_estimates),
             ):
                 try:
                     fn()
@@ -509,6 +567,19 @@ def forecast_for_tickers(
     messages: list[str] = list(parsed.get("messages") or [])
     messages.append(f"Using start date {resolved}.")
 
+    # Cap start to what local prices can support (live week default can land
+    # after the latest close; the model refuses pure-future origins).
+    try:
+        adj, adj_note = _cap_start_to_local_prices(tickers, resolved)
+        if adj != resolved:
+            messages.append(adj_note or f"Adjusted start to {adj} for local prices.")
+            resolved = adj
+            start_info = dict(start_info)
+            start_info["start"] = resolved
+            start_info["reason"] = (start_info.get("reason") or "") + "+capped_to_prices"
+    except Exception as e:
+        logger.debug(f"start cap skipped: {e}")
+
     if dry_run:
         already = list_symbols_with_saved_forecast(tickers, resolved)
         return {
@@ -591,10 +662,18 @@ def forecast_for_tickers(
         incomplete_syms: list[str],
         extra_error: Optional[str] = None,
         already_saved: bool = False,
+        reason: str = "prices",
     ) -> dict[str, Any]:
-        err = extra_error or INCOMPLETE_DATA_MSG.format(
-            symbols=", ".join(incomplete_syms) or "requested symbols"
-        )
+        if extra_error:
+            err = extra_error
+        elif reason == "covariates":
+            err = COVARIATE_FAIL_MSG.format(
+                symbols=", ".join(incomplete_syms) or "requested symbols"
+            )
+        else:
+            err = INCOMPLETE_DATA_MSG.format(
+                symbols=", ".join(incomplete_syms) or "requested symbols"
+            )
         return {
             "ok": False,
             "error": err,
@@ -606,8 +685,11 @@ def forecast_for_tickers(
             "already_have_forecast": sorted(already),
             "messages": messages,
             "already_saved": already_saved,
-            "need_gather": True,
+            # True only when price history is the likely gap
+            "need_gather": reason == "prices",
+            "need_covariates": reason == "covariates",
             "model_loaded": True,
+            "fail_reason": reason,
         }
 
     try:
@@ -666,14 +748,14 @@ def forecast_for_tickers(
             return _incomplete_result(
                 forecasted_syms=[],
                 incomplete_syms=list(to_run),
-                extra_error=INCOMPLETE_DATA_MSG.format(
-                    symbols=", ".join(to_run)
-                ),
+                reason="covariates",
             )
         if not any_saved:
+            # Prices often present; model dropped symbols during covariate align
             return _incomplete_result(
                 forecasted_syms=[],
                 incomplete_syms=[t for t in to_run if t not in forecasted],
+                reason="covariates",
             )
 
         try:

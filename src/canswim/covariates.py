@@ -146,26 +146,90 @@ class Covariates:
 
         return t_earn_series
 
+    # Feature columns used by institutional ownership past-covariates (FMP schema).
+    # Used to zero-fill when a ticker has no ownership rows so model input dim stays fixed.
+    INST_OWNERSHIP_COLS = (
+        "cik",
+        "investorsHolding",
+        "lastInvestorsHolding",
+        "investorsHoldingChange",
+        "numberOf13Fshares",
+        "lastNumberOf13Fshares",
+        "numberOf13FsharesChange",
+        "totalInvested",
+        "lastTotalInvested",
+        "totalInvestedChange",
+        "ownershipPercent",
+        "lastOwnershipPercent",
+        "ownershipPercentChange",
+        "newPositions",
+        "lastNewPositions",
+        "newPositionsChange",
+        "increasedPositions",
+        "lastIncreasedPositions",
+        "increasedPositionsChange",
+        "closedPositions",
+        "lastClosedPositions",
+        "closedPositionsChange",
+        "reducedPositions",
+        "lastReducedPositions",
+        "reducedPositionsChange",
+        "totalCalls",
+        "lastTotalCalls",
+        "totalCallsChange",
+        "totalPuts",
+        "lastTotalPuts",
+        "totalPutsChange",
+        "putCallRatio",
+        "lastPutCallRatio",
+        "putCallRatioChange",
+    )
+
+    def _zero_ownership_series(self, prices: TimeSeries) -> TimeSeries:
+        """Zero-filled institutional ownership aligned to a price series calendar."""
+        from canswim.eligibility import timeseries_from_observed_df
+
+        idx = pd.DatetimeIndex(pd.to_datetime(prices.time_index)).normalize()
+        cols = list(self.INST_OWNERSHIP_COLS)
+        # Prefer live schema from loaded parquet when available
+        df_src = getattr(self, "inst_symbol_ownership_df", None)
+        if df_src is not None and len(df_src.columns) > 0:
+            cols = [c for c in df_src.columns if c in self.INST_OWNERSHIP_COLS] or cols
+            # Keep any extra columns present in training data file
+            for c in df_src.columns:
+                if c not in cols:
+                    cols.append(c)
+        df = pd.DataFrame(0.0, index=idx, columns=cols)
+        return timeseries_from_observed_df(df)
+
     def prepare_institutional_symbol_ownership_series(self, stock_price_series=None):
         logger.info(f"preparing past covariates: institutional ownership of symbol")
         inst_ownership_df = self.inst_symbol_ownership_df.copy()
         # cleanup data with known dirty columns
-        inst_ownership_df["cik"] = (
-            pd.to_numeric(inst_ownership_df["cik"], errors="coerce")
-            .fillna(0)
-            .astype(pd.Int64Dtype())
-        )
-        inst_ownership_df["totalCallsChange"] = (
-            pd.to_numeric(inst_ownership_df["totalCallsChange"], errors="coerce")
-            .fillna(0)
-            .astype(pd.Float64Dtype())
-        )
-        inst_ownership_df["totalPutsChange"] = (
-            pd.to_numeric(inst_ownership_df["totalPutsChange"], errors="coerce")
-            .fillna(0)
-            .astype(pd.Float64Dtype())
-        )
-        # convert earnings dataframe to series
+        if not inst_ownership_df.empty:
+            if "cik" in inst_ownership_df.columns:
+                inst_ownership_df["cik"] = (
+                    pd.to_numeric(inst_ownership_df["cik"], errors="coerce")
+                    .fillna(0)
+                    .astype(pd.Int64Dtype())
+                )
+            if "totalCallsChange" in inst_ownership_df.columns:
+                inst_ownership_df["totalCallsChange"] = (
+                    pd.to_numeric(
+                        inst_ownership_df["totalCallsChange"], errors="coerce"
+                    )
+                    .fillna(0)
+                    .astype(pd.Float64Dtype())
+                )
+            if "totalPutsChange" in inst_ownership_df.columns:
+                inst_ownership_df["totalPutsChange"] = (
+                    pd.to_numeric(
+                        inst_ownership_df["totalPutsChange"], errors="coerce"
+                    )
+                    .fillna(0)
+                    .astype(pd.Float64Dtype())
+                )
+        # convert ownership dataframe to series (zero-fill missing tickers)
         t_inst_ownership_series = {}
         for t, prices in stock_price_series.items():
             try:
@@ -173,30 +237,10 @@ class Covariates:
                 t_iown = inst_ownership_df.loc[[t]]
                 t_iown = t_iown.droplevel("Symbol")
                 t_iown.index = pd.to_datetime(t_iown.index)
-                # logger.info(f"t_iown index: {t_iown.index}")
-                # logger.info(f"t_iown index to biz days")
-                # assert not t_iown.index.duplicated().any(), "date index has duplicates"
-                # logger.info(f"t_iown no index duplicates")
-                # assert not t_iown.index.isnull().any(), "date index has missing values"
-                # logger.info(f"t_iown no index NaNs")
                 t_iown = self.df_index_to_biz_days(t_iown)
-                # logger.info(f"t_iown index to biz days")
-                # t_iown = (
-                #     t_iown.reset_index()
-                #     .drop_duplicates(subset="Date", keep="last")
-                #     .set_index("Date")
-                # )
                 t_iown = t_iown[~t_iown.index.duplicated(keep="last")]
                 assert t_iown.index.is_unique, "date index has duplicates"
-                # logger.info(f"t_iown no index duplicates")
                 assert not t_iown.index.isnull().any(), "date index has missing values"
-                # logger.info(f"t_iown no index NaNs")
-                # logger.info(f't_earn freq: {t_earn.index}')
-                # save cik as a static covariate
-                ##cik = t_iown["cik"].iloc[0].astype(pd.Int64Dtype)
-                ##t_iown = t_iown.drop(columns=["cik"])
-                ##static_covs_single = pd.DataFrame(data={"cik": [cik]})
-                # logger.info(f"Company with ticker {t} has cik: {cik}")
                 ts_tmp = TimeSeries.from_dataframe(
                     t_iown, freq="B", fill_missing_dates=True
                 )
@@ -212,30 +256,80 @@ class Covariates:
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
                 t_inst_ownership_series[t] = ts_padded
             except KeyError as e:
+                # Do not drop the symbol: model was trained with ownership columns.
                 logger.info(
-                    f"""Skipping {t} from covariates series. 
-                        No institutional ownership data available for {t}, error: {type(e)}, {e}"""
+                    f"No institutional ownership rows for {t} ({e}); zero-filling "
+                    f"{len(self.INST_OWNERSHIP_COLS)} ownership columns"
                 )
+                t_inst_ownership_series[t] = self._zero_ownership_series(prices)
             except AssertionError as e:
-                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+                logger.warning(
+                    f"Ownership series invalid for {t} ({type(e)}: {e}); zero-filling"
+                )
+                t_inst_ownership_series[t] = self._zero_ownership_series(prices)
 
         return t_inst_ownership_series
 
-    def stack_covariates(self, old_covs=None, new_covs=None, min_samples=1):
+    def stack_covariates(
+        self, old_covs=None, new_covs=None, min_samples=1, column_template=None
+    ):
+        """Stack new_covs onto old_covs per ticker.
+
+        When a ticker is missing from new_covs, zero-fill using a template series
+        from another ticker (or ``column_template``) so feature dimensionality
+        stays consistent with training.
+        """
         logger.info(f"stacking covariates.")
-        # stack sales and earnigns to past covariates
+        old_covs = old_covs or {}
+        new_covs = new_covs or {}
+        # Nothing new to stack — keep existing (do not wipe symbols)
+        if not new_covs:
+            if column_template is not None and old_covs:
+                logger.warning(
+                    "No new covariates for this stack step; zero-filling "
+                    f"{len(column_template.components)} template columns"
+                )
+                stacked = {}
+                for t, covs in old_covs.items():
+                    try:
+                        new_ts = self._zero_cov_like(column_template, covs)
+                        old_sliced, new_sliced = self._align_series_on_common_index(
+                            covs, new_ts
+                        )
+                        stacked[t] = old_sliced.stack(new_sliced)
+                    except (ValueError, AssertionError) as e:
+                        logger.warning(
+                            f"Skipping {t} while zero-fill stacking: {type(e)}: {e}"
+                        )
+                return stacked if stacked else old_covs
+            logger.warning(
+                "No new covariates for this stack step; keeping prior covariates"
+            )
+            return old_covs
+        # stack sales and earnings to past covariates
         stacked_covs = {}
+        template = next(iter(new_covs.values()))
         for t, covs in list(old_covs.items()):
             try:
+                if t not in new_covs:
+                    # Missing optional cov for this ticker: zero-fill columns so
+                    # feature dim stays consistent and we do not drop the symbol.
+                    logger.info(
+                        f"No new covariates for {t}; zero-filling "
+                        f"{len(template.components)} columns"
+                    )
+                    new_ts = self._zero_cov_like(template, covs)
+                else:
+                    new_ts = new_covs[t]
                 assert (
-                    type(new_covs[t]) == TimeSeries
-                ), f"type of {t} is not TimeSeries, but {type(new_covs[t])}"
+                    type(new_ts) == TimeSeries
+                ), f"type of {t} is not TimeSeries, but {type(new_ts)}"
                 # Align on shared timestamps with a common observed-bar freq.
                 # Price series use CustomBusinessDay (no invented holiday bars);
                 # sparse covs still use "B". slice_intersect alone fails when
                 # freqs disagree (pandas freq validation → ValueError).
                 old_sliced, new_sliced = self._align_series_on_common_index(
-                    covs, new_covs[t]
+                    covs, new_ts
                 )
                 stacked = old_sliced.stack(new_sliced)
                 if len(stacked) >= min_samples:
@@ -249,8 +343,18 @@ class Covariates:
             except (ValueError, AssertionError) as e:
                 logger.warning(f"Skipping {t} while stacking covariates: {type(e)}: {e}")
         if len(stacked_covs.keys()) > 0:
-            logger.info(f"stacked covariates column count: {len(stacked.columns)}")
+            sample = next(iter(stacked_covs.values()))
+            logger.info(f"stacked covariates column count: {len(sample.components)}")
         return stacked_covs
+
+    def _zero_cov_like(self, template: TimeSeries, like: TimeSeries) -> TimeSeries:
+        """Zero-filled series with template columns, aligned to like's time index."""
+        from canswim.eligibility import timeseries_from_observed_df
+
+        idx = pd.DatetimeIndex(pd.to_datetime(like.time_index)).normalize()
+        cols = list(template.components)
+        df = pd.DataFrame(0.0, index=idx, columns=cols)
+        return timeseries_from_observed_df(df)
 
     @staticmethod
     def _align_series_on_common_index(a: TimeSeries, b: TimeSeries):
@@ -961,25 +1065,26 @@ class Covariates:
         pred_horizon: int = None,
     ):
         logger.info("Preparing future covariates")
-        # add analyst estimates
+        # Seed with dividends (always has a per-ticker series, zero if no divs)
+        # so missing analyst estimates never empty the entire future-cov dict.
+        future_covariates = (
+            self.prepare_dividends(stock_price_series=stock_price_series) or {}
+        )
         quarter_est_series, annual_est_series = self.prepare_analyst_estimates(
             stock_price_series=stock_price_series
         )
-        ## Stack analyst estimates to future covariates
-        future_covariates = self.stack_covariates(
-            old_covs=quarter_est_series,
-            new_covs=annual_est_series,
-            min_samples=min_samples,
-        )
-        # add stock dividends covariates
-        # for some stocks there will be dividends declared prior to the forecast date
-        # with known payment dates scheduled into the future
-        dividend_series = self.prepare_dividends(stock_price_series=stock_price_series)
-        future_covariates = self.stack_covariates(
-            old_covs=future_covariates,
-            new_covs=dividend_series,
-            min_samples=min_samples,
-        )
+        if quarter_est_series:
+            future_covariates = self.stack_covariates(
+                old_covs=future_covariates,
+                new_covs=quarter_est_series,
+                min_samples=min_samples,
+            )
+        if annual_est_series:
+            future_covariates = self.stack_covariates(
+                old_covs=future_covariates,
+                new_covs=annual_est_series,
+                min_samples=min_samples,
+            )
         # extend covars into forecast horizon future dates
         future_covariates = self.__extend_series(
             n=pred_horizon, series=future_covariates, target=stock_price_series

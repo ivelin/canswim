@@ -70,12 +70,12 @@ def _forecast_summary(result: dict) -> str:
             "Skipped re-run — no new forecast files written."
         )
     if not result.get("ok"):
-        need = result.get("need_gather")
-        head = (
-            "❌ **Need more market data first.**"
-            if need
-            else "❌ **Forecast failed.**"
-        )
+        if result.get("need_covariates"):
+            head = "❌ **Forecast inputs incomplete.**"
+        elif result.get("need_gather"):
+            head = "❌ **Need more market data first.**"
+        else:
+            head = "❌ **Forecast failed.**"
         return f"{head}  \n{result.get('error') or 'Unknown error.'}"
     forecasted = result.get("forecasted") or []
     already = result.get("already_have_forecast") or []
