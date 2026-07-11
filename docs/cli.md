@@ -110,4 +110,4 @@ Exact copy and policy: [run_triggers.md](run_triggers.md).
 - [run_triggers.md](run_triggers.md) — gather/forecast contract (CLI · GUI · MCP)
 - [mcp.md](mcp.md) — MCP server
 - [data_store.md](data_store.md) — parquet vs DuckDB
-- [../README.md](../README.md) — landing page
+- [Home](index.md) — landing page

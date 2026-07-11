@@ -49,3 +49,11 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 | Data paths / DuckDB vs parquet semantics | `docs/data_store.md` |
 
 Do **not** maintain a separate design-doc tree that diverges from `docs/run_triggers.md`. Prefer tests that lock consumer strings (`tests/canswim/test_ux_split_labels.py`) and MCP tool registration checks (`tests/canswim/test_docs_sync.py`) over stale prose.
+
+## GitHub Pages (https://ivelin.github.io/canswim/)
+
+- The public docs site is **generated from `main`** (`docs/` + `mkdocs.yml`) via `.github/workflows/docs.yml`.
+- **Do not** maintain operator docs on a parallel `website` branch (legacy Pages source). That branch is frozen; new content goes on `main` only.
+- Merging docs to `main` (paths under `docs/` or `mkdocs.yml`) triggers a Pages redeploy. Use **Actions → Docs → Run workflow** if a manual rebuild is needed.
+- After changing operator docs, `./scripts/ci-local.sh` (includes `test_docs_sync`) must pass before push/merge, same as code.
+- Local preview: `pip install mkdocs-material && mkdocs serve` (from repo root).
