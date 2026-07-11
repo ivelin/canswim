@@ -10,6 +10,8 @@ For a brief introduction read [this blog post](https://medium.com/@ivelin.atanas
 
 ## Documentation
 
+**Published site:** [https://ivelin.github.io/canswim/](https://ivelin.github.io/canswim/) (built from `main` / `docs/` via GitHub Actions — not the legacy `website` branch).
+
 | Doc | Contents |
 |-----|----------|
 | **[docs/cli.md](docs/cli.md)** | CLI tasks, recipes, env vars |
@@ -18,7 +20,7 @@ For a brief introduction read [this blog post](https://medium.com/@ivelin.atanas
 | **[docs/data_store.md](docs/data_store.md)** | Parquet (SoT) vs DuckDB (search/UI) |
 | **[AGENTS.md](AGENTS.md)** | CI, merge rules, docs DoD for agents |
 
-Flags: `python -m canswim -h` is the source of truth.
+Flags: `python -m canswim -h` is the source of truth. Local site preview: `pip install mkdocs-material && mkdocs serve`.
 
 ## Setup
 

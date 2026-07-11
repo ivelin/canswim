@@ -1,0 +1,49 @@
+# Site is generated from main-branch docs/ (see .github/workflows/docs.yml).
+# Do not maintain a parallel website branch for operator docs.
+site_name: canswim
+site_description: Developer toolkit for CANSLIM-style investors (CLI, GUI, MCP)
+site_url: https://ivelin.github.io/canswim/
+repo_url: https://github.com/ivelin/canswim
+repo_name: ivelin/canswim
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - CLI: cli.md
+  - Gather & forecast: run_triggers.md
+  - MCP: mcp.md
+  - Data store: data_store.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ivelin/canswim

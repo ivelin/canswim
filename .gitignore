@@ -11,3 +11,4 @@ dist/**
 data/
 forecast/
 yfinance.cache
+site/

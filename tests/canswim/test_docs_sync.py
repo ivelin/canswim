@@ -52,9 +52,12 @@ def test_cli_tasks_mentioned_in_cli_doc():
 
 def test_docs_index_links_exist():
     for rel in (
+        "docs/index.md",
         "docs/cli.md",
         "docs/mcp.md",
         "docs/run_triggers.md",
         "docs/data_store.md",
+        "mkdocs.yml",
+        ".github/workflows/docs.yml",
     ):
         assert (ROOT / rel).is_file(), rel
