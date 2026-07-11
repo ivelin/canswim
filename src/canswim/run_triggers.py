@@ -339,6 +339,32 @@ def gather_for_tickers(
         # Ensure symbols appear on a stock list CSV for forecast path
         _ensure_symbols_on_list(tickers)
 
+        # Sync DuckDB search tables so Charts/Scans dropdown includes new symbols
+        # (dashboard --same_data reuses DB and would otherwise stay on old list)
+        db_sync: dict[str, Any] | None = None
+        try:
+            from canswim.db import sync_gathered_symbols, get_db_path
+
+            db_sync = sync_gathered_symbols(get_db_path(), tickers)
+            if db_sync.get("ok"):
+                if db_sync.get("added"):
+                    messages.append(
+                        "Added to Charts symbol list: "
+                        + ", ".join(db_sync["added"])
+                    )
+                else:
+                    messages.append("Charts symbol list already included these.")
+                messages.append(
+                    f"Synced {db_sync.get('close_rows', 0)} local close prices "
+                    "into search DB."
+                )
+            else:
+                messages.append(
+                    f"Could not update Charts list: {db_sync.get('error')}"
+                )
+        except Exception as e:
+            messages.append(f"Charts list sync note: {e}")
+
         return {
             "ok": True,
             "tickers": tickers,
@@ -349,6 +375,7 @@ def gather_for_tickers(
             "fetched": fetched,
             "skipped_remote": skipped,
             "incomplete": [],
+            "db_sync": db_sync,
         }
     except Exception as e:
         logger.exception("gather_for_tickers failed")

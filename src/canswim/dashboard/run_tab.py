@@ -10,6 +10,7 @@ import json
 import gradio as gr
 from loguru import logger
 
+from canswim.db import list_tickers
 from canswim.run_triggers import (
     FORECAST_BUTTON,
     FORECAST_SECTION_HELP,
@@ -32,9 +33,15 @@ def _fmt_result(payload: dict) -> str:
 
 
 class RunTab:
-    def __init__(self, canswim_model=None, db_path=None):
+    def __init__(
+        self,
+        canswim_model=None,
+        db_path=None,
+        charts_ticker_dropdown=None,
+    ):
         self.canswim_model = canswim_model
         self.db_path = db_path
+        self.charts_ticker_dropdown = charts_ticker_dropdown
 
         gr.Markdown(
             """
@@ -53,9 +60,10 @@ Use the same stock symbols in both when you want a full path from download to pr
                 placeholder="AAPL, MSFT",
                 info=TICKERS_HELP,
             )
-            self.gatherBtn = gr.Button(GATHER_BUTTON, variant="secondary")
+            # primary (not secondary): Soft theme greys secondary and looks disabled
+            self.gatherBtn = gr.Button(GATHER_BUTTON, variant="primary")
             self.gatherStatus = gr.Markdown(
-                value="_Enter symbols, then update market data._"
+                value="_Enter symbols, then click Update market data._"
             )
 
         gr.Markdown("---")
@@ -82,10 +90,14 @@ Use the same stock symbols in both when you want a full path from download to pr
                 value="_Enter symbols, optionally check the start date, then run a forecast._"
             )
 
+        gather_outputs = [self.gatherStatus]
+        if self.charts_ticker_dropdown is not None:
+            gather_outputs.append(self.charts_ticker_dropdown)
+
         self.gatherBtn.click(
             fn=self.do_gather,
             inputs=[self.gatherTickers],
-            outputs=[self.gatherStatus],
+            outputs=gather_outputs,
         )
         self.resolveBtn.click(
             fn=self.preview_start,
@@ -97,6 +109,21 @@ Use the same stock symbols in both when you want a full path from download to pr
             inputs=[self.forecastTickers, self.forecastDate],
             outputs=[self.forecastStatus],
         )
+
+    def _charts_dropdown_update(self):
+        """Refresh Charts symbol list after search-DB sync."""
+        if self.charts_ticker_dropdown is None or not self.db_path:
+            return None
+        try:
+            choices = sorted(list_tickers(self.db_path))
+            current = None
+            # keep a sensible selection if possible
+            if choices:
+                current = choices[0]
+            return gr.update(choices=choices, value=current)
+        except Exception as e:
+            logger.warning(f"Could not refresh Charts dropdown: {e}")
+            return gr.update()
 
     def preview_start(self, forecast_date):
         info = resolve_start_for_run(forecast_date or None)
@@ -114,24 +141,40 @@ Use the same stock symbols in both when you want a full path from download to pr
     def do_gather(self, tickers_text):
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
-            return (
+            msg = (
                 f"**Update failed:** {parsed.get('error')}\n\n"
                 + _fmt_result(parsed)
             )
+            if self.charts_ticker_dropdown is not None:
+                return msg, gr.update()
+            return msg
         logger.info(f"Dashboard gather for {parsed['tickers']}")
         result = gather_for_tickers(tickers_text, force_allow=True)
         if result.get("ok"):
             skipped = result.get("skipped_remote") or []
             fetched = result.get("fetched") or []
             summary = (
-                f"**Market data updated** for `{', '.join(result.get('tickers') or [])}`"
+                f"**Market data updated** for "
+                f"`{', '.join(result.get('tickers') or [])}`"
             )
             if skipped:
                 summary += f"  \nAlready local: {', '.join(skipped)}"
             if fetched:
                 summary += f"  \nDownloaded/refreshed: {', '.join(fetched)}"
-            return summary + "\n\n" + _fmt_result(result)
-        return f"**Update failed:** {result.get('error')}\n\n{_fmt_result(result)}"
+            added = (result.get("db_sync") or {}).get("added") or []
+            if added:
+                summary += (
+                    f"  \n**Now in Charts list:** {', '.join(added)}"
+                )
+            msg = summary + "\n\n" + _fmt_result(result)
+        else:
+            msg = (
+                f"**Update failed:** {result.get('error')}\n\n"
+                + _fmt_result(result)
+            )
+        if self.charts_ticker_dropdown is not None:
+            return msg, self._charts_dropdown_update()
+        return msg
 
     def do_forecast(self, tickers_text, forecast_date):
         parsed = parse_ticker_list(tickers_text)
