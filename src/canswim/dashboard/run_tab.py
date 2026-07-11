@@ -35,12 +35,44 @@ def _json_details(payload: dict) -> str:
 
 def _gather_summary(result: dict) -> str:
     if not result.get("ok"):
-        return f"❌ **Could not update market data.**  \n{result.get('error') or 'Unknown error.'}"
+        err = result.get("error") or "Unknown error."
+        short = result.get("short_history") or []
+        none = result.get("no_history") or []
+        if short or none or "IPO" in err or "trading history" in err:
+            return f"❌ **Could not finish for every symbol.**  \n{err}"
+        return f"❌ **Could not update market data.**  \n{err}"
     tickers = result.get("tickers") or []
+    ready = result.get("ready") or []
+    incomplete = result.get("incomplete") or []
     skipped = result.get("skipped_remote") or []
     fetched = result.get("fetched") or []
     added = (result.get("db_sync") or {}).get("added") or []
-    lines = [f"✅ **Market data ready** for {', '.join(tickers) or '—' }."]
+    short = result.get("short_history") or []
+    if result.get("partial") and incomplete:
+        show = ", ".join(ready) if ready else "—"
+        lines = [
+            f"⚠️ **Partial success** — ready: {show}.",
+            result.get("error")
+            or (
+                f"Not ready (often recent IPOs / short history): "
+                f"{', '.join(incomplete)}."
+            ),
+        ]
+        # Prefer full friendly text from messages if present
+        for m in result.get("messages") or []:
+            if "trading history" in m or "No usable price" in m:
+                lines = [
+                    f"⚠️ **Partial success** — ready: {show}.",
+                    m,
+                ]
+                break
+        if short:
+            lines.append(
+                "Tip: drop recent IPOs from the list, then run **Update market data** again."
+            )
+    else:
+        show = ", ".join(ready or tickers) or "—"
+        lines = [f"✅ **Market data ready** for {show}."]
     if skipped and not fetched:
         lines.append("Already up to date locally — no download needed.")
     elif skipped:

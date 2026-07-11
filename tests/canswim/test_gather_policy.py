@@ -11,8 +11,11 @@ import pytest
 from canswim.gather_policy import (
     DEFAULT_FORECAST_MIN_BARS,
     DEFAULT_TRAIN_MIN_BARS,
+    SymbolFetchPlan,
+    classify_incomplete_reason,
     evaluate_symbol_coverage,
     forecast_window_start,
+    format_incomplete_gather_message,
     incomplete_symbols,
     plan_stock_price_fetches,
     plan_symbol_price_fetch,
@@ -230,6 +233,43 @@ def test_gather_raises_when_remote_empty_for_missing_symbol():
                         g.gather_stock_price_data()
 
 
+def test_classify_short_history_and_ipo_message():
+    assert (
+        classify_incomplete_reason(
+            "window_starts_late:first=2025-11-01,need_near=2024-07-10"
+        )
+        == "short_history"
+    )
+    assert (
+        classify_incomplete_reason(
+            "local_incomplete:only 40 complete OHLCV bars; need >= 350"
+        )
+        == "short_history"
+    )
+    assert classify_incomplete_reason("missing_local_symbol") == "no_history"
+    plans = [
+        SymbolFetchPlan(
+            "STRC",
+            "fetch",
+            "2024-07-10",
+            "local_incomplete:only 40 complete OHLCV bars; need >= 350",
+        ),
+        SymbolFetchPlan(
+            "BOT",
+            "fetch",
+            "2024-07-10",
+            "window_starts_late:first=2025-06-01,need_near=2024-07-10",
+        ),
+        SymbolFetchPlan("AAPL", "skip", None, "local_complete_and_fresh"),
+    ]
+    msg = format_incomplete_gather_message(plans)
+    assert "STRC" in msg and "BOT" in msg
+    assert "IPO" in msg or "Recent IPOs" in msg
+    assert "rate limit" not in msg.lower()
+    assert "AAPL" in msg  # ready called out
+    assert "API key" not in msg
+
+
 def test_gather_for_tickers_reports_ok_false_when_incomplete(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     from canswim.run_triggers import gather_for_tickers
@@ -240,19 +280,29 @@ def test_gather_for_tickers_reports_ok_false_when_incomplete(monkeypatch):
     g.last_price_fetch_plans = []
     g.last_post_fetch_plans = []
     g.last_remote_symbols_written = []
+    g.last_incomplete_coverage = {}
 
     def _boom():
-        from canswim.gather_policy import SymbolFetchPlan
-
-        g.last_price_fetch_plans = [
-            SymbolFetchPlan("MSFT", "fetch", "2024-07-10", "missing_local_symbol")
+        plans = [
+            SymbolFetchPlan(
+                "MSFT",
+                "fetch",
+                "2024-07-10",
+                "local_incomplete:only 10 complete OHLCV bars; need >= 350",
+            )
         ]
-        g.last_post_fetch_plans = g.last_price_fetch_plans
+        g.last_price_fetch_plans = plans
+        g.last_post_fetch_plans = plans
         g.last_remote_symbols_written = []
-        raise RuntimeError(
-            "Could not obtain complete market history for: MSFT. "
-            "Remote download returned no usable bars for those symbols."
-        )
+        g.last_incomplete_coverage = {
+            "plans": plans,
+            "incomplete": ["MSFT"],
+            "skipped": [],
+            "short_history": ["MSFT"],
+            "no_history": [],
+            "message": format_incomplete_gather_message(plans),
+        }
+        raise RuntimeError(format_incomplete_gather_message(plans))
 
     g.gather_broad_market_data = lambda: None
     g.gather_sectors_data = lambda: None
@@ -261,4 +311,55 @@ def test_gather_for_tickers_reports_ok_false_when_incomplete(monkeypatch):
     with patch("canswim.gather_data.MarketDataGatherer", return_value=g):
         r = gather_for_tickers("MSFT", include_covariates=False, force_allow=True)
     assert r["ok"] is False
-    assert "MSFT" in (r.get("error") or "")
+    err = r.get("error") or ""
+    assert "MSFT" in err
+    assert "rate limit" not in err.lower()
+    assert "trading history" in err.lower() or "IPO" in err
+
+
+def test_gather_for_tickers_partial_success(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    from canswim.run_triggers import gather_for_tickers
+
+    g = type("G", (), {})()
+    g.stocks_ticker_set = []
+    g.gather_mode = "forecast"
+    plans = [
+        SymbolFetchPlan("AAPL", "skip", None, "local_complete_and_fresh"),
+        SymbolFetchPlan(
+            "STRC",
+            "fetch",
+            "2024-07-10",
+            "window_starts_late:first=2025-11-01,need_near=2024-07-10",
+        ),
+    ]
+    g.last_price_fetch_plans = plans
+    g.last_post_fetch_plans = plans
+    g.last_remote_symbols_written = []
+    g.last_incomplete_coverage = {
+        "plans": plans,
+        "incomplete": ["STRC"],
+        "skipped": ["AAPL"],
+        "short_history": ["STRC"],
+        "no_history": [],
+        "message": format_incomplete_gather_message(plans),
+    }
+    g.gather_broad_market_data = lambda: None
+    g.gather_sectors_data = lambda: None
+    g.gather_stock_price_data = lambda: None
+
+    with patch("canswim.gather_data.MarketDataGatherer", return_value=g):
+        with patch("canswim.run_triggers._ensure_symbols_on_list"):
+            with patch(
+                "canswim.db.sync_gathered_symbols",
+                return_value={"ok": True, "added": [], "close_rows": 0},
+            ):
+                with patch("canswim.db.get_db_path", return_value=":memory:"):
+                    r = gather_for_tickers(
+                        "AAPL,STRC", include_covariates=False, force_allow=True
+                    )
+    assert r["ok"] is True
+    assert r.get("partial") is True
+    assert "AAPL" in (r.get("ready") or [])
+    assert "STRC" in (r.get("incomplete") or [])
+    assert any("IPO" in m or "trading history" in m for m in (r.get("messages") or []))

@@ -277,6 +277,103 @@ def incomplete_symbols(plans: Sequence[SymbolFetchPlan]) -> list[str]:
     return [p.symbol for p in plans if p.is_incomplete]
 
 
+def complete_symbols(plans: Sequence[SymbolFetchPlan]) -> list[str]:
+    """Symbols ready for forecast (skip, or complete-but-stale after refresh path)."""
+    out: list[str] = []
+    for p in plans:
+        if p.action == "skip":
+            out.append(p.symbol)
+        elif p.reason == "local_complete_but_stale":
+            # Still needs a fetch; not complete until re-checked after download
+            continue
+    return out
+
+
+# Consumer-facing buckets for incomplete price coverage
+IncompleteKind = Literal["short_history", "no_history", "other"]
+
+
+def classify_incomplete_reason(reason: str) -> IncompleteKind:
+    """Map planner reason → plain-language category for UI / gather errors."""
+    r = (reason or "").strip().lower()
+    if not r:
+        return "other"
+    # Listed after window start, or too few sessions for model lookback
+    if "window_starts_late" in r:
+        return "short_history"
+    if "only " in r and "bars" in r and "need" in r:
+        return "short_history"
+    if "local_incomplete:" in r and "bars" in r:
+        return "short_history"
+    if r in ("missing_local_symbol", "no_bars_in_window"):
+        return "no_history"
+    if r.startswith("missing_local") or "no_bars" in r:
+        return "no_history"
+    return "other"
+
+
+def classify_incomplete_plans(
+    plans: Sequence[SymbolFetchPlan],
+) -> dict[str, list[str]]:
+    """Bucket incomplete symbols by consumer-facing cause."""
+    buckets: dict[str, list[str]] = {
+        "short_history": [],
+        "no_history": [],
+        "other": [],
+    }
+    for p in plans:
+        if not p.is_incomplete:
+            continue
+        buckets[classify_incomplete_reason(p.reason)].append(p.symbol)
+    return buckets
+
+
+def format_incomplete_gather_message(
+    plans: Sequence[SymbolFetchPlan],
+    *,
+    min_bars: int = DEFAULT_FORECAST_MIN_BARS,
+    lookback_years: int = FORECAST_LOOKBACK_YEARS,
+) -> str:
+    """Human-readable gather/forecast readiness failure (no rate-limit scolding)."""
+    buckets = classify_incomplete_plans(plans)
+    # After coverage check, action=skip means ready for forecast lookback
+    ready = [p.symbol for p in plans if p.action == "skip"]
+    lines: list[str] = []
+
+    short = buckets["short_history"]
+    none = buckets["no_history"]
+    other = buckets["other"]
+
+    if short:
+        lines.append(
+            f"Not enough trading history yet for: {', '.join(short)}. "
+            f"Forecasts need about {lookback_years} years of daily sessions "
+            f"(~{min_bars} trading days). Recent IPOs and newly listed names "
+            "usually cannot be used until they age — remove them and try again "
+            "with the rest of your list."
+        )
+    if none:
+        lines.append(
+            f"No usable price history found for: {', '.join(none)}. "
+            "Check the ticker spelling, or that the symbol trades on a supported "
+            "exchange. If the name is correct, try again later."
+        )
+    if other:
+        lines.append(
+            f"Market history is still incomplete for: {', '.join(other)}. "
+            "Update market data again after checking symbols, or remove them from "
+            "the list."
+        )
+    if ready and (short or none or other):
+        lines.append(f"Ready for the next step: {', '.join(ready)}.")
+    if not lines:
+        return (
+            "Market history is incomplete for some symbols. "
+            "Forecasts never invent missing prices."
+        )
+    return " ".join(lines)
+
+
 def evaluate_symbol_coverage(
     tickers: Sequence[str],
     price_df: Optional[pd.DataFrame],
@@ -298,10 +395,17 @@ def evaluate_symbol_coverage(
     stale_only = [
         p.symbol for p in plans if p.reason == "local_complete_but_stale"
     ]
+    buckets = classify_incomplete_plans(plans)
     return {
         "plans": plans,
         "incomplete": incomplete,
         "skipped": skipped,
         "stale_only": stale_only,
+        "short_history": buckets["short_history"],
+        "no_history": buckets["no_history"],
         "ok": len(incomplete) == 0,
+        "partial_ok": len(skipped) > 0 and len(incomplete) > 0,
+        "message": format_incomplete_gather_message(plans)
+        if incomplete
+        else "",
     }
