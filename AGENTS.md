@@ -23,3 +23,29 @@
 - Prefer the `canswim` conda env for CLI and pytest (also used by `ci-local.sh` when present).
 - Keep `hfhub_sync=False` for local gather/forecast unless explicitly testing HF sync.
 - Do not commit local slimmed `symbol_lists/all_stocks.csv` or gitignored `data/` artifacts from few-symbol runs.
+
+## Documentation (keep in sync with code)
+
+User-facing docs live under `docs/` and the root `README.md`. **Update them in the same PR** as the behavior they describe—before push/merge (same bar as tests).
+
+| Doc | Source of truth for |
+|-----|---------------------|
+| `python -m canswim -h` (`src/canswim/__main__.py`) | CLI task names and flags |
+| `docs/cli.md` | CLI recipes / env / workflows |
+| `docs/run_triggers.md` | Gather/forecast policy (CLI · GUI · MCP) |
+| `docs/mcp.md` | MCP tools + opt-in writes |
+| `docs/data_store.md` | Parquet vs DuckDB |
+| `README.md` | Landing links + short tables |
+| `docs/images/{charts,scans,run}.png` | Dashboard screenshots |
+
+**When a PR changes…**
+
+| Change | Also update |
+|--------|-------------|
+| CLI task/flag or help text | `__main__.py` help; `docs/cli.md` and README if top-level |
+| Gather/forecast policy or Run tab labels | `docs/run_triggers.md`; UX string tests; README table if labels change |
+| MCP tools add/rename/remove | `docs/mcp.md` tool table (+ README link only if needed) |
+| Charts / Scans / Run layout or primary copy | Replace affected `docs/images/*.png` in the same PR |
+| Data paths / DuckDB vs parquet semantics | `docs/data_store.md` |
+
+Do **not** maintain a separate design-doc tree that diverges from `docs/run_triggers.md`. Prefer tests that lock consumer strings (`tests/canswim/test_ux_split_labels.py`) and MCP tool registration checks (`tests/canswim/test_docs_sync.py`) over stale prose.
