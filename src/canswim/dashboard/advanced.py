@@ -73,7 +73,9 @@ class AdvancedTab:
         try:
             df = run_select(self.db_path, query, row_limit=50_000)
             logger.info(f"SQL Result rows: {len(df)}")
-            return df
+            from canswim.dashboard.formatting import format_forecast_metrics_table
+
+            return format_forecast_metrics_table(df)
         except SelectOnlyError as e:
             gr.Error(str(e))
             return None
