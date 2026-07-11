@@ -1,50 +1,53 @@
 # canswim
+
 Developer toolkit for CANSLIM investment style practitioners
+
+**NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
 
 For a brief introduction read [this blog post](https://medium.com/@ivelin.atanasoff.ivanov/canswim-a-deep-learning-tool-for-canslim-practitioners-2c9740bb0d3d).
 
 [Here is also a video recording](https://www.youtube.com/watch?v=GfC-H0uxXvk&ab_channel=AustinPythonMeetup) of a CANSWIM presentation for the [Python Austin Meetup](https://www.meetup.com/austinpython/).
 
-Example forecast chart below:
+## Documentation
 
-![image](https://github.com/user-attachments/assets/7235004c-e92e-4731-85bf-03d67c12b2d9)
+| Doc | Contents |
+|-----|----------|
+| **[docs/cli.md](docs/cli.md)** | CLI tasks, recipes, env vars |
+| **[docs/run_triggers.md](docs/run_triggers.md)** | Get market data / run forecast (CLI · GUI · MCP) |
+| **[docs/mcp.md](docs/mcp.md)** | MCP server (tools, opt-in writes) |
+| **[docs/data_store.md](docs/data_store.md)** | Parquet (SoT) vs DuckDB (search/UI) |
+| **[AGENTS.md](AGENTS.md)** | CI, merge rules, docs DoD for agents |
 
+Flags: `python -m canswim -h` is the source of truth.
 
-# Setup
+## Setup
 
-
-```
+```bash
 pip install canswim
-```
 
-
-## Install canswim package in dev mode
-
-```
+# dev checkout
 pip install -e ./
+
+# recommended for this repo
+conda activate canswim
 ```
 
-## Local-first market data (gather)
+## Local-first market data
 
 By default **`gatherdata` does not download or upload the full Hugging Face dataset**.
 That HF snapshot step is slow and was a common reason the CLI “hung”. Instead:
 
 1. Use **local** parquet under `data/data-3rd-party/` (created/updated by gather).
 2. Refresh from **FMP / yfinance** APIs as needed.
-3. Resolve ticker universes from checked-in **`symbol_lists/*.csv`** (light reference files).
+3. Resolve ticker universes from checked-in **`symbol_lists/*.csv`**.
 
 ```bash
 # full-universe local gather (no HF dataset sync)
 hfhub_sync=False python -m canswim gatherdata
 
-# scoped list via env (legacy full gather path)
-stock_tickers_list=few_stocks.csv hfhub_sync=False python -m canswim gatherdata
-
 # scoped list via --tickers (same pipeline as Dashboard Run + MCP gather_tickers)
 hfhub_sync=False python -m canswim gatherdata --tickers "AAPL, MSFT"
 ```
-
-Optional HF:
 
 | Env | Default | Meaning |
 |-----|---------|---------|
@@ -53,7 +56,7 @@ Optional HF:
 | `YFINANCE_USE_CACHE` | `False` | Avoid multi‑GB SQLite cache hang |
 | `MCP_ALLOW_RUNS` | unset | Enable MCP gather/forecast tools (CLI/GUI do not need this) |
 
-Train/forecast **skip tickers without complete ground-truth OHLCV** (no synthetic price fill).
+Train/forecast **skip tickers without complete ground-truth OHLCV** (no synthetic price fill). Details: [docs/data_store.md](docs/data_store.md), [docs/cli.md](docs/cli.md).
 
 ## Get market data & run forecasts (CLI · GUI · MCP)
 
@@ -65,102 +68,72 @@ Two separate steps, same backend (`canswim.run_triggers`). Details: **[docs/run_
 | **GUI** | **Update market data** | **Run forecast** | **Check start date** |
 | **MCP** | `gather_tickers`* | `forecast_tickers`* | `resolve_forecast_start` |
 
-\*MCP write tools need `MCP_ALLOW_RUNS=1`.
+\*MCP write tools need `MCP_ALLOW_RUNS=1`. Full MCP guide: **[docs/mcp.md](docs/mcp.md)**.
 
-Scoped get-market-data uses **~2 years** of history and **skips downloads** when local files are already complete. Forecasts **stop** if data is incomplete (no invented prices).
+Scoped get-market-data uses **~2 years** of history, **fundamentals** (unless `--no_covariates`), and **skips downloads** when local files are already complete. Forecasts **stop** if data is incomplete (no invented prices).
 
 ```bash
 python -m canswim gatherdata --tickers "AAPL, MSFT"
 python -m canswim resolve_start --forecast_start_date 2026-03-05
 python -m canswim forecast --tickers AAPL --forecast_start_date 2026-03-05 --dry_run
+python -m canswim dashboard --same_data True
 ```
 
-Without `--tickers`, `gatherdata` / `forecast` keep full-universe / train-style behavior.
+Full recipes: **[docs/cli.md](docs/cli.md)**.
 
-## Command line interface
+## Dashboard (GUI)
+
+```bash
+python -m canswim dashboard --same_data True
+```
+
+| Tab | Purpose |
+|-----|---------|
+| **Charts** | Price history + forecast bands for a symbol |
+| **Scans** | Filter forecasts by as-of date, reward, risk, confidence |
+| **Run** | **Update market data** / **Run forecast** / **Check start date** |
+| **Advanced Queries** | Read-only SQL against the search DB |
+
+### Sample screenshots
+
+![Charts](docs/images/charts.png)
+
+![Scans](docs/images/scans.png)
+
+![Run](docs/images/run.png)
+
+*(If images are missing in a fork, open the dashboard locally and refresh captures under `docs/images/` — same PR as any UI change.)*
+
+Historical example chart:
+
+![example forecast](https://github.com/user-attachments/assets/7235004c-e92e-4731-85bf-03d67c12b2d9)
+
+## Command line (quick)
 
 ```bash
 python -m canswim -h
 ```
 
-Main tasks: `dashboard`, `gatherdata`, `forecast`, `train`, `modelsearch`, `downloaddata`, `uploaddata`, `mcp`, `resolve_start`.
-
-Useful flags:
+Main tasks: `dashboard`, `gatherdata`, `forecast`, `resolve_start`, `mcp`, `train`, `modelsearch`, `downloaddata`, `uploaddata`.
 
 | Flag | Used by | Meaning |
 |------|---------|---------|
 | `--tickers` | `gatherdata`, `forecast` | Scoped run via shared orchestration |
-| `--forecast_start_date` | `forecast`, `resolve_start` | Origin date (week-aligned when using `--tickers` / resolve) |
+| `--forecast_start_date` | `forecast`, `resolve_start` | Origin date (week-aligned for scoped runs) |
 | `--dry_run` | `forecast --tickers` | Resolve start + validate only |
-| `--no_covariates` | `gatherdata --tickers` | Prices (+ broad market) only |
+| `--no_covariates` | `gatherdata --tickers` | Prices only (skip fundamentals) |
 | `--same_data` | `dashboard` | Reuse DuckDB search DB |
 | `--new_model` | `train` | Fresh model vs continue |
 
-## MCP server (read-only by default)
+→ **[docs/cli.md](docs/cli.md)**
 
-Expose precomputed TiDE forecasts and local market data to MCP clients (Claude Desktop, Cursor, etc.) over the **same DuckDB search database** used by the dashboard.
+## MCP server (quick)
 
-By default the process stays **read-only**. Write tools are listed for discoverability but only execute when `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`). CLI `--tickers` and the Dashboard **Run** tab do **not** use that flag.
-
-### Prerequisites
-
-1. Local data + forecasts (e.g. `python -m canswim downloaddata` / `forecast` as usual).
-2. Build the search DB once via the dashboard (or set `MCP_INIT_DB=1`):
-
-```bash
-python -m canswim dashboard --same_data True
-# or first run without --same_data to (re)build DuckDB from parquet
-```
-
-### Run
+Read-only by default. Write tools need `MCP_ALLOW_RUNS=1`.
 
 ```bash
 python -m canswim mcp
-# or canswim-mcp / python -m canswim.mcp
-
-# enable gather/forecast tools
 MCP_ALLOW_RUNS=1 python -m canswim mcp
 ```
 
-Configure paths via `.env` (`data_dir`, `db_file`) — same as the dashboard.
-
-### Example client config (stdio)
-
-```json
-{
-  "mcpServers": {
-    "canswim": {
-      "command": "python",
-      "args": ["-m", "canswim", "mcp"],
-      "cwd": "/path/to/canswim",
-      "env": {
-        "data_dir": "data",
-        "db_file": "canswim_local.duckdb"
-      }
-    }
-  }
-}
-```
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `health_check` | DB path / readiness |
-| `get_server_info` | Version, read-only / runs_allowed flags, tool list |
-| `list_tickers` | Symbols in search DB |
-| `get_forecast` | Quantile forecast rows for a symbol |
-| `get_reward_risk` | Reward/risk for latest forecast (confidence 80/95/99) |
-| `scan_forecasts` | Universe scan (dashboard Scans tab) |
-| `get_close_price` | Historical closes |
-| `get_backtest_error` | Forecast vs actual error |
-| `run_select` | Single SELECT only (Advanced Queries) |
-| `resolve_forecast_start` | Preview week-aligned start (≡ CLI `resolve_start`) |
-| `gather_tickers` | Scoped gather (≡ `gatherdata --tickers`; needs `MCP_ALLOW_RUNS=1`) |
-| `forecast_tickers` | Scoped forecast (≡ `forecast --tickers`; needs `MCP_ALLOW_RUNS=1`) |
-
-### Dashboard Run tab
-
-Paste tickers → **Gather data** / **Run forecast** / **Preview start date**. Same `run_triggers` path as CLI `--tickers` and MCP write tools (see [docs/run_triggers.md](docs/run_triggers.md)).
-
-**NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
+→ **[docs/mcp.md](docs/mcp.md)** for tools, client config, and prerequisites.

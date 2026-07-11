@@ -9,7 +9,7 @@ User-facing actions for a **short list of symbols**. Implementation: `canswim.ru
 
 | Step | What it does | CLI | GUI | MCP |
 |------|----------------|-----|-----|-----|
-| **Get market data** | Update local prices for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
+| **Get market data** | Update local prices **and** model fundamentals for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
 | **Run a forecast** | Forecast those symbols | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
 | **Check start date** | Show which start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |
 
@@ -27,7 +27,26 @@ For scoped runs (`--tickers` / dashboard / MCP):
 - If history is complete but stale, download only a **short tail** refresh.
 - **Train** mode (`gatherdata` without `--tickers`) still uses full `train_date_start` history.
 
-Forecasts never invent prices. If history is incomplete, **Run a forecast** fails and asks you to update market data first.
+### Fundamentals (covariates), not only OHLCV
+
+Unless `--no_covariates` / GUI equivalent, scoped gather also refreshes model inputs such as:
+
+- earnings calendar, key metrics  
+- institutional ownership, analyst estimates  
+- dividends, splits  
+- broad market / sector series as needed  
+
+Scoped writers **merge** into existing parquet by symbol so a short ticker list does not wipe other symbols’ fundamentals.
+
+After a successful gather, symbols are **synced into the DuckDB search DB** so Charts/Scans dropdowns include them. See [data_store.md](data_store.md).
+
+## Run a forecast
+
+- Forecasts never invent prices. If OHLCV history is incomplete, the run **fails** and asks you to update market data first.
+- If prices look fine but ownership/estimates (or alignment) fail, the run fails with a **covariates** message—run **Update market data** again (with fundamentals), then retry.
+- Symbols that **already have a saved forecast** for the resolved start are **skipped** (no re-run). Status copy explains “already on file.”
+- After a successful forecast, rows are **synced into DuckDB** for Charts/Scans.
+- Live starts may be **clamped** to the next open session after the last available local bar when broad/covariate calendars lag the requested week start.
 
 ## Start date rules (enforced in code)
 
@@ -42,20 +61,23 @@ Operator detail only—primary UI uses plain language.
 ## Examples
 
 ```bash
-# Update market data for two symbols (missing-only, ~2y)
+# Update market data for two symbols (missing-only, ~2y + fundamentals)
 hfhub_sync=False python -m canswim gatherdata --tickers "AAPL, MSFT"
 
 # See start date
 python -m canswim resolve_start
 python -m canswim forecast --tickers AAPL --forecast_start_date 2026-03-05 --dry_run
 
-# Forecast (fails if data incomplete)
+# Forecast (fails if data incomplete; skips if already saved for that start)
 python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-05
 ```
+
+More CLI recipes: [cli.md](cli.md). MCP: [mcp.md](mcp.md).
 
 ## Design rules
 
 1. One orchestration for CLI / GUI / MCP.
 2. Missing-only remote calls for forecast-scoped gather; train stays full-history.
-3. Fail closed on incomplete forecast data.
+3. Fail closed on incomplete forecast data (prices or covariates).
 4. Consumer copy in the product; policy detail in this doc.
+5. Parquet is the system of record; DuckDB is the search/UI cache ([data_store.md](data_store.md)).
