@@ -65,10 +65,11 @@ FORECAST_SECTION_HELP = (
 FORECAST_BUTTON = "Run forecast"
 PREVIEW_START_BUTTON = "Check start date"
 
-REFRESH_SYMBOLS_SECTION_TITLE = "Refresh symbols"
+# Primary Run-tab CTA (keep labels self-descriptive for consumers)
+REFRESH_SYMBOLS_SECTION_TITLE = "Refresh data & forecasts"
 # Shown under the primary Run-tab CTA (plain language; keep scannable)
 REFRESH_SYMBOLS_SECTION_HELP = """
-For the symbols you enter, this runs **everything needed** so Charts and Scans
+For the symbols you enter, this does **everything needed** so Charts and Scans
 can show a fresh picture:
 
 1. **Market data** — download or refresh recent prices and fundamentals  
@@ -78,21 +79,20 @@ can show a fresh picture:
    reward/risk and backtest quality—not only today’s forecast.
 3. **Charts list** — add those symbols to the Charts dropdown automatically.
 
-**Skipped automatically:** symbols that already have data/forecasts for a given  
-start, and names with too little trading history (e.g. recent IPOs)—those are  
-reported in the status below.
+**Skipped automatically:** work already on file for a given start, and names  
+with too little trading history (e.g. recent IPOs)—reported in the status below.
 
 **After it finishes:** open **Charts** for a symbol, or **Scans** to rank by  
 reward/risk and backtest. A full run can take several minutes for many symbols.
 """
-REFRESH_SYMBOLS_BUTTON = "Refresh symbols"
+REFRESH_SYMBOLS_BUTTON = "Refresh data & forecasts"
 
 REFRESH_SEARCH_SECTION_TITLE = "Rebuild Charts / Scans database"
 REFRESH_SEARCH_SECTION_HELP = (
-    "Only if Charts look empty while parquet exists. "
-    "Usually not needed after Refresh symbols."
+    "Only if Charts look empty while data files exist. "
+    "Usually not needed after **Refresh data & forecasts**."
 )
-REFRESH_SEARCH_BUTTON = "Refresh search DB from parquet"
+REFRESH_SEARCH_BUTTON = "Rebuild Charts database"
 
 INCOMPLETE_DATA_MSG = (
     "Market history is incomplete or not ready for: {symbols}. "
@@ -1025,7 +1025,7 @@ def refresh_symbols(
         if blocked is not None:
             return blocked
 
-    messages: list[str] = ["Refresh symbols: gather + catch-up forecast."]
+    messages: list[str] = ["Refresh data & forecasts: gather + catch-up forecast."]
     gather = gather_for_tickers(
         tickers_text,
         include_covariates=include_covariates,

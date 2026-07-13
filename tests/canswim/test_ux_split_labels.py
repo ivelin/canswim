@@ -46,6 +46,9 @@ def test_refresh_symbols_help_explains_steps():
     assert "12" in h or "monthly" in h
     assert "charts" in h
     assert "skip" in h
+    # Self-descriptive primary CTA (not vague "Refresh symbols")
+    assert "data" in REFRESH_SYMBOLS_BUTTON.lower()
+    assert "forecast" in REFRESH_SYMBOLS_BUTTON.lower()
 
 
 def test_date_policy_summary_not_technical_dump():
@@ -73,7 +76,7 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     # Search DB rebuild tucked under More options
     assert "refreshDbBtn" in src
     assert "do_refresh_search_db" in inspect.getsource(run_tab_mod.RunTab)
-    assert "REFRESH_SEARCH_BUTTON" in src or "Refresh search DB" in src
+    assert "REFRESH_SEARCH_BUTTON" in src or "Rebuild Charts" in src
     assert "gatherDetails" in src
     assert "forecastDetails" in src
     assert "open=False" in src
@@ -129,7 +132,7 @@ def test_summary_helpers_are_plain():
     assert "Not ready for forecasts yet (15)" in partial
     assert "What you can do next" in partial
     assert "Recommended" in partial
-    assert "Run forecast" in partial
+    assert "Refresh data" in partial or REFRESH_SYMBOLS_BUTTON in partial
     # Compact lists — not full 20+15 dumped three times
     assert "+10 more" in partial or "…" in partial
     assert partial.count("S00") <= 2  # shown in not-ready once, not thrice

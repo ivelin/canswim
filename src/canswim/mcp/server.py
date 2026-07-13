@@ -239,7 +239,7 @@ def forecast_tickers(
         "All-in-one refresh for listed symbols: update market data, then catch-up "
         "forecasts (monthly origins for ~12 months + live). Best default when a "
         "user or agent says “gather and forecast” or “refresh these names”. "
-        "Same as dashboard “Refresh symbols”. Requires MCP_ALLOW_RUNS=1. "
+        "Same as dashboard “Refresh data & forecasts”. Requires MCP_ALLOW_RUNS=1. "
         "May take many minutes for large lists. dry_run=true plans only."
     ),
 )

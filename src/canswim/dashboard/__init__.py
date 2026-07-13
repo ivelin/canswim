@@ -8,12 +8,7 @@ from canswim.dashboard.charts import ChartTab
 from canswim.dashboard.scans import ScanTab
 from canswim.dashboard.advanced import AdvancedTab
 from canswim.dashboard.run_tab import RunTab
-from canswim.db import (
-    DataPaths,
-    format_search_db_status_markdown,
-    init_search_db,
-    search_db_status,
-)
+from canswim.db import DataPaths, init_search_db
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = "plotly"
@@ -35,7 +30,6 @@ class CanswimPlayground:
         self.stocks_price_path = paths.stocks_price_path
         self.stock_tickers_path = paths.stock_tickers_path
         self.init_db_result = None  # set by initdb()
-        self.db_status_md = ""
 
     def download_model(self):
         """Load model from HF Hub"""
@@ -64,10 +58,7 @@ class CanswimPlayground:
         )
         mode = "reused" if self.init_db_result.get("reused") else "rebuilt"
         repaired = (self.init_db_result.get("repair") or {}).get("repaired") or []
-        status = self.init_db_result.get("status") or search_db_status(self.db_path)
-        self.db_status_md = format_search_db_status_markdown(
-            status, mode=mode, repaired=repaired
-        )
+        status = self.init_db_result.get("status") or {}
         logger.info(
             f"Search DB {mode}: path={self.db_path} "
             f"ok={status.get('ok')} repaired={repaired}"
@@ -86,7 +77,6 @@ class CanswimPlayground:
             * Model trainer source repo [here](https://github.com/ivelin/canswim). Feedback welcome via github issues.
             """
             )
-            self.dbStatusBanner = gr.Markdown(value=self.db_status_md)
             with gr.Tab("Charts"):
                 charts_tab = ChartTab(
                     canswim_model=self.canswim_model,
@@ -102,7 +92,6 @@ class CanswimPlayground:
                     self.canswim_model,
                     db_path=self.db_path,
                     charts_ticker_dropdown=charts_tab.tickerDropdown,
-                    db_status_banner=self.dbStatusBanner,
                 )
             with gr.Tab("Advanced Queries"):
                 AdvancedTab(

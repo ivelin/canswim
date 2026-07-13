@@ -9,11 +9,11 @@ User-facing actions for a **short list of symbols**. Implementation: `canswim.ru
 
 | Step | What it does | CLI | GUI | MCP |
 |------|----------------|-----|-----|-----|
-| **Refresh symbols** | Gather + catch-up forecasts (**default** GUI path) | MCP `refresh_tickers` (or gather then forecast) | **Refresh symbols** | `refresh_tickers` |
+| **Refresh data & forecasts** | Gather + catch-up forecasts (**default** GUI path) | MCP `refresh_tickers` | **Refresh data & forecasts** | `refresh_tickers` |
 | **Get market data** | Update local prices **and** model fundamentals for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
 | **Run a forecast** | Forecast those symbols (blank start = monthly catch-up + live) | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
 | **Check start date** | Show which forecast start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |
-| **Refresh search DB** | Rebuild DuckDB Charts/Scans cache from parquet | `dashboard --same_data False` | **Refresh search DB from parquet** | (rebuild via dashboard / `MCP_INIT_DB`) |
+| **Rebuild Charts database** | Rebuild DuckDB Charts/Scans cache from parquet | `dashboard --same_data False` | **Rebuild Charts database** | (rebuild via dashboard / `MCP_INIT_DB`) |
 
 MCP write tools need `MCP_ALLOW_RUNS=1`. CLI and dashboard do not.
 
@@ -42,9 +42,9 @@ Scoped writers **merge** into existing parquet by symbol so a short ticker list 
 
 After a successful gather, symbols are **synced into the DuckDB search DB** so Charts/Scans dropdowns include them. See [data_store.md](data_store.md).
 
-## Refresh symbols (recommended)
+## Refresh data & forecasts (recommended)
 
-All-in-one for a short list (portfolio / new names). GUI copy matches this:
+All-in-one for a short list (portfolio / new names). GUI label: **Refresh data & forecasts**.
 
 1. **Market data** — prices + fundamentals (missing-only, ~2y).  
 2. **Catch-up forecasts** — ~12 monthly origins + live for symbols that are ready.  
@@ -52,11 +52,11 @@ All-in-one for a short list (portfolio / new names). GUI copy matches this:
 
 **Skipped:** work already on file; short-history / IPO names (reported in status).
 
-GUI: **Refresh symbols**. MCP: `refresh_tickers`. Agents can say “refresh AAPL, MSFT” and get one consistent pipeline.
+MCP tool name remains `refresh_tickers` (same pipeline).
 
 ## Run a forecast
 
-- Forecasts never invent prices. If OHLCV history is incomplete, the run **fails** and asks you to update market data first (or use **Refresh symbols**).
+- Forecasts never invent prices. If OHLCV history is incomplete, the run **fails** and asks you to update market data first (or use **Refresh data & forecasts**).
 - If prices look fine but ownership/estimates (or alignment) fail, the run fails with a **covariates** message—run **Update market data** again (with fundamentals), then retry.
 - Symbols that **already have a saved forecast** for a given start are **skipped** (no re-run).
 - After a successful forecast, rows are **synced into DuckDB** (including **backtest_error** refresh) for Charts/Scans.
