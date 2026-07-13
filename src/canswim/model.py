@@ -647,6 +647,12 @@ class CanswimModel:
             num_loader_workers=4,  # num_loader_workers recommended at 4*n_GPUs
         )
         logger.info("Model training finished.")
+        # Held-out test metrics (issue #31) — does not block train on failure
+        try:
+            self.last_test_metrics = self.evaluate_and_log_test_metrics()
+        except Exception as e:
+            logger.exception(f"Test metrics reporting failed (non-fatal): {e}")
+            self.last_test_metrics = {}
         # load best checkpoint
         # if torch.cuda.is_available():
         #     map_location = "cuda"
@@ -829,6 +835,76 @@ class CanswimModel:
         ##    pred_val_outputs.append(pred)
         ##return pred_test_outputs, pred_val_outputs
         return pred_test_outputs
+
+    @staticmethod
+    def median_mae_mape(
+        pred_median: pd.Series, actual: pd.Series
+    ) -> tuple[float, float]:
+        """MAE and MAPE(%) on aligned timestamps (pure; for tests and train report)."""
+        pred_median = pred_median.astype(float)
+        actual = actual.astype(float)
+        common = pred_median.index.intersection(actual.index)
+        if len(common) == 0:
+            raise ValueError("no overlapping timestamps for test metrics")
+        p = pred_median.loc[common]
+        a = actual.loc[common]
+        err = (p - a).abs()
+        mae = float(err.mean())
+        mape = float((err / a.abs().clip(lower=1e-6)).mean() * 100.0)
+        return mae, mape
+
+    def evaluate_and_log_test_metrics(self) -> dict:
+        """Held-out test MAE/MAPE after training (issue #31).
+
+        Runs ``test()`` on the prepared test split and compares the median
+        forecast path to actuals. Failures are logged; empty metrics if skip.
+        """
+        if not getattr(self, "test_series", None) or not self.test_series:
+            logger.info("Test metrics: skipped (no test split prepared)")
+            return {}
+        if not getattr(self, "train_series", None) or not self.train_series:
+            logger.info("Test metrics: skipped (no train series)")
+            return {}
+        try:
+            pred_windows = self.test()
+        except Exception as e:
+            logger.exception(f"Test prediction failed: {e}")
+            return {"error": str(e)}
+        if not pred_windows:
+            logger.info("Test metrics: no prediction windows")
+            return {}
+        preds = pred_windows[0]
+        maes: list[float] = []
+        mapes: list[float] = []
+        for i, t in enumerate(sorted(self.train_series.keys())):
+            if i >= len(preds) or t not in self.test_series:
+                continue
+            try:
+                pred_ts = preds[i]
+                pred_df = pred_ts.pd_dataframe()
+                if pred_df.shape[1] > 1:
+                    med = pred_df.median(axis=1)
+                else:
+                    med = pred_df.iloc[:, 0]
+                act = self.test_series[t].pd_dataframe().iloc[:, 0]
+                mae, mape = self.median_mae_mape(med, act)
+                maes.append(mae)
+                mapes.append(mape)
+            except Exception as e:
+                logger.warning(f"Test metric skip {t}: {type(e)}: {e}")
+        if not maes:
+            logger.info("Test metrics: no series scored")
+            return {}
+        out = {
+            "test_mae": float(np.mean(maes)),
+            "test_mape_pct": float(np.mean(mapes)),
+            "n_series": len(maes),
+        }
+        logger.info(
+            f"Test metrics (held-out): MAE={out['test_mae']:.4f}, "
+            f"MAPE={out['test_mape_pct']:.2f}% over {out['n_series']} series"
+        )
+        return out
 
     def plot_test_results(self, preds: [] = None):
         # select a reasonable range of train and val data points for convenient visualization of results
