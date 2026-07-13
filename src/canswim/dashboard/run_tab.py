@@ -430,19 +430,20 @@ class RunTab:
 
         # ---- Primary path only (everything else under More options) ----
         with gr.Group():
-            gr.Markdown(
-                f"### {REFRESH_SYMBOLS_SECTION_TITLE}\n"
-                f"{REFRESH_SYMBOLS_SECTION_HELP}"
-            )
+            gr.Markdown(f"### {REFRESH_SYMBOLS_SECTION_TITLE}")
+            gr.Markdown(REFRESH_SYMBOLS_SECTION_HELP.strip())
             self.refreshTickers = gr.Textbox(
-                label="Symbols",
+                label="Symbols to refresh",
                 lines=2,
                 placeholder="LLY, AAPL, MSFT",
                 info=TICKERS_HELP,
             )
             self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
             self.refreshStatus = gr.Markdown(
-                value="_Enter symbols → **Refresh symbols**. That is usually all you need._"
+                value=(
+                    "_Enter one or more symbols, then click **Refresh symbols**. "
+                    "Status of each step appears here when the run finishes._"
+                )
             )
             with gr.Accordion("Technical log", open=False):
                 self.refreshDetails = gr.Code(

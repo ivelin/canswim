@@ -66,10 +66,25 @@ FORECAST_BUTTON = "Run forecast"
 PREVIEW_START_BUTTON = "Check start date"
 
 REFRESH_SYMBOLS_SECTION_TITLE = "Refresh symbols"
-REFRESH_SYMBOLS_SECTION_HELP = (
-    "One step: update market data, then catch-up forecasts "
-    "(~12 monthly backtests + live). Skips work already done."
-)
+# Shown under the primary Run-tab CTA (plain language; keep scannable)
+REFRESH_SYMBOLS_SECTION_HELP = """
+For the symbols you enter, this runs **everything needed** so Charts and Scans
+can show a fresh picture:
+
+1. **Market data** — download or refresh recent prices and fundamentals  
+   (uses local files when already complete; only fetches what’s missing or stale).
+2. **Catch-up forecasts** — run the model for about the **last 12 months**  
+   (one origin per month) **plus** the latest live start, so you get history for  
+   reward/risk and backtest quality—not only today’s forecast.
+3. **Charts list** — add those symbols to the Charts dropdown automatically.
+
+**Skipped automatically:** symbols that already have data/forecasts for a given  
+start, and names with too little trading history (e.g. recent IPOs)—those are  
+reported in the status below.
+
+**After it finishes:** open **Charts** for a symbol, or **Scans** to rank by  
+reward/risk and backtest. A full run can take several minutes for many symbols.
+"""
 REFRESH_SYMBOLS_BUTTON = "Refresh symbols"
 
 REFRESH_SEARCH_SECTION_TITLE = "Rebuild Charts / Scans database"

@@ -44,11 +44,13 @@ After a successful gather, symbols are **synced into the DuckDB search DB** so C
 
 ## Refresh symbols (recommended)
 
-All-in-one for a short list (portfolio / new names):
+All-in-one for a short list (portfolio / new names). GUI copy matches this:
 
-1. **Gather** prices + fundamentals (missing-only, ~2y).  
-2. **Catch-up forecast** for symbols that are ready (see below).  
-3. **Sync** forecasts + backtest errors into DuckDB for Charts/Scans.
+1. **Market data** — prices + fundamentals (missing-only, ~2y).  
+2. **Catch-up forecasts** — ~12 monthly origins + live for symbols that are ready.  
+3. **Charts list + DuckDB** — symbols appear in Charts; forecasts and backtest errors sync for Scans.
+
+**Skipped:** work already on file; short-history / IPO names (reported in status).
 
 GUI: **Refresh symbols**. MCP: `refresh_tickers`. Agents can say “refresh AAPL, MSFT” and get one consistent pipeline.
 
