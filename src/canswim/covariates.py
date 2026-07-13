@@ -389,6 +389,9 @@ class Covariates:
 
         price_idx = price_series.pd_dataframe().index
         cov_df = cov_series.pd_dataframe()
+        cov_df.index = pd.DatetimeIndex(pd.to_datetime(cov_df.index)).normalize()
+        # Biz-day mapping can collapse multiple report dates onto one session
+        cov_df = cov_df[~cov_df.index.duplicated(keep="last")].sort_index()
         # ffill known values onto price calendar; remaining holes → fillna_value
         aligned = cov_df.reindex(price_idx, method="ffill")
         aligned = aligned.fillna(fillna_value)
@@ -409,9 +412,10 @@ class Covariates:
         assert not kms_unique.index.has_duplicates
         kms_loaded_df = kms_unique.copy()
         # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
-        kms_loaded_df["period"] = pd.Categorical(
-            kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]
-        ).codes
+        if "period" in kms_loaded_df.columns:
+            kms_loaded_df["period"] = pd.Categorical(
+                kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]
+            ).codes
         # kms_loaded_df["period"] = (
         #     kms_loaded_df["period"]
         #     .replace(["Q1", "Q2", "Q3", "Q4"], [1, 2, 3, 4], inplace=False)
@@ -428,6 +432,7 @@ class Covariates:
                 kms_df = kms_df.droplevel("Symbol")
                 kms_df.index = pd.to_datetime(kms_df.index)
                 # logger.info(f'index type for {t}: {type(t_kms.index)}')
+                kms_df = kms_df[~kms_df.index.duplicated(keep="last")]
                 assert kms_df.index.is_unique
                 kms_df = kms_df.dropna()
                 # logger.info("kms_df\n", kms_df[kms_df.isnull()])
@@ -435,20 +440,29 @@ class Covariates:
                 assert len(kms_df) > 0, f"No key metrics available for {t}"
                 # logger.info(f'{t} earnings: \n{t_kms.columns}')
                 kms_df = self.df_index_to_biz_days(kms_df)
+                # Weekend/holiday mapping can create duplicate biz-day labels
+                # (issue #75: pandas reindex raises ValueError).
+                kms_df = kms_df[~kms_df.index.duplicated(keep="last")].sort_index()
+                assert kms_df.index.is_unique, (
+                    f"duplicate key-metrics dates for {t} after biz-day align"
+                )
                 tkms_series_tmp = TimeSeries.from_dataframe(
                     kms_df, freq="B", fill_missing_dates=True
                 )
                 # logger.info(f'kms_series_tmp start time, end time: {tkms_series_tmp.start_time()}, {tkms_series_tmp.end_time()}')
                 kms_df_ext = tkms_series_tmp.pd_dataframe()
                 kms_df_ext.ffill(inplace=True)
-                kms_ser = TimeSeries.from_dataframe(kms_df, freq="B", fillna_value=-1)
+                kms_ser = TimeSeries.from_dataframe(
+                    kms_df_ext, freq="B", fillna_value=-1
+                )
                 kms_ser_padded = self.pad_covs(cov_series=kms_ser, price_series=prices)
                 # logger.info(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(kms_ser_padded.gaps()) == 0
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
-            except (KeyError, AssertionError) as e:
+            except (KeyError, AssertionError, ValueError) as e:
+                # ValueError: duplicate-index reindex (dirty fund data) — skip ticker
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
         # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
