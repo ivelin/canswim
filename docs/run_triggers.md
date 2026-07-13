@@ -29,6 +29,28 @@ For scoped runs (`--tickers` / dashboard / MCP):
 - If history is complete but stale, download only a **short tail** refresh.
 - **Train** mode (`gatherdata` without `--tickers`) still uses full `train_date_start` history.
 
+### When remote APIs fail (network / key / plan)
+
+Gather and **Refresh data & forecasts** (GUI · MCP · CLI) classify provider failures
+via `canswim.remote_api_errors` and return a **gentle checklist** instead of a raw
+stack trace:
+
+| Kind | Typical cause |
+|------|----------------|
+| `network` | Offline, DNS, firewall, VPN, provider outage |
+| `auth` | Invalid / rotated / revoked API key |
+| `subscription` | Plan expired, tier too low for endpoint |
+| `rate_limit` | Too many calls (429) |
+| `timeout` | Slow link or overloaded provider |
+| `missing_key` | `FMP_API_KEY` not set in this process |
+
+**MCP:** failed write tools include `error` (human text) plus structured
+`remote_api` (`kind`, `checklist`, `provider`, `detail`).  
+**GUI:** Run tab status shows the same checklist; Technical log keeps full JSON.
+
+Operators should verify internet access, that **FMP_API_KEY** (or other tokens)
+are loaded after restart, and that the data plan is active.
+
 ### Fundamentals (covariates), not only OHLCV
 
 Unless `--no_covariates` / GUI equivalent, scoped gather also refreshes model inputs such as:

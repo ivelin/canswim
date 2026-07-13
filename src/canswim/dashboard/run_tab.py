@@ -90,14 +90,50 @@ def _gather_summary(result: dict) -> str:
     # ---- hard failure (nothing forecast-ready) ----
     if not result.get("ok"):
         err = (result.get("error") or "").strip()
+        remote = result.get("remote_api") or {}
+        is_remote = bool(
+            remote
+            or result.get("fail_reason") == "remote_api"
+            or "market-data" in err.lower()
+            or "api key" in err.lower()
+            or "could not reach" in err.lower()
+        )
         is_hist = bool(
-            short
-            or no_hist
-            or "IPO" in err
-            or "trading history" in err.lower()
-            or "not enough" in err.lower()
+            not is_remote
+            and (
+                short
+                or no_hist
+                or "IPO" in err
+                or "trading history" in err.lower()
+                or "not enough" in err.lower()
+            )
         )
         lines: list[str] = []
+        if is_remote:
+            lines.append("❌ **Could not update market data from the remote provider.**")
+            if err:
+                # Gentle multi-line message already includes checklist
+                lines.append(err)
+            else:
+                lines.append(
+                    "Check internet access, API key, and subscription status "
+                    "(see checklist below)."
+                )
+            if not err or "Please check:" not in err:
+                lines.append("")
+                lines.append("**What you can do next**")
+                lines.append(
+                    "1. **Recommended:** Confirm **internet access** and that "
+                    "**FMP_API_KEY** (or your data provider token) is valid and active."
+                )
+                lines.append(
+                    "2. If your plan expired or the key was rotated, update `.env` "
+                    "and **restart** the dashboard, then retry."
+                )
+                lines.append(
+                    "3. Open **Technical log** for the raw provider error."
+                )
+            return "\n\n".join(lines)
         if is_hist:
             lines.append(
                 f"❌ **None of these symbols are ready for forecasts yet** "
@@ -359,17 +395,53 @@ def _refresh_summary(result: dict) -> str:
             )
         err = (result.get("error") or forecast.get("error") or "").strip()
         err_l = err.lower()
-        is_cov = bool(
-            forecast.get("need_covariates")
-            or result.get("fail_reason") == "covariates"
-            or "dimensionality" in err_l
-            or "feature mismatch" in err_l
-            or "fund-thin" in err_l
-            or "past_covariates" in err_l
+        remote = (
+            result.get("remote_api")
+            or gather.get("remote_api")
+            or forecast.get("remote_api")
+            or {}
         )
-        is_hist = bool(incomplete and not ready and not is_cov)
+        is_remote = bool(
+            remote
+            or result.get("fail_reason") == "remote_api"
+            or gather.get("fail_reason") == "remote_api"
+            or "market-data" in err_l
+            or "api key" in err_l
+            or "could not reach" in err_l
+            or "subscription" in err_l
+        )
+        is_cov = bool(
+            not is_remote
+            and (
+                forecast.get("need_covariates")
+                or result.get("fail_reason") == "covariates"
+                or "dimensionality" in err_l
+                or "feature mismatch" in err_l
+                or "fund-thin" in err_l
+                or "past_covariates" in err_l
+            )
+        )
+        is_hist = bool(incomplete and not ready and not is_cov and not is_remote)
 
         lines = [head]
+        if is_remote:
+            lines.append(
+                "Market data could not be refreshed from the remote provider."
+            )
+            if err:
+                lines.append(err)
+            if not err or "Please check:" not in err:
+                lines.append("**What you can do next**")
+                lines.append(
+                    "1. **Recommended:** Check **internet**, **FMP_API_KEY** "
+                    "(valid / not revoked), and that your **data plan is active**."
+                )
+                lines.append(
+                    "2. Restart the dashboard after updating keys, then retry."
+                )
+                lines.append("3. Open **Technical log** for the provider detail.")
+            return "\n\n".join(lines)
+
         if err:
             lines.append(err)
         # Only restate gather hard-fail; skip green gather success + IPO advice
