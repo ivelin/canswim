@@ -173,6 +173,9 @@ def test_gather_main_skips_hf_when_local(monkeypatch):
         def gather_analyst_estimates(self):
             pass
 
+        def gather_company_profiles(self):
+            pass
+
     monkeypatch.setenv("hfhub_sync", "False")
     monkeypatch.setenv("SYNC_SYMBOL_LISTS", "0")
     monkeypatch.setattr(gd, "HFHub", FakeHub)

@@ -968,6 +968,94 @@ class MarketDataGatherer:
             f"({inst_own_df.index.get_level_values(0).nunique()} symbols)"
         )
 
+    def gather_company_profiles(self):
+        """Fetch FMP company profile (name, sector, industry, …) for dashboard UI."""
+        logger.info("Gathering company profiles...")
+        if not self.FMP_API_KEY:
+            logger.warning("FMP_API_KEY missing; skip company profiles")
+            return
+        profile_file = self._data_file("company_profile.parquet")
+        old_df = None
+        try:
+            old_df = pd.read_parquet(profile_file)
+            if old_df is not None and not old_df.empty and "symbol" in old_df.columns:
+                old_df["symbol"] = old_df["symbol"].astype(str).str.upper()
+                old_df = old_df.set_index("symbol", drop=False)
+        except Exception as e:
+            logger.info(f"No existing company profile file ({e})")
+
+        rows = []
+        for ticker in self.stocks_ticker_set:
+            try:
+                raw = fmpsdk.company_profile(
+                    apikey=self.FMP_API_KEY, symbol=ticker
+                )
+            except Exception as e:
+                logger.warning(f"company_profile API error for {ticker}: {e}")
+                continue
+            if not raw:
+                logger.info(f"No company profile for {ticker}")
+                continue
+            rec = raw[0] if isinstance(raw, list) else raw
+            if not isinstance(rec, dict):
+                continue
+            sym = str(rec.get("symbol") or ticker).upper()
+            desc = rec.get("description") or ""
+            if isinstance(desc, str) and len(desc) > 500:
+                desc = desc[:497] + "..."
+            rows.append(
+                {
+                    "symbol": sym,
+                    "company_name": rec.get("companyName") or "",
+                    "sector": rec.get("sector") or "",
+                    "industry": rec.get("industry") or "",
+                    "country": rec.get("country") or "",
+                    "exchange": rec.get("exchangeShortName")
+                    or rec.get("exchange")
+                    or "",
+                    "mkt_cap": rec.get("mktCap"),
+                    "currency": rec.get("currency") or "",
+                    "ipo_date": rec.get("ipoDate") or "",
+                    "website": rec.get("website") or "",
+                    "description": desc,
+                }
+            )
+            logger.info(
+                f"Profile {sym}: {rows[-1]['company_name']} · "
+                f"{rows[-1]['sector']} / {rows[-1]['industry']}"
+            )
+
+        if not rows:
+            if old_df is not None and not old_df.empty:
+                logger.warning("No new company profiles; keeping existing file")
+                return
+            logger.warning("No company profiles gathered")
+            return
+
+        new_df = pd.DataFrame(rows)
+        new_df["symbol"] = new_df["symbol"].astype(str).str.upper()
+        if old_df is not None and not old_df.empty:
+            if "symbol" not in old_df.columns and old_df.index.name == "symbol":
+                old_df = old_df.reset_index()
+            old_df["symbol"] = old_df["symbol"].astype(str).str.upper()
+            refreshed = set(new_df["symbol"].astype(str).str.upper())
+            keep = old_df[~old_df["symbol"].isin(refreshed)].copy()
+            for c in new_df.columns:
+                if c not in keep.columns:
+                    keep[c] = None
+            if not keep.empty:
+                keep = keep.reindex(columns=list(new_df.columns))
+                new_df = pd.concat([keep, new_df], axis=0, ignore_index=True)
+        new_df = new_df.drop_duplicates(subset=["symbol"], keep="last")
+        new_df = new_df.sort_values("symbol")
+        Path(profile_file).parent.mkdir(parents=True, exist_ok=True)
+        out = new_df.reset_index(drop=True)
+        out.to_parquet(profile_file, engine="pyarrow", index=False)
+        logger.info(
+            f"Saved company profiles to {profile_file} "
+            f"({out['symbol'].nunique()} symbols)"
+        )
+
     def gather_analyst_estimates(self):
 
         def _fetch_estimates(period=None):
@@ -1069,6 +1157,7 @@ def main():
     g.gather_stock_key_metrics()
     g.gather_institutional_stock_ownership()
     g.gather_analyst_estimates()
+    g.gather_company_profiles()
 
     if hfhub is not None:
         hfhub.upload_data()
