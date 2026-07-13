@@ -15,7 +15,7 @@ For a brief introduction read [this blog post](https://medium.com/@ivelin.atanas
 | Doc | Contents |
 |-----|----------|
 | **[docs/cli.md](docs/cli.md)** | CLI tasks, recipes, env vars |
-| **[docs/run_triggers.md](docs/run_triggers.md)** | Get market data / run forecast (CLI · GUI · MCP) |
+| **[docs/run_triggers.md](docs/run_triggers.md)** | Get market data / run forecast (CLI · GUI · MCP); stocks · IPOs · ETFs |
 | **[docs/mcp.md](docs/mcp.md)** | MCP server (tools, opt-in writes) |
 | **[docs/data_store.md](docs/data_store.md)** | Parquet (SoT) vs DuckDB (search/UI) |
 | **[AGENTS.md](AGENTS.md)** | CI, merge rules, docs DoD for agents |
