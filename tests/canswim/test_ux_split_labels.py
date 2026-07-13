@@ -65,6 +65,10 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     assert "refreshProgress" in src
     assert "do_refresh_symbols" in inspect.getsource(run_tab_mod.RunTab)
     assert "gr.Progress" in inspect.getsource(run_tab_mod.RunTab)
+    # After refresh, Charts plot must be re-rendered (same-symbol case)
+    run_src = inspect.getsource(run_tab_mod.RunTab)
+    assert "_replot_charts" in run_src
+    assert "charts_tab" in src
     # Secondary still present but under collapsed "More options"
     assert "More options" in src
     assert "gatherTickers" in src
