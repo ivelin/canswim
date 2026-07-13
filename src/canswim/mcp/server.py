@@ -189,10 +189,12 @@ def gather_tickers(
     name="forecast_tickers",
     description=(
         "Run a forecast for listed stock symbols. "
-        "Fails clearly if market history is incomplete—update market data first. "
-        "Same as CLI `forecast --tickers` and dashboard “Run forecast”. "
-        "Requires MCP_ALLOW_RUNS=1. May take several minutes. "
-        "Optional start_date (YYYY-MM-DD). dry_run=true only checks symbols and start date."
+        "Blank start_date = catch-up: ~12 monthly backtest origins + live week "
+        "(skips starts already on file). Explicit start_date = single origin. "
+        "Fails clearly if market history is incomplete—use refresh_tickers or "
+        "gather_tickers first. Same as CLI `forecast --tickers` and dashboard "
+        "“Run forecast”. Requires MCP_ALLOW_RUNS=1. May take several minutes. "
+        "dry_run=true only checks symbols and origins."
     ),
 )
 def forecast_tickers(
@@ -202,6 +204,28 @@ def forecast_tickers(
 ) -> dict[str, Any]:
     return run_tools.forecast_tickers_impl(
         tickers=tickers, start_date=start_date, dry_run=dry_run
+    )
+
+
+@mcp.tool(
+    name="refresh_tickers",
+    description=(
+        "All-in-one refresh for listed symbols: update market data, then catch-up "
+        "forecasts (monthly origins for ~12 months + live). Best default when a "
+        "user or agent says “gather and forecast” or “refresh these names”. "
+        "Same as dashboard “Refresh symbols”. Requires MCP_ALLOW_RUNS=1. "
+        "May take many minutes for large lists. dry_run=true plans only."
+    ),
+)
+def refresh_tickers(
+    tickers: str,
+    include_covariates: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    return run_tools.refresh_tickers_impl(
+        tickers=tickers,
+        include_covariates=include_covariates,
+        dry_run=dry_run,
     )
 
 

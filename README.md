@@ -70,7 +70,7 @@ Two separate steps, same backend (`canswim.run_triggers`). Details: **[docs/run_
 | | Get market data | Run a forecast | Check start date |
 |--|-----------------|----------------|------------------|
 | **CLI** | `gatherdata --tickers "…"` | `forecast --tickers "…" [date] [--dry_run]` | `resolve_start` |
-| **GUI** | **Update market data** | **Run forecast** | **Check start date** |
+| **GUI** | **Refresh symbols** / **Update market data** | **Run forecast** | **Check start date** |
 | **MCP** | `gather_tickers`* | `forecast_tickers`* | `resolve_forecast_start` |
 
 \*MCP write tools need `MCP_ALLOW_RUNS=1`. Full MCP guide: **[docs/mcp.md](docs/mcp.md)**.
@@ -96,7 +96,7 @@ python -m canswim dashboard --same_data True
 |-----|---------|
 | **Charts** | Price history + forecast bands for a symbol |
 | **Scans** | Filter forecasts by as-of date, reward, risk, confidence |
-| **Run** | **Update market data** / **Run forecast** / **Check start date** / **Refresh search DB from parquet** |
+| **Run** | **Refresh symbols** / **Update market data** / **Run forecast** / **Check start date** / **Refresh search DB from parquet** |
 | **Advanced Queries** | Read-only SQL against the search DB |
 
 ### Sample screenshots

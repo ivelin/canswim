@@ -9,7 +9,7 @@ Expose precomputed TiDE forecasts and local market data to MCP clients (Claude D
 | Mode | How | Tools |
 |------|-----|--------|
 | **Read-only (default)** | `python -m canswim mcp` | health, list, forecast/scan/price queries, `run_select` (SELECT only) |
-| **Runs allowed** | `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`) | also `gather_tickers`, `forecast_tickers` |
+| **Runs allowed** | `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`) | also `gather_tickers`, `forecast_tickers`, `refresh_tickers` |
 
 CLI `--tickers` and the dashboard **Run** tab do **not** need `MCP_ALLOW_RUNS`. Write tools share the same backend as CLI/GUI: [run_triggers.md](run_triggers.md).
 
@@ -72,7 +72,8 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `run_select` | Single `SELECT` only (≡ Advanced Queries) | — |
 | `resolve_forecast_start` | Preview week-aligned start (≡ CLI `resolve_start`) | — |
 | `gather_tickers` | Scoped gather (≡ `gatherdata --tickers`) | `MCP_ALLOW_RUNS=1` |
-| `forecast_tickers` | Scoped forecast (≡ `forecast --tickers`) | `MCP_ALLOW_RUNS=1` |
+| `forecast_tickers` | Scoped forecast; blank start = monthly catch-up + live | `MCP_ALLOW_RUNS=1` |
+| `refresh_tickers` | Gather + catch-up forecast (≡ dashboard **Refresh symbols**) | `MCP_ALLOW_RUNS=1` |
 
 ## Related docs
 

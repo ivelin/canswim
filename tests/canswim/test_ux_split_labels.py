@@ -13,6 +13,7 @@ from canswim.run_triggers import (
     FORECAST_START_HELP,
     GATHER_BUTTON,
     GATHER_SECTION_TITLE,
+    REFRESH_SYMBOLS_BUTTON,
     TICKERS_HELP,
 )
 
@@ -47,6 +48,8 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     assert "forecastTickers" in src
     assert "gatherBtn" in src
     assert "forecastBtn" in src
+    assert "refreshBtn" in src or "refreshTickers" in src
+    assert "REFRESH_SYMBOLS" in src or REFRESH_SYMBOLS_BUTTON in src
     assert GATHER_SECTION_TITLE in src or "GATHER_SECTION_TITLE" in src
     assert FORECAST_SECTION_TITLE in src or "FORECAST_SECTION_TITLE" in src
     # Two separate status outputs
@@ -56,6 +59,7 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     assert "refreshDbBtn" in src
     assert "do_refresh_search_db" in inspect.getsource(run_tab_mod.RunTab)
     assert "REFRESH_SEARCH_BUTTON" in src or "Refresh search DB" in src
+    assert "do_refresh_symbols" in inspect.getsource(run_tab_mod.RunTab)
     # JSON is advanced/collapsed, not primary body
     assert "Advanced details" in src
     assert "gatherDetails" in src
@@ -188,6 +192,7 @@ def test_mcp_tool_descriptions_are_plain():
     assert "Requires MCP_ALLOW_RUNS=1" in src
     # Tool description block for forecast should be plain language
     assert "Run a forecast for listed stock symbols" in src
+    assert 'name="refresh_tickers"' in src
 
 
 def test_docs_exist_for_operators():

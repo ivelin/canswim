@@ -29,10 +29,14 @@ from canswim.run_triggers import (
     REFRESH_SEARCH_BUTTON,
     REFRESH_SEARCH_SECTION_HELP,
     REFRESH_SEARCH_SECTION_TITLE,
+    REFRESH_SYMBOLS_BUTTON,
+    REFRESH_SYMBOLS_SECTION_HELP,
+    REFRESH_SYMBOLS_SECTION_TITLE,
     TICKERS_HELP,
     forecast_for_tickers,
     gather_for_tickers,
     parse_ticker_list,
+    refresh_symbols,
     resolve_start_for_run,
 )
 
@@ -202,21 +206,20 @@ def _gather_summary(result: dict) -> str:
     lines.append("**What you can do next**")
     if ready and incomplete:
         lines.append(
-            "1. **Recommended:** Copy the ready line above into "
-            "**Symbols to forecast** and click **Run forecast**."
+            "1. **Recommended:** Paste the ready line into **Refresh symbols** "
+            "(or **Run forecast** with blank start for catch-up)."
         )
         lines.append(
-            "2. Leave the not-ready names off the forecast list for now "
-            "(try again in months as history grows)."
+            "2. Leave the not-ready names off for now "
+            "(try again as history grows)."
         )
         lines.append(
-            "3. Optional: trim them from **Symbols to update** before the next gather "
-            "to keep the status quieter."
+            "3. Optional: trim them from the list next time to keep status quieter."
         )
     elif ready:
         lines.append(
-            "1. **Recommended:** Enter the same symbols under **Run a forecast** "
-            "and click **Run forecast**."
+            "1. **Recommended:** **Refresh symbols** or **Run forecast** "
+            "(blank start = monthly catch-up + live)."
         )
         lines.append(
             "2. Or open **Charts** to review a symbol visually first."
@@ -233,8 +236,21 @@ def _gather_summary(result: dict) -> str:
 
 
 def _forecast_summary(result: dict) -> str:
+    mode = result.get("mode") or "single"
+    origins = result.get("origins") or []
     start = (result.get("resolved_start") or {}).get("start") or "—"
+    n_origins = len(origins) if origins else 1
+
     if result.get("dry_run"):
+        need = 0
+        for v in (result.get("by_start") or {}).values():
+            need += len(v.get("to_run") or [])
+        if mode == "catchup":
+            return (
+                f"ℹ️ **Check only — catch-up** ({n_origins} monthly/live origins).\n\n"
+                f"**Jobs that would run:** {need} symbol×start pair(s).\n\n"
+                "No model run. Click **Run forecast** or **Refresh symbols** when ready."
+            )
         already = _norm_syms(result.get("already_have_forecast") or [])
         if already:
             return (
@@ -251,10 +267,13 @@ def _forecast_summary(result: dict) -> str:
         already = _norm_syms(
             result.get("already_have_forecast") or result.get("tickers") or []
         )
+        head = (
+            f"✅ **Already caught up** ({n_origins} origin(s))."
+            if mode == "catchup"
+            else f"✅ **Already done** (start `{start}`)."
+        )
         return (
-            f"✅ **Already done** for **{len(already)}** symbol"
-            f"{'s' if len(already) != 1 else ''} (start `{start}`).\n\n"
-            f"{_fmt_syms(already)}\n\n"
+            f"{head}\n\n{_fmt_syms(already)}\n\n"
             "Skipped re-run — no new forecast files written.\n\n"
             "**Next:** open **Charts** or **Scans** to review results."
         )
@@ -262,16 +281,16 @@ def _forecast_summary(result: dict) -> str:
         if result.get("need_covariates"):
             head = "❌ **Forecast inputs incomplete.**"
             nexts = (
-                "1. **Recommended:** **Update market data** for these symbols "
-                "(includes fundamentals), then **Run forecast** again.\n\n"
+                "1. **Recommended:** **Refresh symbols** or **Update market data**, "
+                "then try again.\n\n"
                 "2. See **Advanced details** for which inputs failed."
             )
         elif result.get("need_gather"):
             head = "❌ **Need more market data first.**"
             nexts = (
-                "1. **Recommended:** **Update market data** for these symbols, "
-                "then **Run forecast**.\n\n"
-                "2. Recent IPOs may never be ready until enough history exists."
+                "1. **Recommended:** **Refresh symbols** (gather + forecast) "
+                "or **Update market data** then **Run forecast**.\n\n"
+                "2. Recent IPOs may need more history first."
             )
         else:
             head = "❌ **Forecast failed.**"
@@ -285,18 +304,100 @@ def _forecast_summary(result: dict) -> str:
 
     forecasted = _norm_syms(result.get("forecasted") or [])
     already = _norm_syms(result.get("already_have_forecast") or [])
-    lines = [f"✅ **Forecast complete** (start `{start}`)."]
+    if mode == "catchup":
+        lines = [
+            f"✅ **Catch-up forecast complete** — "
+            f"**{n_origins}** monthly/live origin(s)."
+        ]
+    else:
+        lines = [f"✅ **Forecast complete** (start `{start}`)."]
+    if result.get("partial"):
+        lines[0] = "⚠️ " + lines[0].replace("✅ ", "")
+        lines.append("_Some symbol×start pairs still missing — see Advanced details._")
     if forecasted:
         lines.append(
-            f"**New forecasts ({len(forecasted)}):** {_fmt_syms(forecasted)}"
+            f"**New forecasts ({len(forecasted)} symbols):** {_fmt_syms(forecasted)}"
         )
-    if already:
+    if already and mode == "single":
         lines.append(
             f"**Already on file, skipped ({len(already)}):** {_fmt_syms(already)}"
         )
     lines.append(
-        "**Next:** open **Charts** for a symbol or **Scans** for the whole set."
+        "**Next:** open **Charts** (reward/risk + history) or **Scans** "
+        "to rank by RR and backtest."
     )
+    return "\n\n".join(lines)
+
+
+def _refresh_summary(result: dict) -> str:
+    """Primary status for all-in-one Refresh symbols."""
+    gather = result.get("gather") or {}
+    forecast = result.get("forecast") or {}
+    ready = _norm_syms(result.get("ready") or gather.get("ready") or [])
+    incomplete = _norm_syms(
+        result.get("incomplete") or gather.get("incomplete") or []
+    )
+    lines: list[str] = []
+
+    if result.get("dry_run"):
+        lines.append("ℹ️ **Check only — Refresh symbols** (no downloads / model).")
+        lines.append(f"**Would gather then catch-up:** {_fmt_syms(ready)}")
+        if incomplete:
+            lines.append(f"**Would skip (not ready):** {_fmt_syms(incomplete)}")
+        return "\n\n".join(lines)
+
+    if not result.get("ok") and not forecast.get("forecasted"):
+        g_part = _gather_summary(gather) if gather else ""
+        head = "❌ **Refresh could not finish.**"
+        if incomplete and not ready:
+            head = "❌ **Refresh stopped — no symbols ready for forecast yet.**"
+        return (
+            f"{head}\n\n"
+            f"{result.get('error') or ''}\n\n"
+            f"{g_part}\n\n"
+            "**What you can do next**\n\n"
+            "1. **Recommended:** Drop short-history / IPO names and "
+            "**Refresh symbols** again.\n\n"
+            "2. See **Advanced details** for the full log."
+        )
+
+    n_orig = len(forecast.get("origins") or [])
+    new_fc = _norm_syms(forecast.get("forecasted") or [])
+    if result.get("partial") or incomplete:
+        lines.append(
+            f"⚠️ **Refresh partial** — **{len(ready)}** ready, "
+            f"**{len(incomplete)}** not forecast-ready."
+        )
+    else:
+        lines.append(
+            f"✅ **Refresh complete** for **{len(ready)}** symbol"
+            f"{'s' if len(ready) != 1 else ''}."
+        )
+    if ready:
+        lines.append(f"**Forecast-ready:** {_fmt_syms(ready)}")
+    if incomplete:
+        lines.append(
+            f"**Not ready (short history etc.):** {_fmt_syms(incomplete)}"
+        )
+    if n_orig:
+        lines.append(
+            f"**Catch-up origins:** {n_orig} monthly/live starts "
+            f"(skipped ones already on file)."
+        )
+    if new_fc:
+        lines.append(f"**New forecast files:** {_fmt_syms(new_fc)}")
+    elif forecast.get("already_saved"):
+        lines.append("Forecasts were already on file for all ready origins.")
+    lines.append("**What you can do next**")
+    lines.append(
+        "1. **Recommended:** Open **Scans** or **Charts** — backtest history "
+        "and the live forecast should be available for ready names."
+    )
+    if incomplete:
+        lines.append(
+            "2. Leave not-ready names for later (need more trading history)."
+        )
+    lines.append("Full log under **Advanced details**.")
     return "\n\n".join(lines)
 
 
@@ -325,9 +426,39 @@ class RunTab:
         gr.Markdown(
             """
 ## Update data & run forecasts
-Two separate steps: **get market data**, then **run a forecast**.
+**Recommended:** **Refresh symbols** (gather + monthly catch-up forecasts + live).  
+Or use the separate steps below for finer control.
             """
         )
+
+        # ---- Primary: Refresh symbols ----
+        with gr.Group():
+            gr.Markdown(
+                f"### {REFRESH_SYMBOLS_SECTION_TITLE}\n{REFRESH_SYMBOLS_SECTION_HELP}"
+            )
+            self.refreshTickers = gr.Textbox(
+                label="Symbols to refresh",
+                lines=3,
+                placeholder="AAPL, MSFT, NVDA",
+                info=TICKERS_HELP,
+            )
+            self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
+            self.refreshStatus = gr.Markdown(
+                value=(
+                    "_Enter symbols, then click **Refresh symbols**. "
+                    "Blank forecast start uses ~12 monthly backtests + live._"
+                )
+            )
+            with gr.Accordion("Advanced details", open=False):
+                self.refreshDetails = gr.Code(
+                    label="Technical log",
+                    language="json",
+                    lines=10,
+                    interactive=False,
+                    value="",
+                )
+
+        gr.Markdown("---")
 
         # ---- Gather panel ----
         with gr.Group():
@@ -410,6 +541,16 @@ Two separate steps: **get market data**, then **run a forecast**.
                     value="",
                 )
 
+        refresh_outputs = [self.refreshStatus, self.refreshDetails]
+        if self.charts_ticker_dropdown is not None:
+            refresh_outputs.append(self.charts_ticker_dropdown)
+
+        self.refreshBtn.click(
+            fn=self.do_refresh_symbols,
+            inputs=[self.refreshTickers],
+            outputs=refresh_outputs,
+        )
+
         gather_outputs = [self.gatherStatus, self.gatherDetails]
         if self.charts_ticker_dropdown is not None:
             gather_outputs.append(self.charts_ticker_dropdown)
@@ -455,6 +596,25 @@ Two separate steps: **get market data**, then **run a forecast**.
     def preview_start(self, forecast_date):
         info = resolve_start_for_run(forecast_date or None)
         return _start_summary(info), _json_details(info)
+
+    def do_refresh_symbols(self, tickers_text):
+        parsed = parse_ticker_list(tickers_text)
+        if not parsed["ok"]:
+            status = (
+                f"❌ **Could not refresh symbols.**  \n"
+                f"{parsed.get('error') or 'Invalid symbols.'}"
+            )
+            details = _json_details(parsed)
+            if self.charts_ticker_dropdown is not None:
+                return status, details, gr.update()
+            return status, details
+        logger.info(f"Dashboard refresh_symbols for {parsed['tickers']}")
+        result = refresh_symbols(tickers_text, force_allow=True)
+        status = _refresh_summary(result)
+        details = _json_details(result)
+        if self.charts_ticker_dropdown is not None:
+            return status, details, self._charts_dropdown_update()
+        return status, details
 
     def do_gather(self, tickers_text):
         parsed = parse_ticker_list(tickers_text)

@@ -8,7 +8,10 @@ import pytest
 from canswim.calendar_weeks import (
     default_live_forecast_start,
     first_session_of_iso_week,
+    first_session_of_month,
     last_completed_week_end,
+    list_monthly_catchup_origins,
+    monthly_catchup_origin,
     resolve_forecast_start,
     snap_to_week_start_on_or_before,
 )
@@ -77,6 +80,43 @@ def test_resolve_holiday_monday_backtest():
     assert r.ok
     assert r.start == "2026-05-26"
     assert r.reason == "snapped_week_start"
+
+
+def test_first_session_of_month_january_2026():
+    # 2026-01-01 holiday → first open Fri 2026-01-02
+    assert first_session_of_month(2026, 1).strftime("%Y-%m-%d") == "2026-01-02"
+
+
+def test_monthly_catchup_origin_snaps_to_week():
+    # Jan 2026 first open Fri 2nd → week start Mon 2025-12-29? 
+    # first_session_of_iso_week(2026-01-02): ISO week of Fri Jan 2 is week with Mon Dec 29 2025
+    o = monthly_catchup_origin(2026, 1)
+    assert o == first_session_of_iso_week("2026-01-02")
+    assert o.strftime("%Y-%m-%d") == first_session_of_iso_week("2026-01-02").strftime(
+        "%Y-%m-%d"
+    )
+
+
+def test_list_monthly_catchup_origins_count_and_live():
+    # Fixed asof so list is deterministic
+    origins = list_monthly_catchup_origins(
+        asof="2026-07-10", months=12, latest_close="2026-07-09"
+    )
+    assert len(origins) >= 10  # ~12 months + live, maybe fewer if deduped
+    assert len(origins) <= 13
+    # Sorted ascending
+    assert origins == sorted(origins)
+    # Live is last
+    live = default_live_forecast_start(
+        asof="2026-07-10", latest_close="2026-07-09"
+    ).strftime("%Y-%m-%d")
+    assert origins[-1] == live
+    # One origin per ISO week
+    weeks = set()
+    for o in origins:
+        t = pd.Timestamp(o)
+        weeks.add((int(t.isocalendar()[0]), int(t.isocalendar()[1])))
+    assert len(weeks) == len(origins)
 
 
 def test_july4_week_start_is_first_session():
