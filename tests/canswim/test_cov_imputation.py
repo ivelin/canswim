@@ -125,3 +125,56 @@ def test_prepare_key_metrics_zero_fills_missing():
     out = c.prepare_key_metrics(stock_price_series=prices)
     assert "HAS" in out and "IPO" in out
     assert len(out["IPO"].components) == len(out["HAS"].components)
+
+
+def test_fund_thin_empty_batch_zero_fills_earn_like_etf():
+    """ETF-style batch: no earnings rows at all still gets train-shaped columns."""
+    from canswim.covariates import _EARN_FEATURE_COLS
+
+    c = Covariates()
+    c.earnings_loaded_df = pd.DataFrame()  # empty load (XLF-only filter)
+    prices = {"XLF": _price_ts()}
+    out = c.prepare_earn_series(stock_price_series=prices)
+    assert "XLF" in out
+    assert list(out["XLF"].components) == list(_EARN_FEATURE_COLS)
+
+
+def test_fund_thin_empty_batch_zero_fills_key_metrics():
+    c = Covariates()
+    c.kms_loaded_df = pd.DataFrame()
+    # Provide columns via mock of disk template path
+    c._key_metrics_template_columns = lambda: [  # type: ignore[method-assign]
+        "period",
+        "revenuePerShare",
+        "netIncomePerShare",
+    ]
+    prices = {"XLF": _price_ts()}
+    out = c.prepare_key_metrics(stock_price_series=prices)
+    assert "XLF" in out
+    assert list(out["XLF"].components) == [
+        "period",
+        "revenuePerShare",
+        "netIncomePerShare",
+    ]
+
+
+def test_fund_thin_empty_batch_zero_fills_estimates():
+    c = Covariates()
+    prices = {"XLF": _price_ts(n=60, start="2023-06-01")}
+    # Disk template via stub
+    tmpl = c._zero_cov_from_columns(
+        ["estimatedEpsAvg_p_annual_1", "estimatedEpsAvg_p_annual_2"],
+        prices["XLF"],
+        fillna_value=-1,
+    )
+    c._build_est_template_from_disk = (  # type: ignore[method-assign]
+        lambda **kwargs: tmpl
+    )
+    out = c.prepare_est_series(
+        all_est_df=pd.DataFrame(),
+        n_future_periods=2,
+        period="annual",
+        stock_price_series=prices,
+    )
+    assert "XLF" in out
+    assert len(out["XLF"].components) == 2

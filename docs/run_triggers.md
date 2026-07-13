@@ -100,23 +100,97 @@ python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-0
 
 More CLI recipes: [cli.md](cli.md). MCP: [mcp.md](mcp.md).
 
-## Missing fundamentals (IPO / thin coverage)
+## Symbol classes: stocks, IPOs, and ETFs (same model)
 
-The model stack uses **zero-fill / sentinel fill** when a symbol has prices but no
-earnings, key metrics, institutional ownership, or analyst estimates (common for
-recent IPOs and small caps). That keeps feature dimensionality fixed for train
-and forecast so those names are not dropped solely for missing fundamentals.
+canswim uses **one TiDE checkpoint** and a **fixed feature layout** for every
+symbol at train and at inference. The model does not have separate ETF/IPO
+heads. What changes is **how much real CANSLIM-style fund data** is available
+and what we **impute** so the tensor width still matches training.
 
-- Prices remain ground-truth (no invented OHLCV). Short price history still fails
-  readiness checks (~2y for forecast-scoped runs).
-- Ownership fill: `0`. Earnings / estimates: same padding style as sparse known
-  series (`-1` / zero columns aligned to the price calendar when a template exists).
+### One model, fixed feature width
+
+| Layer | Role | Always required? |
+|-------|------|------------------|
+| **Target** | Stock/ETF **Close** (or configured target column) | **Yes** — ground-truth bars only (no invented OHLCV) |
+| **Past covariates** | Own OHLC+volume, earnings, key metrics, ownership, splits, broad market / sectors / industry funds | **Yes as a block** — missing *fund* slices are zero-/sentinel-filled |
+| **Future covariates** | Dividends, analyst estimate paths, holidays | **Yes as a block** — missing estimates zero-filled |
+
+Training and forecast both call the same covariate stack (`canswim.covariates`).
+If a column that existed at train is missing at forecast, Darts raises a
+**dimensionality** error. That is why fund-thin names must **impute columns**,
+not drop them.
+
+### Three operator-facing classes (MECE)
+
+| Class | Examples | What “rich CANSLIM data” means here | Typical gaps |
+|-------|----------|--------------------------------------|--------------|
+| **A. Covered stocks** | LLY, AAPL, MSFT | Full(ish) price history **and** corporate fundamentals: earnings calendar, key metrics, institutional ownership, sell-side estimates | Occasional sparse fields only |
+| **B. IPOs / thin equities** | Recent listings | Price history often short; fundamentals **late or empty** | Not enough **sessions** for min history; fund rows missing until coverage catches up |
+| **C. ETFs / funds** | XLF, SPY, sector & theme ETFs | **Prices + market context** matter; no corporate EPS / key metrics / equity research “by design” | Fund rows **never** appear (empty filter for that symbol) |
+
+These classes share **market-context** past covariates (broad indexes, sectors,
+industry funds) and the **own-price** past block. They differ on **issuer-level**
+fundamentals.
+
+### Data requirements: train vs inference
+
+Same rules on both paths unless noted.
+
+| Requirement | Covered stocks (A) | IPOs / thin (B) | ETFs / funds (C) |
+|-------------|--------------------|-----------------|------------------|
+| **OHLCV history** | Full train window or ~2y scoped | Must eventually reach ~**2 years of sessions** for forecast-scoped readiness | Same price floor as stocks (~2y scoped) |
+| **Own OHLC+volume as past covs** | Real | Real when listed | Real (ETF prints) |
+| **Earnings / key metrics / ownership** | Real when present | **Zero-fill** missing (#33) | **Zero-fill** missing (same mechanism; expected permanent) |
+| **Analyst estimates (future)** | Real when present | **Zero-fill** missing | **Zero-fill** missing |
+| **Broad / sector / industry funds** | Shared series (all symbols) | Shared series | Shared series (often the informative path for ETFs) |
+| **Dividends / splits / holidays** | Real or empty-padded | Same | Same |
+| **Train inclusion** | Preferred “rich” examples | Included if prices + imputed fund dims work | Can be included the same way; model still learns price+market features |
+| **Forecast / Refresh** | Default path | Fail **history** if too short; else impute fund | Fail **history** if too short; else impute fund (empty batch OK) |
+
+**Hard fail (cannot invent):** insufficient **price** history for the forecast
+window / min samples. Status talks about short history / IPOs.
+
+**Soft gap (impute, do not drop columns):** missing earnings, key metrics,
+ownership, estimates — whether temporary (IPO) or structural (ETF).
+
+### How imputation works (train + inference)
+
+1. Build real series per symbol when parquet has rows.
+2. If some symbols in the batch lack a block, **copy the column template** from a
+   peer that has it and fill with `0` (ownership) or `-1` / zeros (earn, kms,
+   estimates), aligned to that symbol’s **price calendar**.
+3. If the **entire batch** has no fund rows (e.g. refresh **XLF** alone), there is
+   no peer template:
+   - **Earnings:** fixed train schema columns (always emit the same names/order).
+   - **Key metrics / analyst estimates:** load a **disk template** from covered
+     large caps (e.g. AAPL family) and zero-fill those columns for the thin name.
+4. Stack into past/future covariates with the **same width** as training so one
+   checkpoint works for A/B/C.
+
+Implementation: `canswim.covariates` (issue #33 for IPOs; empty-batch / ETF path
+extends the same idea).
+
+### What this means for operators
+
+| You want to… | Expectation |
+|--------------|-------------|
+| Refresh **LLY / AAPL** | Market data + real fundamentals when APIs have them; catch-up forecasts as usual |
+| Refresh a **new IPO** | May **stop** until ~2y of sessions; fundamentals imputed once prices are ready |
+| Refresh **XLF** or a sector ETF | Prices + market funds load; **no corporate fund rows** — imputed automatically; forecast should not fail on dimensionality alone |
+| Mix ETF + stocks in one list | Peers can supply templates; still fine if only ETFs (empty-batch path) |
+
+**Interpretation note:** For ETFs (and heavily imputed IPOs), the model is driven
+mainly by **price path + broad/sector context**, not issuer fundamentals. That is
+intentional with a single shared head—not a second “ETF model.”
+
+**NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
 
 ## Design rules
 
 1. One orchestration for CLI / GUI / MCP.
 2. Missing-only remote calls for forecast-scoped gather; train stays full-history.
-3. Fail closed on incomplete forecast data (prices or covariates).
+3. Fail closed on incomplete **price** history; **impute** optional fundamentals so feature width stays fixed.
 4. Consumer copy in the product; policy detail in this doc.
 5. Parquet is the system of record; DuckDB is the search/UI cache ([data_store.md](data_store.md)).
-6. Impute missing optional fundamentals rather than excluding symbols (train + forecast).
+6. Same model for covered stocks, IPOs, and ETFs — different real-data density, same tensor schema.
+7. Impute missing optional fundamentals rather than excluding symbols (train + forecast).
