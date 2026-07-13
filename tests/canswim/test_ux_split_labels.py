@@ -14,6 +14,7 @@ from canswim.run_triggers import (
     GATHER_BUTTON,
     GATHER_SECTION_TITLE,
     REFRESH_SYMBOLS_BUTTON,
+    REFRESH_SYMBOLS_SECTION_HELP,
     TICKERS_HELP,
 )
 
@@ -29,11 +30,22 @@ def test_consumer_copy_avoids_dev_jargon():
         FORECAST_SECTION_TITLE,
         GATHER_BUTTON,
         FORECAST_BUTTON,
+        REFRESH_SYMBOLS_SECTION_HELP,
+        REFRESH_SYMBOLS_BUTTON,
     ):
         assert "ISO week" not in s
         assert "TiDE" not in s
         assert "week-aligned starts:" not in s.lower()
         assert "CLI equivalent" not in s
+
+
+def test_refresh_symbols_help_explains_steps():
+    h = REFRESH_SYMBOLS_SECTION_HELP.lower()
+    assert "market data" in h
+    assert "forecast" in h
+    assert "12" in h or "monthly" in h
+    assert "charts" in h
+    assert "skip" in h
 
 
 def test_date_policy_summary_not_technical_dump():
