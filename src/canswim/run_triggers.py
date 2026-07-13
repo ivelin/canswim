@@ -53,38 +53,29 @@ DATE_POLICY_SUMMARY = (
     "Start dates use market weeks (see docs/run_triggers.md)."
 )
 
-GATHER_SECTION_TITLE = "Get market data"
-GATHER_SECTION_HELP = (
-    "Download recent prices for the symbols you list. "
-    "Uses local files when they already cover about the last two years; "
-    "only requests from the internet what is missing or out of date."
-)
+GATHER_SECTION_TITLE = "Get market data only"
+GATHER_SECTION_HELP = "Prices + fundamentals only (no model run)."
 GATHER_BUTTON = "Update market data"
 
-FORECAST_SECTION_TITLE = "Run a forecast"
+FORECAST_SECTION_TITLE = "Run forecast only"
 FORECAST_SECTION_HELP = (
-    "Create forecasts for the symbols you list. "
-    "Leave start date blank to **catch up** ~12 monthly backtests + the live forecast. "
-    "Needs complete local market history—if anything is missing, "
-    "update market data first (or use **Refresh symbols**)."
+    "Model only. Blank start = ~12 monthly catch-ups + live. "
+    "Needs market data already on file."
 )
 FORECAST_BUTTON = "Run forecast"
 PREVIEW_START_BUTTON = "Check start date"
 
-REFRESH_SYMBOLS_SECTION_TITLE = "Refresh symbols (recommended)"
+REFRESH_SYMBOLS_SECTION_TITLE = "Refresh symbols"
 REFRESH_SYMBOLS_SECTION_HELP = (
-    "All-in-one for new or stale names: **update market data**, then "
-    "**catch-up forecasts** (monthly origins for the past year + live). "
-    "Skips work already done. Best default for a portfolio list."
+    "One step: update market data, then catch-up forecasts "
+    "(~12 monthly backtests + live). Skips work already done."
 )
 REFRESH_SYMBOLS_BUTTON = "Refresh symbols"
 
-REFRESH_SEARCH_SECTION_TITLE = "Search database (Charts / Scans)"
+REFRESH_SEARCH_SECTION_TITLE = "Rebuild Charts / Scans database"
 REFRESH_SEARCH_SECTION_HELP = (
-    "Charts and Scans read the local DuckDB search cache, not parquet files directly. "
-    "Parquet under data/ is the system of record. "
-    "After bulk data changes—or if Charts look empty while parquet exists—"
-    "use **Refresh search DB from parquet** to rebuild the cache."
+    "Only if Charts look empty while parquet exists. "
+    "Usually not needed after Refresh symbols."
 )
 REFRESH_SEARCH_BUTTON = "Refresh search DB from parquet"
 

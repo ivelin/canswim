@@ -44,24 +44,24 @@ def test_date_policy_summary_not_technical_dump():
 
 def test_run_tab_has_separate_gather_and_forecast_controls():
     src = inspect.getsource(run_tab_mod.RunTab.__init__)
+    # Primary path: Refresh symbols
+    assert "refreshBtn" in src or "refreshTickers" in src
+    assert "REFRESH_SYMBOLS" in src or REFRESH_SYMBOLS_BUTTON in src
+    assert "do_refresh_symbols" in inspect.getsource(run_tab_mod.RunTab)
+    # Secondary still present but under collapsed "More options"
+    assert "More options" in src
     assert "gatherTickers" in src
     assert "forecastTickers" in src
     assert "gatherBtn" in src
     assert "forecastBtn" in src
-    assert "refreshBtn" in src or "refreshTickers" in src
-    assert "REFRESH_SYMBOLS" in src or REFRESH_SYMBOLS_BUTTON in src
     assert GATHER_SECTION_TITLE in src or "GATHER_SECTION_TITLE" in src
     assert FORECAST_SECTION_TITLE in src or "FORECAST_SECTION_TITLE" in src
-    # Two separate status outputs
     assert "gatherStatus" in src
     assert "forecastStatus" in src
-    # Search DB refresh (parquet → DuckDB)
+    # Search DB rebuild tucked under More options
     assert "refreshDbBtn" in src
     assert "do_refresh_search_db" in inspect.getsource(run_tab_mod.RunTab)
     assert "REFRESH_SEARCH_BUTTON" in src or "Refresh search DB" in src
-    assert "do_refresh_symbols" in inspect.getsource(run_tab_mod.RunTab)
-    # JSON is advanced/collapsed, not primary body
-    assert "Advanced details" in src
     assert "gatherDetails" in src
     assert "forecastDetails" in src
     assert "open=False" in src
