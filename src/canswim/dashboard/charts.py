@@ -8,7 +8,13 @@ import matplotlib.dates as mdates
 import random
 import pandas as pd
 from pandas.tseries.offsets import BDay
-from canswim.db import list_tickers, get_reward_risk, get_saved_forecasts_as_series
+from canswim.db import (
+    list_tickers,
+    get_reward_risk,
+    get_saved_forecasts_as_series,
+    get_company_profile,
+    format_company_profile_markdown,
+)
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
@@ -25,10 +31,13 @@ class ChartTab:
         with gr.Row():
             sorted_tickers = sorted(self.get_tickers())
             logger.info(f"Sorted selection tickers: {sorted_tickers}")
+            default_ticker = (
+                random.sample(sorted_tickers, 1)[0] if sorted_tickers else None
+            )
             self.tickerDropdown = gr.Dropdown(
                 choices=sorted_tickers,
                 label="Stock Symbol",
-                value=random.sample(sorted_tickers, 1)[0],
+                value=default_ticker,
             )
             self.lowq = gr.Radio(
                 choices=[80, 95, 99],
@@ -36,6 +45,10 @@ class ChartTab:
                 label="Confidence level for lowest close price",
                 info="Choose low price confidence percentage",
             )
+        self.companyInfo = gr.Markdown(
+            value=self._company_md(default_ticker),
+            label="Company",
+        )
         with gr.Row():
             self.rrTable = gr.Dataframe(
                 label="Reward / Risk metrics (only for uptrending forecasts)"
@@ -43,13 +56,24 @@ class ChartTab:
         self.tickerDropdown.change(
             fn=self.plot_forecast,
             inputs=[self.tickerDropdown, self.lowq],
-            outputs=[self.plotComponent, self.rrTable],
+            outputs=[self.plotComponent, self.rrTable, self.companyInfo],
         )
         self.lowq.change(
             fn=self.plot_forecast,
             inputs=[self.tickerDropdown, self.lowq],
-            outputs=[self.plotComponent, self.rrTable],
+            outputs=[self.plotComponent, self.rrTable, self.companyInfo],
         )
+
+    def _company_md(self, ticker: str | None) -> str:
+        if not ticker:
+            return ""
+        try:
+            return format_company_profile_markdown(
+                get_company_profile(self.db_path, ticker)
+            )
+        except Exception as e:
+            logger.debug(f"company profile blurb: {e}")
+            return "_Company profile unavailable._"
 
     def get_tickers(self):
         return list_tickers(self.db_path)
@@ -348,7 +372,12 @@ class ChartTab:
         if target is None:
             axes.legend()
             axes.grid(True, which="major", linestyle="-", alpha=0.3)
-        return {self.plotComponent: fig, self.rrTable: rr_df}
+        company_md = self._company_md(ticker)
+        return {
+            self.plotComponent: fig,
+            self.rrTable: rr_df,
+            self.companyInfo: company_md,
+        }
 
     def get_saved_forecasts(self, ticker: str = None, start_date=None):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""

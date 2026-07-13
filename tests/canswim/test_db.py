@@ -11,8 +11,10 @@ import pytest
 from canswim.db import (
     SelectOnlyError,
     dataframe_to_records,
+    format_company_profile_markdown,
     get_backtest_error,
     get_close_prices,
+    get_company_profile,
     get_forecast_rows,
     get_reward_risk,
     is_select_only,
@@ -80,6 +82,20 @@ def _build_mini_db(path: Path) -> str:
                 ('AAA', DATE '2025-01-06', 0.05),
                 ('BBB', DATE '2025-01-06', 0.08)
             ) t(symbol, start_date, mal_error)
+            """
+        )
+        con.execute(
+            """
+            CREATE TABLE company_profile AS
+            SELECT * FROM (VALUES
+                ('AAA', 'Aaa Corp', 'Technology', 'Software', 'US',
+                 'NASDAQ', 1e9, 'USD', '2010-01-01', 'https://aaa.example',
+                 'Makes software.'),
+                ('BBB', 'Bbb Inc', 'Healthcare', 'Biotech', 'US',
+                 'NYSE', 5e8, 'USD', '2015-06-01', 'https://bbb.example',
+                 'Biotech firm.')
+            ) t(symbol, company_name, sector, industry, country,
+                exchange, mkt_cap, currency, ipo_date, website, description)
             """
         )
     return db_path
@@ -252,6 +268,14 @@ def test_scan_forecasts(mini_db):
     df = scan_forecasts(mini_db, lowq=80, reward=5, rr=1.0)
     assert "AAA" in set(df["symbol"]) if not df.empty else True
     # AAA: high 112 vs prior 102 → ~9.8% reward, low 100 → should pass loose rr
+    if not df.empty and "AAA" in set(df["symbol"]):
+        row = df[df["symbol"] == "AAA"].iloc[0]
+        assert "company_name" in df.columns
+        assert "sector" in df.columns
+        assert "industry" in df.columns
+        assert row["company_name"] == "Aaa Corp"
+        assert row["sector"] == "Technology"
+        assert row["industry"] == "Software"
 
 
 def test_scan_forecasts_historic_start(mini_db):
@@ -265,6 +289,72 @@ def test_scan_forecasts_historic_start(mini_db):
     # prior for 2025-01-03 is close on 2025-01-02 = 100; mid = 108
     assert float(df.iloc[0]["prior_close_price"]) == pytest.approx(100.0)
     assert float(df.iloc[0]["forecast_close_high"]) == pytest.approx(108.0)
+    assert df.iloc[0]["company_name"] == "Aaa Corp"
+    assert df.iloc[0]["sector"] == "Technology"
+
+
+def test_get_company_profile(mini_db):
+    p = get_company_profile(mini_db, "aaa")
+    assert p is not None
+    assert p["symbol"] == "AAA"
+    assert p["company_name"] == "Aaa Corp"
+    assert p["sector"] == "Technology"
+    assert p["industry"] == "Software"
+    assert get_company_profile(mini_db, "ZZZ") is None
+    assert get_company_profile(mini_db, "") is None
+
+
+def test_format_company_profile_markdown():
+    md = format_company_profile_markdown(
+        {
+            "symbol": "AAA",
+            "company_name": "Aaa Corp",
+            "sector": "Technology",
+            "industry": "Software",
+            "country": "US",
+            "exchange": "NASDAQ",
+            "mkt_cap": 1.5e9,
+            "website": "https://aaa.example",
+            "description": "Makes software.",
+        }
+    )
+    assert "Aaa Corp" in md
+    assert "Technology" in md
+    assert "Software" in md
+    assert "1.50B" in md
+    assert "aaa.example" in md
+    empty = format_company_profile_markdown(None)
+    assert "No company profile" in empty
+
+
+def test_sync_company_profiles_to_search_db(mini_db, tmp_path: Path):
+    from canswim.db import sync_company_profiles_to_search_db
+
+    pq = tmp_path / "company_profile.parquet"
+    pd.DataFrame(
+        [
+            {
+                "symbol": "CCC",
+                "company_name": "Ccc Ltd",
+                "sector": "Energy",
+                "industry": "Oil",
+                "country": "US",
+                "exchange": "NYSE",
+                "mkt_cap": 2e9,
+                "currency": "USD",
+                "ipo_date": "2000-01-01",
+                "website": "https://ccc.example",
+                "description": "Energy co.",
+            }
+        ]
+    ).to_parquet(pq, index=False)
+    res = sync_company_profiles_to_search_db(mini_db, profile_path=str(pq))
+    assert res["ok"] is True
+    assert res["rows"] == 1
+    p = get_company_profile(mini_db, "CCC")
+    assert p is not None
+    assert p["company_name"] == "Ccc Ltd"
+    assert p["sector"] == "Energy"
 
 
 def test_is_select_only():

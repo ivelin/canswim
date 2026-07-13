@@ -13,12 +13,18 @@ If the UI or MCP looks stale or missing a symbol, the usual fix is: ensure parqu
 
 ## What each is used for
 
-- **Gather** writes/merges parquet (prices, earnings, ownership, estimates, …).
+- **Gather** writes/merges parquet (prices, earnings, ownership, estimates, company profiles, …).
 - **Forecast** writes forecast partitions under `data/forecast/` (and may sync rows into DuckDB).
 - **Dashboard** builds or reuses DuckDB (`--same_data True` reuses; first open / rebuild loads from parquet).
 - **MCP** reads DuckDB; optional `MCP_INIT_DB=1` can build it on start.
 
-Scoped gather/forecast also **sync** symbols and forecast rows into DuckDB so Charts/Scans pick up new tickers without a full rebuild.
+Scoped gather/forecast also **sync** symbols, forecast rows, and **company profiles** into DuckDB so Charts/Scans pick up new tickers and name/sector/industry without a full rebuild.
+
+| Parquet file | DuckDB table | Used by |
+|--------------|--------------|---------|
+| `data-3rd-party/company_profile.parquet` | `company_profile` | Charts company blurb; Scans `company_name` / `sector` / `industry` columns |
+
+`company_profile` is optional for `--same_data True` reuse (core scan tables can exist without it); gather/sync or a full rebuild populates it when the parquet is present.
 
 ## Operator tips
 

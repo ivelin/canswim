@@ -91,7 +91,7 @@ class CanswimPlayground:
                 )
 
             def _on_load(ticker, lowq):
-                """Page load: chart + scan dates + auto-scan with defaults."""
+                """Page load: chart + company blurb + scan dates + auto-scan."""
                 chart_out = charts_tab.plot_forecast(ticker, lowq)
                 start_dd, start_iso, scan_status, scan_table = (
                     scans_tab.initial_scan()
@@ -99,9 +99,11 @@ class CanswimPlayground:
                 if isinstance(chart_out, dict):
                     plot_val = chart_out.get(charts_tab.plotComponent)
                     rr_val = chart_out.get(charts_tab.rrTable)
+                    company_val = chart_out.get(charts_tab.companyInfo)
                     return (
                         plot_val,
                         rr_val,
+                        company_val,
                         start_dd,
                         start_iso,
                         scan_status,
@@ -110,6 +112,7 @@ class CanswimPlayground:
                 return (
                     chart_out[0],
                     chart_out[1],
+                    charts_tab._company_md(ticker),
                     start_dd,
                     start_iso,
                     scan_status,
@@ -122,6 +125,7 @@ class CanswimPlayground:
                 outputs=[
                     charts_tab.plotComponent,
                     charts_tab.rrTable,
+                    charts_tab.companyInfo,
                     scans_tab.forecastStart,
                     scans_tab.selectedStart,
                     scans_tab.scanStatus,

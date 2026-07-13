@@ -479,6 +479,7 @@ def gather_for_tickers(
                     ("key_metrics", g.gather_stock_key_metrics),
                     ("institutional_ownership", g.gather_institutional_stock_ownership),
                     ("analyst_estimates", g.gather_analyst_estimates),
+                    ("company_profiles", g.gather_company_profiles),
                 ):
                     try:
                         fn()
@@ -491,9 +492,14 @@ def gather_for_tickers(
 
         db_sync: dict[str, Any] | None = None
         try:
-            from canswim.db import sync_gathered_symbols, get_db_path
+            from canswim.db import (
+                sync_gathered_symbols,
+                sync_company_profiles_to_search_db,
+                get_db_path,
+            )
 
-            db_sync = sync_gathered_symbols(get_db_path(), work_tickers)
+            db_path = get_db_path()
+            db_sync = sync_gathered_symbols(db_path, work_tickers)
             if db_sync.get("ok"):
                 if db_sync.get("added"):
                     messages.append(
@@ -510,6 +516,13 @@ def gather_for_tickers(
                 messages.append(
                     f"Could not update Charts list: {db_sync.get('error')}"
                 )
+            prof = sync_company_profiles_to_search_db(db_path)
+            if prof.get("ok") and prof.get("rows"):
+                messages.append(
+                    f"Company profiles in search DB: {prof.get('rows')} rows."
+                )
+            elif not prof.get("ok") and prof.get("error"):
+                messages.append(f"Company profile sync note: {prof.get('error')}")
         except Exception as e:
             messages.append(f"Charts list sync note: {e}")
 

@@ -1,7 +1,8 @@
 """Shared DuckDB access for dashboard and MCP (read path + search-DB init).
 
 Uses the same tables and schema as the Gradio dashboard:
-stock_tickers, forecast, latest_forecast, close_price, backtest_error.
+stock_tickers, forecast, latest_forecast, close_price, backtest_error,
+company_profile.
 """
 
 from __future__ import annotations
@@ -16,12 +17,29 @@ import duckdb
 import pandas as pd
 from loguru import logger
 
-SEARCH_TABLES = (
+# Required for --same_data reuse (company_profile is optional / added lazily)
+CORE_SEARCH_TABLES = (
     "stock_tickers",
     "forecast",
     "latest_forecast",
     "close_price",
     "backtest_error",
+)
+SEARCH_TABLES = CORE_SEARCH_TABLES + ("company_profile",)
+
+COMPANY_PROFILE_PARQUET = "company_profile.parquet"
+COMPANY_PROFILE_COLS = (
+    "symbol",
+    "company_name",
+    "sector",
+    "industry",
+    "country",
+    "exchange",
+    "mkt_cap",
+    "currency",
+    "ipo_date",
+    "website",
+    "description",
 )
 
 DEFAULT_ROW_LIMIT = 5000
@@ -73,7 +91,7 @@ def db_file_exists(db_path: Optional[str] = None) -> bool:
     return Path(path).is_file()
 
 
-def tables_present(db_path: str, tables: Sequence[str] = SEARCH_TABLES) -> bool:
+def tables_present(db_path: str, tables: Sequence[str] = CORE_SEARCH_TABLES) -> bool:
     if not db_file_exists(db_path):
         return False
     try:
@@ -238,7 +256,202 @@ def init_search_db(
             ON backtest_error (symbol, start_date)
             """
         )
+        _create_or_load_company_profile_table(db_con, paths)
     return True
+
+
+def company_profile_parquet_path(paths: Optional[DataPaths] = None) -> str:
+    paths = paths or DataPaths.from_env()
+    data_3rd = os.getenv("data-3rd-party", "data-3rd-party")
+    return str(Path(paths.data_dir) / data_3rd / COMPANY_PROFILE_PARQUET)
+
+
+def _create_or_load_company_profile_table(db_con, paths: Optional[DataPaths] = None) -> None:
+    """Create company_profile from parquet or empty schema."""
+    logger.info("Creating company_profile table")
+    pq = company_profile_parquet_path(paths)
+    if Path(pq).is_file():
+        db_con.sql(
+            f"""--sql
+            CREATE OR REPLACE TABLE company_profile AS
+            SELECT
+                upper(CAST(symbol AS VARCHAR)) AS symbol,
+                CAST(company_name AS VARCHAR) AS company_name,
+                CAST(sector AS VARCHAR) AS sector,
+                CAST(industry AS VARCHAR) AS industry,
+                CAST(country AS VARCHAR) AS country,
+                CAST(exchange AS VARCHAR) AS exchange,
+                TRY_CAST(mkt_cap AS DOUBLE) AS mkt_cap,
+                CAST(currency AS VARCHAR) AS currency,
+                CAST(ipo_date AS VARCHAR) AS ipo_date,
+                CAST(website AS VARCHAR) AS website,
+                CAST(description AS VARCHAR) AS description
+            FROM read_parquet('{pq}')
+            """
+        )
+    else:
+        db_con.sql(
+            """--sql
+            CREATE OR REPLACE TABLE company_profile (
+                symbol VARCHAR,
+                company_name VARCHAR,
+                sector VARCHAR,
+                industry VARCHAR,
+                country VARCHAR,
+                exchange VARCHAR,
+                mkt_cap DOUBLE,
+                currency VARCHAR,
+                ipo_date VARCHAR,
+                website VARCHAR,
+                description VARCHAR
+            )
+            """
+        )
+    try:
+        db_con.sql(
+            """--sql
+            CREATE UNIQUE INDEX company_profile_sym_idx ON company_profile (symbol)
+            """
+        )
+    except Exception as e:
+        logger.debug(f"company_profile index: {e}")
+    try:
+        db_con.table("company_profile").show()
+    except Exception:
+        pass
+
+
+def sync_company_profiles_to_search_db(
+    db_path: str,
+    *,
+    profile_path: Optional[str] = None,
+) -> dict[str, Any]:
+    """Reload company_profile table from local parquet into DuckDB."""
+    pq = profile_path or company_profile_parquet_path()
+    if not Path(pq).is_file():
+        return {"ok": True, "rows": 0, "message": f"No profile parquet at {pq}"}
+    try:
+        with connect_readwrite(db_path) as db_con:
+            # Ensure table exists even if DB was created before this feature
+            try:
+                db_con.execute("SELECT 1 FROM company_profile LIMIT 0")
+            except Exception:
+                _create_or_load_company_profile_table(db_con)
+            db_con.sql(
+                f"""--sql
+                CREATE OR REPLACE TABLE company_profile AS
+                SELECT
+                    upper(CAST(symbol AS VARCHAR)) AS symbol,
+                    CAST(company_name AS VARCHAR) AS company_name,
+                    CAST(sector AS VARCHAR) AS sector,
+                    CAST(industry AS VARCHAR) AS industry,
+                    CAST(country AS VARCHAR) AS country,
+                    CAST(exchange AS VARCHAR) AS exchange,
+                    TRY_CAST(mkt_cap AS DOUBLE) AS mkt_cap,
+                    CAST(currency AS VARCHAR) AS currency,
+                    CAST(ipo_date AS VARCHAR) AS ipo_date,
+                    CAST(website AS VARCHAR) AS website,
+                    CAST(description AS VARCHAR) AS description
+                FROM read_parquet('{pq}')
+                """
+            )
+            try:
+                db_con.sql(
+                    "CREATE UNIQUE INDEX company_profile_sym_idx ON company_profile (symbol)"
+                )
+            except Exception:
+                pass
+            n = db_con.execute("SELECT count(*) FROM company_profile").fetchone()[0]
+        return {"ok": True, "rows": int(n)}
+    except Exception as e:
+        logger.warning(f"sync_company_profiles_to_search_db failed: {e}")
+        return {"ok": False, "error": str(e), "rows": 0}
+
+
+def get_company_profile(db_path: str, symbol: str) -> Optional[dict[str, Any]]:
+    """Return one company profile row as a dict, or None."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return None
+    try:
+        with connect_readonly(db_path) as db_con:
+            try:
+                row = db_con.execute(
+                    """--sql
+                    SELECT symbol, company_name, sector, industry, country,
+                           exchange, mkt_cap, currency, ipo_date, website, description
+                    FROM company_profile
+                    WHERE upper(CAST(symbol AS VARCHAR)) = ?
+                    LIMIT 1
+                    """,
+                    [sym],
+                ).fetchone()
+            except Exception:
+                return None
+            if not row:
+                return None
+            cols = [
+                "symbol",
+                "company_name",
+                "sector",
+                "industry",
+                "country",
+                "exchange",
+                "mkt_cap",
+                "currency",
+                "ipo_date",
+                "website",
+                "description",
+            ]
+            return dict(zip(cols, row))
+    except Exception as e:
+        logger.debug(f"get_company_profile({sym}): {e}")
+        return None
+
+
+def format_company_profile_markdown(profile: Optional[dict[str, Any]]) -> str:
+    """Short Gradio Markdown blurb for Charts tab."""
+    if not profile:
+        return "_No company profile on file. Run **Update market data** for this symbol._"
+    name = profile.get("company_name") or profile.get("symbol") or ""
+    bits = [f"**{name}**"]
+    if profile.get("symbol"):
+        bits[0] = f"**{name}** (`{profile['symbol']}`)"
+    meta = [
+        x
+        for x in (
+            profile.get("sector"),
+            profile.get("industry"),
+            profile.get("country"),
+            profile.get("exchange"),
+        )
+        if x
+    ]
+    line = " · ".join(str(m) for m in meta)
+    lines = [bits[0]]
+    if line:
+        lines.append(line)
+    mkt = profile.get("mkt_cap")
+    if mkt is not None:
+        try:
+            mkt_f = float(mkt)
+            if mkt_f >= 1e12:
+                lines.append(f"Market cap: ${mkt_f / 1e12:.2f}T")
+            elif mkt_f >= 1e9:
+                lines.append(f"Market cap: ${mkt_f / 1e9:.2f}B")
+            elif mkt_f >= 1e6:
+                lines.append(f"Market cap: ${mkt_f / 1e6:.1f}M")
+            else:
+                lines.append(f"Market cap: ${mkt_f:,.0f}")
+        except (TypeError, ValueError):
+            pass
+    if profile.get("website"):
+        lines.append(f"[{profile['website']}]({profile['website']})")
+    desc = profile.get("description") or ""
+    if desc:
+        short = desc if len(desc) <= 280 else desc[:277] + "..."
+        lines.append(f"\n{short}")
+    return "  \n".join(lines)
 
 
 def _format_date_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
@@ -704,10 +917,38 @@ def scan_forecasts(
         logger.warning("scan_forecasts: no forecast start dates in database")
         return pd.DataFrame()
     with connect_readonly(db_path) as db_con:
+        has_profile = False
+        try:
+            db_con.execute("SELECT 1 FROM company_profile LIMIT 0")
+            has_profile = True
+        except Exception:
+            has_profile = False
+        profile_select = (
+            """
+                any_value(p.company_name) as company_name,
+                any_value(p.sector) as sector,
+                any_value(p.industry) as industry,
+            """
+            if has_profile
+            else """
+                CAST(NULL AS VARCHAR) as company_name,
+                CAST(NULL AS VARCHAR) as sector,
+                CAST(NULL AS VARCHAR) as industry,
+            """
+        )
+        profile_join = (
+            """
+            LEFT JOIN company_profile p
+              ON upper(CAST(p.symbol AS VARCHAR)) = upper(CAST(f.symbol AS VARCHAR))
+            """
+            if has_profile
+            else ""
+        )
         sql_result = db_con.sql(
             f"""--sql
             SELECT
                 f.symbol,
+                {profile_select}
                 f.start_date as forecast_start_date,
                 arg_max(c.close, c.date) as prior_close_price,
                 min("{low_quantile_col}") as forecast_close_low,
@@ -722,6 +963,7 @@ def scan_forecasts(
              AND CAST(c.Date AS DATE) < f.start_date
             LEFT JOIN backtest_error e
               ON e.symbol = f.symbol AND e.start_date = f.start_date
+            {profile_join}
             WHERE f.start_date = CAST($start AS DATE)
             GROUP BY f.symbol, f.start_date
             HAVING forecast_close_high > prior_close_price AND
