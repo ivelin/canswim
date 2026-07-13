@@ -64,7 +64,11 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
 
 
 def test_summary_helpers_are_plain():
-    from canswim.dashboard.run_tab import _forecast_summary, _gather_summary
+    from canswim.dashboard.run_tab import (
+        _fmt_syms,
+        _forecast_summary,
+        _gather_summary,
+    )
 
     g = _gather_summary(
         {
@@ -77,27 +81,45 @@ def test_summary_helpers_are_plain():
         }
     )
     assert "AAPL" in g
-    assert "```" not in g
+    assert "ready" in g.lower()
+    assert "What you can do next" in g
+    assert "Recommended" in g
+    assert "```json" not in g
 
+    # Portfolio-style partial: many ready + many short-history — no spaghetti wall
+    many_ready = [f"R{i:02d}" for i in range(20)]
+    many_short = [f"S{i:02d}" for i in range(15)]
     partial = _gather_summary(
         {
             "ok": True,
             "partial": True,
-            "tickers": ["AAPL", "STRC"],
-            "ready": ["AAPL"],
-            "incomplete": ["STRC"],
-            "short_history": ["STRC"],
+            "tickers": many_ready + many_short,
+            "ready": many_ready,
+            "incomplete": many_short,
+            "short_history": many_short,
             "messages": [
-                "Not enough trading history yet for: STRC. Recent IPOs usually cannot."
+                "Not enough trading history yet for: "
+                + ", ".join(many_short)
+                + ". Recent IPOs usually cannot."
             ],
-            "skipped_remote": ["AAPL"],
-            "fetched": [],
-            "db_sync": {"added": []},
+            "skipped_remote": many_ready[:10],
+            "fetched": many_short,
+            "db_sync": {"added": ["DASH", "ZYXI"]},
         }
     )
-    assert "Partial" in partial
-    assert "STRC" in partial or "IPO" in partial
+    assert "Partial update" in partial
+    assert "20 of 35" in partial or "20 of" in partial
+    assert "Ready for forecasts (20)" in partial
+    assert "Not ready for forecasts yet (15)" in partial
+    assert "What you can do next" in partial
+    assert "Recommended" in partial
+    assert "Run forecast" in partial
+    # Compact lists — not full 20+15 dumped three times
+    assert "+10 more" in partial or "…" in partial
+    assert partial.count("S00") <= 2  # shown in not-ready once, not thrice
     assert "rate limit" not in partial.lower()
+    # long IPO essay should not be the primary body
+    assert "drop those symbols from the list (or use train-mode" not in partial
 
     fail_ipo = _gather_summary(
         {
@@ -107,10 +129,16 @@ def test_summary_helpers_are_plain():
                 "Recent IPOs and newly listed names usually cannot be used."
             ),
             "short_history": ["BOT"],
+            "incomplete": ["BOT"],
         }
     )
-    assert "Could not finish" in fail_ipo
+    assert "None of these symbols are ready" in fail_ipo or "not ready" in fail_ipo.lower()
     assert "BOT" in fail_ipo
+    assert "What you can do next" in fail_ipo
+    assert "Recommended" in fail_ipo
+
+    assert _fmt_syms(["A", "B", "C"], limit=2) == "A, B … +1 more"
+
     f = _forecast_summary(
         {
             "ok": True,
@@ -122,6 +150,7 @@ def test_summary_helpers_are_plain():
     )
     assert "Already done" in f or "already" in f.lower()
     assert "```json" not in f
+    assert "Charts" in f or "Scans" in f
 
 
 def test_cli_help_separates_gather_and_forecast():
