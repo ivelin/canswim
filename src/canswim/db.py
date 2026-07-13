@@ -895,6 +895,38 @@ def sync_forecasts_to_search_db(
             GROUP BY symbol
             """
         )
+        # Refresh backtest_error for these symbols (Charts RR / Scans)
+        try:
+            db_con.execute(
+                f"""--sql
+                DELETE FROM backtest_error
+                WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                """
+            )
+            db_con.execute(
+                f"""--sql
+                INSERT INTO backtest_error
+                SELECT
+                    f.symbol,
+                    f.start_date,
+                    mean(
+                        abs(
+                            log(
+                                greatest(f."close_quantile_0.5", 0.01)
+                                / cp.Close
+                            )
+                        )
+                    ) AS mal_error
+                FROM forecast AS f
+                INNER JOIN close_price AS cp
+                  ON upper(CAST(cp.symbol AS VARCHAR)) = upper(CAST(f.symbol AS VARCHAR))
+                 AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
+                WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+                GROUP BY f.symbol, f.start_date
+                """
+            )
+        except Exception as e:
+            logger.warning(f"backtest_error refresh after forecast sync: {e}")
 
     logger.info(f"Synced forecast search rows={n} for {syms}")
     return {"ok": True, "symbols": syms, "forecast_rows": int(n)}

@@ -10,6 +10,7 @@ from canswim.run_triggers import (
     forecast_for_tickers,
     gather_for_tickers,
     parse_ticker_list,
+    refresh_symbols,
     require_runs_allowed,
     resolve_start_for_run,
     runs_allowed,
@@ -124,8 +125,82 @@ def test_forecast_dry_run_resolves_start(monkeypatch):
         )
     assert r["ok"] is True
     assert r["dry_run"] is True
+    assert r["mode"] == "single"
     assert r["tickers"] == ["AAPL", "MSFT"]
     assert r["resolved_start"]["start"] == "2026-03-02"
+
+
+def test_forecast_blank_start_is_catchup_dry_run(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    monkeypatch.setenv("CATCHUP_MONTHS", "6")
+    with patch(
+        "canswim.run_triggers.list_monthly_catchup_origins",
+        return_value=[
+            "2026-01-02",
+            "2026-02-02",
+            "2026-03-02",
+            "2026-04-01",
+            "2026-05-01",
+            "2026-06-01",
+            "2026-07-13",
+        ],
+    ):
+        with patch(
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-07-13",
+                "reason": "default_live",
+                "live_default": "2026-07-13",
+                "input": None,
+                "error": None,
+            },
+        ):
+            with patch(
+                "canswim.run_triggers.list_symbols_with_saved_forecast",
+                return_value=[],
+            ):
+                r = forecast_for_tickers("AAPL", dry_run=True)
+    assert r["ok"] is True
+    assert r["mode"] == "catchup"
+    assert r["dry_run"] is True
+    assert len(r["origins"]) == 7
+    assert r["origins"][-1] == "2026-07-13"
+
+
+def test_refresh_symbols_calls_gather_then_forecast(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    gather_ret = {
+        "ok": True,
+        "tickers": ["AAPL"],
+        "ready": ["AAPL"],
+        "incomplete": [],
+        "messages": [],
+    }
+    fc_ret = {
+        "ok": True,
+        "mode": "catchup",
+        "tickers": ["AAPL"],
+        "forecasted": ["AAPL"],
+        "origins": ["2026-01-02", "2026-07-13"],
+        "already_saved": False,
+        "messages": [],
+    }
+    with patch(
+        "canswim.run_triggers.gather_for_tickers", return_value=gather_ret
+    ) as g:
+        with patch(
+            "canswim.run_triggers.forecast_for_tickers", return_value=fc_ret
+        ) as f:
+            r = refresh_symbols("AAPL", force_allow=True)
+    assert r["ok"] is True
+    assert r["mode"] == "refresh"
+    g.assert_called_once()
+    f.assert_called_once()
+    # forecast called without explicit start (catch-up)
+    assert f.call_args.kwargs.get("forecast_start_date") is None or (
+        f.call_args[0][1] is None if len(f.call_args[0]) > 1 else True
+    )
 
 
 def test_forecast_passes_resolved_start_to_forecaster(monkeypatch):

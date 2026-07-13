@@ -21,6 +21,7 @@ def test_run_tab_button_labels_in_docs():
         rt.FORECAST_BUTTON,
         rt.PREVIEW_START_BUTTON,
         rt.REFRESH_SEARCH_BUTTON,
+        rt.REFRESH_SYMBOLS_BUTTON,
     }
     for path in ("README.md", "docs/run_triggers.md"):
         text = _read(path)

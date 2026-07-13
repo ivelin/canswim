@@ -64,6 +64,86 @@ def first_session_of_iso_week(d: DateLike) -> pd.Timestamp:
     return pd.Timestamp(sessions[0]).normalize()
 
 
+def first_session_of_month(year: int, month: int) -> pd.Timestamp:
+    """First NYSE session in the given calendar month."""
+    start = pd.Timestamp(year=year, month=month, day=1).normalize()
+    # Search up to ~10 calendar days into the month (covers long weekends)
+    end = start + pd.Timedelta(days=14)
+    sessions = nyse_sessions(start, end)
+    if len(sessions) == 0:
+        raise ValueError(f"No NYSE session found in {year}-{month:02d}")
+    return pd.Timestamp(sessions[0]).normalize()
+
+
+def monthly_catchup_origin(year: int, month: int) -> pd.Timestamp:
+    """Default catch-up origin for a calendar month.
+
+    Uses the **first market day of the month**, then snaps to that day's
+    **market-week start** so we keep at most one forecast origin per ISO week
+    (aligned with live / single-start policy).
+    """
+    first = first_session_of_month(year, month)
+    return first_session_of_iso_week(first)
+
+
+def list_monthly_catchup_origins(
+    *,
+    asof: Optional[DateLike] = None,
+    months: int = 12,
+    latest_close: Optional[DateLike] = None,
+) -> list[str]:
+    """Monthly catch-up origins + live default (ISO week unique).
+
+    For each of the last ``months`` calendar months (including the current
+    month when its first-week start is still before live), add the monthly
+    origin. Always append the **live** week start last.
+
+    Dedupes by ISO week (one origin per week). Sorted ascending (oldest first).
+    Returns ISO date strings YYYY-MM-DD.
+    """
+    if months < 1:
+        months = 1
+    if months > 36:
+        months = 36  # hard cap — avoid accidental huge jobs
+
+    today = _ts(asof if asof is not None else pd.Timestamp.now())
+    live = default_live_forecast_start(asof=today, latest_close=latest_close)
+    calendar_live = default_live_forecast_start(asof=today, latest_close=None)
+    cap = live if live >= calendar_live else calendar_live
+
+    # Walk months: current month, previous, …
+    y, m = int(today.year), int(today.month)
+    candidates: list[pd.Timestamp] = []
+    for _ in range(months):
+        try:
+            origin = monthly_catchup_origin(y, m)
+            # Historical only; live origin is appended once below
+            if origin < live and origin <= cap:
+                candidates.append(origin)
+        except ValueError:
+            pass
+        # previous month
+        m -= 1
+        if m < 1:
+            m = 12
+            y -= 1
+
+    candidates.append(live)
+
+    # Dedupe by ISO week — keep earliest origin in that week (stable monthly)
+    by_week: dict[tuple[int, int], pd.Timestamp] = {}
+    for o in sorted(candidates):
+        key = (int(o.isocalendar()[0]), int(o.isocalendar()[1]))
+        if key not in by_week:
+            by_week[key] = o
+        # Prefer live if same week as a monthly (live is "newest" intent)
+        if o == live:
+            by_week[key] = o
+
+    ordered = sorted(by_week.values())
+    return [o.strftime("%Y-%m-%d") for o in ordered]
+
+
 def last_session_of_iso_week(d: DateLike) -> pd.Timestamp:
     """Last NYSE session in the ISO week containing ``d``."""
     day = _ts(d)

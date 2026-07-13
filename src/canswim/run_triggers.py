@@ -26,12 +26,13 @@ from typing import Any, Optional, Sequence, Union
 import pandas as pd
 from loguru import logger
 
-from canswim.calendar_weeks import resolve_forecast_start
+from canswim.calendar_weeks import list_monthly_catchup_origins, resolve_forecast_start
 from canswim.eligibility import is_valid_ticker_symbol
 from canswim.hfhub import _env_bool
 
 # Soft cap so accidental pastes do not launch huge jobs
 DEFAULT_MAX_TICKERS = 50
+DEFAULT_CATCHUP_MONTHS = 12
 
 # --- Consumer-facing copy (CLI help, GUI, MCP). Operator detail → docs. --------
 
@@ -41,11 +42,10 @@ TICKERS_HELP = (
 )
 
 FORECAST_START_HELP = (
-    "Optional start date (YYYY-MM-DD). Leave blank to use the next available "
-    "market-week start after the latest completed trading week. "
-    "Past dates are moved to the start of that market week "
-    "(if Monday is a holiday, the next open day that week is used). "
-    "Future dates are not allowed."
+    "Optional start date (YYYY-MM-DD). Leave blank for **catch-up**: "
+    "monthly origins for the past ~12 months (first market week of each month) "
+    "plus the live week start—skipping starts already on file. "
+    "A past date snaps to that market week’s first session; future dates are not allowed."
 )
 
 # Kept for docs/CLI epilog only — not primary GUI body copy
@@ -64,11 +64,20 @@ GATHER_BUTTON = "Update market data"
 FORECAST_SECTION_TITLE = "Run a forecast"
 FORECAST_SECTION_HELP = (
     "Create forecasts for the symbols you list. "
+    "Leave start date blank to **catch up** ~12 monthly backtests + the live forecast. "
     "Needs complete local market history—if anything is missing, "
-    "update market data first, then try again."
+    "update market data first (or use **Refresh symbols**)."
 )
 FORECAST_BUTTON = "Run forecast"
 PREVIEW_START_BUTTON = "Check start date"
+
+REFRESH_SYMBOLS_SECTION_TITLE = "Refresh symbols (recommended)"
+REFRESH_SYMBOLS_SECTION_HELP = (
+    "All-in-one for new or stale names: **update market data**, then "
+    "**catch-up forecasts** (monthly origins for the past year + live). "
+    "Skips work already done. Best default for a portfolio list."
+)
+REFRESH_SYMBOLS_BUTTON = "Refresh symbols"
 
 REFRESH_SEARCH_SECTION_TITLE = "Search database (Charts / Scans)"
 REFRESH_SEARCH_SECTION_HELP = (
@@ -110,6 +119,14 @@ RUNS_OPT_IN_HELP = (
 
 # Default min rows in a saved forecast partition (= typical pred_horizon)
 DEFAULT_MIN_FORECAST_ROWS = 42
+
+
+def default_catchup_months() -> int:
+    try:
+        n = int(os.getenv("CATCHUP_MONTHS", str(DEFAULT_CATCHUP_MONTHS)))
+    except (TypeError, ValueError):
+        n = DEFAULT_CATCHUP_MONTHS
+    return max(1, min(36, n))
 
 
 def _cap_start_to_local_prices(
@@ -592,10 +609,16 @@ def forecast_for_tickers(
     max_tickers: int = DEFAULT_MAX_TICKERS,
     force_allow: bool = False,
     dry_run: bool = False,
+    catchup_months: Optional[int] = None,
 ) -> dict[str, Any]:
-    """Run forecast for an explicit ticker list with week-aligned start.
+    """Run forecast for an explicit ticker list.
 
-    ``dry_run=True`` only resolves start + validates tickers (no torch).
+    * **Blank start date** → **catch-up mode**: monthly origins for the past
+      ``catchup_months`` (default 12 / ``CATCHUP_MONTHS``) plus the live week
+      start; skips symbol+start pairs already on file. One origin per ISO week.
+    * **Explicit start date** → single week-aligned origin (existing behavior).
+
+    ``dry_run=True`` only resolves origins + which partitions exist (no torch).
     """
     if not force_allow:
         blocked = require_runs_allowed()
@@ -613,70 +636,108 @@ def forecast_for_tickers(
         }
 
     tickers: list[str] = parsed["tickers"]
-    start_info = resolve_start_for_run(forecast_start_date)
-    if not start_info.get("ok"):
-        return {
-            "ok": False,
-            "error": start_info.get("error") or "Could not resolve forecast start",
-            "tickers": tickers,
-            "rejected": parsed.get("rejected", []),
-            "resolved_start": start_info,
-        }
-
-    resolved = start_info["start"]
     messages: list[str] = list(parsed.get("messages") or [])
-    messages.append(f"Using start date {resolved}.")
+    blank = forecast_start_date is None or not str(forecast_start_date).strip()
+    months = (
+        catchup_months
+        if catchup_months is not None
+        else default_catchup_months()
+    )
 
-    # Cap start to what local prices can support (live week default can land
-    # after the latest close; the model refuses pure-future origins).
-    try:
-        adj, adj_note = _cap_start_to_local_prices(tickers, resolved)
-        if adj != resolved:
-            messages.append(adj_note or f"Adjusted start to {adj} for local prices.")
-            resolved = adj
-            start_info = dict(start_info)
-            start_info["start"] = resolved
-            start_info["reason"] = (start_info.get("reason") or "") + "+capped_to_prices"
-    except Exception as e:
-        logger.debug(f"start cap skipped: {e}")
+    # ---- Resolve origin list ----
+    if blank:
+        mode = "catchup"
+        lc_ts = _latest_close_from_local()
+        lc = lc_ts.strftime("%Y-%m-%d") if lc_ts is not None else None
+        origins = list_monthly_catchup_origins(months=months, latest_close=lc)
+        start_info = resolve_start_for_run(None)
+        start_info = dict(start_info)
+        start_info["mode"] = "catchup"
+        start_info["catchup_months"] = months
+        start_info["origins"] = list(origins)
+        messages.append(
+            f"Catch-up mode: {len(origins)} monthly/live origins "
+            f"(~{months} months + live)."
+        )
+    else:
+        mode = "single"
+        start_info = resolve_start_for_run(forecast_start_date)
+        if not start_info.get("ok"):
+            return {
+                "ok": False,
+                "error": start_info.get("error") or "Could not resolve forecast start",
+                "tickers": tickers,
+                "rejected": parsed.get("rejected", []),
+                "resolved_start": start_info,
+                "mode": mode,
+            }
+        origins = [start_info["start"]]
+        start_info = dict(start_info)
+        start_info["mode"] = "single"
+        start_info["origins"] = list(origins)
+        messages.append(f"Single start date {origins[0]}.")
+
+    # Cap each origin to what local prices can support
+    capped: list[str] = []
+    for o in origins:
+        try:
+            adj, adj_note = _cap_start_to_local_prices(tickers, o)
+            if adj not in capped:
+                capped.append(adj)
+            if adj != o and adj_note:
+                messages.append(adj_note)
+        except Exception as e:
+            logger.debug(f"start cap skipped for {o}: {e}")
+            if o not in capped:
+                capped.append(o)
+    origins = capped
+    start_info["origins"] = list(origins)
+    if origins:
+        start_info["start"] = origins[-1]  # live / newest for display
+
+    # Per-origin already-on-file plan
+    by_start: dict[str, dict[str, Any]] = {}
+    any_to_run = False
+    all_already: set[str] = set()
+    for o in origins:
+        already = set(list_symbols_with_saved_forecast(tickers, o))
+        to_run = [t for t in tickers if t not in already]
+        by_start[o] = {
+            "already": sorted(already),
+            "to_run": to_run,
+            "forecasted": [],
+        }
+        all_already |= already
+        if to_run:
+            any_to_run = True
 
     if dry_run:
-        already = list_symbols_with_saved_forecast(tickers, resolved)
+        need = sum(len(v["to_run"]) for v in by_start.values())
         return {
             "ok": True,
             "dry_run": True,
+            "mode": mode,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "resolved_start": start_info,
+            "origins": origins,
+            "by_start": by_start,
             "forecasted": [],
             "skipped": [],
-            "already_have_forecast": sorted(already),
+            "already_have_forecast": sorted(all_already),
             "messages": [
                 "Check only: no forecast model was run.",
-                (
-                    ALREADY_FORECAST_MSG.format(
-                        symbols=", ".join(sorted(already)), start=resolved
-                    )
-                    if already
-                    else "No existing forecast found for this start; a full run would load the model."
-                ),
-            ],
+                f"{len(origins)} origin(s); {need} symbol×start job(s) would run.",
+            ]
+            + messages,
+            "catchup_months": months if mode == "catchup" else None,
         }
 
-    # --- Skip expensive model work when partitions already exist ---
-    already = list_symbols_with_saved_forecast(tickers, resolved)
-    to_run = [t for t in tickers if t not in already]
-    if already:
-        messages.append(
-            ALREADY_FORECAST_MSG.format(
-                symbols=", ".join(sorted(already)), start=resolved
-            )
-        )
-    if not to_run:
+    if not any_to_run:
         try:
             from canswim.db import get_db_path, sync_forecasts_to_search_db
 
-            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(already))
+            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(tickers))
             if sync_fc.get("ok") and sync_fc.get("forecast_rows"):
                 messages.append(
                     f"Charts updated with {sync_fc.get('forecast_rows')} forecast rows."
@@ -685,48 +746,53 @@ def forecast_for_tickers(
             messages.append(f"Charts forecast sync note: {e}")
         return {
             "ok": True,
+            "mode": mode,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "resolved_start": start_info,
+            "origins": origins,
+            "by_start": by_start,
             "forecasted": [],
             "skipped": [],
-            "already_have_forecast": sorted(already),
-            "messages": messages,
+            "already_have_forecast": sorted(all_already),
+            "messages": messages
+            + ["All catch-up / requested starts already on file."],
             "already_saved": True,
             "model_loaded": False,
+            "catchup_months": months if mode == "catchup" else None,
         }
 
+    # Write symbol list for forecaster (union of all to_run)
+    need_any = sorted(
+        {t for v in by_start.values() for t in v["to_run"]}
+    )
     messages.append(
-        f"Will forecast (not on file yet): {', '.join(to_run)}"
+        f"Will forecast {len(need_any)} symbol(s) across "
+        f"{sum(1 for v in by_start.values() if v['to_run'])} start(s)."
     )
 
-    # Write a temporary symbol list and point stock_tickers_list at it
     data_dir = os.getenv("data_dir", "data")
     third = os.getenv("data-3rd-party", "data-3rd-party")
     dest_dir = Path(data_dir) / third
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_list = dest_dir / "run_tickers.csv"
-    pd.DataFrame({"Symbol": to_run}).to_csv(dest_list, index=False)
 
     prev_list = os.environ.get("stock_tickers_list")
-    os.environ["stock_tickers_list"] = "run_tickers.csv"
     prev_n = os.environ.get("n_stocks")
-    os.environ["n_stocks"] = str(max(len(to_run), 1))
+    os.environ["stock_tickers_list"] = "run_tickers.csv"
 
-    forecasted: list[str] = []
-    skipped: list[str] = []
+    forecasted_all: list[str] = []
+    skipped_all: list[str] = []
+    model_loaded = False
+    last_fail_reason: Optional[str] = None
 
     def _incomplete_result(
         *,
         forecasted_syms: list[str],
         incomplete_syms: list[str],
-        extra_error: Optional[str] = None,
-        already_saved: bool = False,
         reason: str = "prices",
     ) -> dict[str, Any]:
-        if extra_error:
-            err = extra_error
-        elif reason == "covariates":
+        if reason == "covariates":
             err = COVARIATE_FAIL_MSG.format(
                 symbols=", ".join(incomplete_syms) or "requested symbols"
             )
@@ -737,19 +803,21 @@ def forecast_for_tickers(
         return {
             "ok": False,
             "error": err,
+            "mode": mode,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "resolved_start": start_info,
+            "origins": origins,
+            "by_start": by_start,
             "forecasted": forecasted_syms,
             "skipped": incomplete_syms,
-            "already_have_forecast": sorted(already),
+            "already_have_forecast": sorted(all_already),
             "messages": messages,
-            "already_saved": already_saved,
-            # True only when price history is the likely gap
             "need_gather": reason == "prices",
             "need_covariates": reason == "covariates",
-            "model_loaded": True,
+            "model_loaded": model_loaded,
             "fail_reason": reason,
+            "catchup_months": months if mode == "catchup" else None,
         }
 
     try:
@@ -759,85 +827,90 @@ def forecast_for_tickers(
         cf.all_already_saved = False
         cf.download_model()
         cf.download_data()
-        fsd = pd.Timestamp(resolved)
-        any_saved = False
-        any_group = False
-        for _pos in cf.prep_next_stock_group(forecast_start_date=fsd):
-            any_group = True
-            forecasts = cf.get_forecast(forecast_start_date=fsd)
-            if forecasts:
-                clean = {}
-                for t, ts in forecasts.items():
-                    try:
-                        qdf = (
-                            ts.quantile_df(0.5)
-                            if hasattr(ts, "quantile_df")
-                            else ts.pd_dataframe()
-                        )
-                        if qdf.isna().all().all():
-                            skipped.append(t)
-                            continue
-                    except Exception:
-                        pass
-                    clean[t] = ts
-                if clean:
-                    cf.save_forecast(clean, asof_start=fsd)
-                    forecasted.extend(clean.keys())
-                    any_saved = True
+        model_loaded = True
+
+        for o in origins:
+            plan = by_start[o]
+            to_run = list(plan["to_run"])
+            if not to_run:
+                continue
+            pd.DataFrame({"Symbol": to_run}).to_csv(dest_list, index=False)
+            os.environ["n_stocks"] = str(max(len(to_run), 1))
+            # Forecaster caches symbol list from env at load — set stocks on model if present
+            try:
+                if hasattr(cf, "canswim_model") and cf.canswim_model is not None:
+                    pass  # prep_next_stock_group reloads from stock_tickers_list
+            except Exception:
+                pass
+
+            fsd = pd.Timestamp(o)
+            any_saved = False
+            any_group = False
+            forecasted_o: list[str] = []
+            cf.all_already_saved = False
+            for _pos in cf.prep_next_stock_group(forecast_start_date=fsd):
+                any_group = True
+                forecasts = cf.get_forecast(forecast_start_date=fsd)
+                if forecasts:
+                    clean = {}
+                    for t, ts in forecasts.items():
+                        try:
+                            qdf = (
+                                ts.quantile_df(0.5)
+                                if hasattr(ts, "quantile_df")
+                                else ts.pd_dataframe()
+                            )
+                            if qdf.isna().all().all():
+                                skipped_all.append(t)
+                                continue
+                        except Exception:
+                            pass
+                        clean[t] = ts
+                    if clean:
+                        cf.save_forecast(clean, asof_start=fsd)
+                        forecasted_o.extend(clean.keys())
+                        any_saved = True
+            plan["forecasted"] = forecasted_o
+            forecasted_all.extend(forecasted_o)
+            if not any_group and not getattr(cf, "all_already_saved", False):
+                last_fail_reason = "covariates"
+                messages.append(
+                    f"Start {o}: no eligible symbols in model batch "
+                    f"(tried {', '.join(to_run)})."
+                )
+            elif not any_saved and not getattr(cf, "all_already_saved", False):
+                last_fail_reason = "covariates"
+                messages.append(f"Start {o}: no forecasts saved.")
             else:
                 messages.append(
-                    "No symbols had enough complete history in this batch."
+                    f"Start {o}: new={len(forecasted_o)}, "
+                    f"already={len(plan['already'])}."
                 )
-
-        if not any_group:
-            if getattr(cf, "all_already_saved", False):
-                # Race: files appeared after our pre-check
-                messages.append("Forecasts for this start date already exist.")
-                return {
-                    "ok": True,
-                    "tickers": tickers,
-                    "rejected": parsed.get("rejected", []),
-                    "resolved_start": start_info,
-                    "forecasted": [],
-                    "skipped": [],
-                    "already_have_forecast": sorted(set(already) | set(to_run)),
-                    "messages": messages,
-                    "already_saved": True,
-                    "model_loaded": True,
-                }
-            return _incomplete_result(
-                forecasted_syms=[],
-                incomplete_syms=list(to_run),
-                reason="covariates",
-            )
-        if not any_saved:
-            # Prices often present; model dropped symbols during covariate align
-            return _incomplete_result(
-                forecasted_syms=[],
-                incomplete_syms=[t for t in to_run if t not in forecasted],
-                reason="covariates",
-            )
 
         try:
             cf.upload_data()
         except Exception as e:
             messages.append(f"Cloud upload skipped: {e}")
 
-        # Incomplete only among symbols we tried to run (not ones already on file)
-        incomplete = [t for t in to_run if t not in set(forecasted)]
-        if incomplete:
+        # Success if every to_run for every start got a forecast or was already saved
+        incomplete: list[str] = []
+        for o, plan in by_start.items():
+            for t in plan["to_run"]:
+                if t not in set(plan["forecasted"]):
+                    incomplete.append(f"{t}@{o}")
+
+        if incomplete and not forecasted_all:
             return _incomplete_result(
-                forecasted_syms=list(forecasted),
+                forecasted_syms=[],
                 incomplete_syms=incomplete,
+                reason=last_fail_reason or "covariates",
             )
 
-        # Push new forecast parquet into DuckDB so Charts/Scans see lines
+        # Push parquet → DuckDB (+ backtest_error refresh)
         try:
             from canswim.db import get_db_path, sync_forecasts_to_search_db
 
-            sync_fc = sync_forecasts_to_search_db(
-                get_db_path(), list(set(forecasted) | set(already))
-            )
+            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(tickers))
             if sync_fc.get("ok"):
                 messages.append(
                     f"Charts updated with {sync_fc.get('forecast_rows', 0)} forecast rows."
@@ -845,27 +918,56 @@ def forecast_for_tickers(
         except Exception as e:
             messages.append(f"Charts forecast sync note: {e}")
 
-        return {
-            "ok": True,
+        ok = len(incomplete) == 0
+        out: dict[str, Any] = {
+            "ok": ok,
+            "mode": mode,
             "tickers": tickers,
             "rejected": parsed.get("rejected", []),
             "resolved_start": start_info,
-            "forecasted": forecasted,
-            "skipped": [],
-            "already_have_forecast": sorted(already),
+            "origins": origins,
+            "by_start": by_start,
+            "forecasted": sorted(set(forecasted_all)),
+            "skipped": sorted(set(skipped_all)),
+            "already_have_forecast": sorted(all_already),
             "messages": messages,
             "model_loaded": True,
+            "catchup_months": months if mode == "catchup" else None,
+            "incomplete_starts": incomplete,
         }
+        if not ok:
+            # Single-origin runs hard-fail if any requested symbol is missing
+            # (legacy contract). Catch-up may succeed partially for UX.
+            if mode == "single":
+                return _incomplete_result(
+                    forecasted_syms=list(set(forecasted_all)),
+                    incomplete_syms=[
+                        x.split("@")[0] for x in incomplete
+                    ],
+                    reason=last_fail_reason or "prices",
+                )
+            out["error"] = (
+                f"Partial forecast catch-up: {len(incomplete)} symbol×start "
+                f"still missing. See incomplete_starts / messages."
+            )
+            out["partial"] = True
+            if forecasted_all:
+                out["ok"] = True
+        return out
     except Exception as e:
         logger.exception("forecast_for_tickers failed")
         return {
             "ok": False,
             "error": str(e),
+            "mode": mode,
             "tickers": tickers,
             "resolved_start": start_info,
-            "forecasted": forecasted,
-            "skipped": skipped,
+            "origins": origins,
+            "by_start": by_start,
+            "forecasted": forecasted_all,
+            "skipped": skipped_all,
             "messages": messages,
+            "model_loaded": model_loaded,
         }
     finally:
         if prev_list is None:
@@ -876,3 +978,94 @@ def forecast_for_tickers(
             os.environ.pop("n_stocks", None)
         else:
             os.environ["n_stocks"] = prev_n
+
+
+def refresh_symbols(
+    tickers_text: Union[str, Sequence[str], None],
+    *,
+    include_covariates: bool = True,
+    max_tickers: int = DEFAULT_MAX_TICKERS,
+    force_allow: bool = False,
+    catchup_months: Optional[int] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """All-in-one: gather market data, then catch-up forecasts for ready symbols.
+
+    Primary path for “refresh my portfolio / new symbol” (GUI, MCP, CLI).
+    """
+    if not force_allow:
+        blocked = require_runs_allowed()
+        if blocked is not None:
+            return blocked
+
+    messages: list[str] = ["Refresh symbols: gather + catch-up forecast."]
+    gather = gather_for_tickers(
+        tickers_text,
+        include_covariates=include_covariates,
+        max_tickers=max_tickers,
+        force_allow=True,  # already gated above
+    )
+    ready = list(gather.get("ready") or [])
+    incomplete = list(gather.get("incomplete") or [])
+    # If gather reports ready empty but ok, use full ticker list
+    if not ready and gather.get("ok") and gather.get("tickers"):
+        ready = list(gather["tickers"])
+
+    out: dict[str, Any] = {
+        "ok": False,
+        "mode": "refresh",
+        "gather": gather,
+        "forecast": None,
+        "ready": ready,
+        "incomplete": incomplete,
+        "messages": messages,
+        "tickers": gather.get("tickers") or [],
+    }
+
+    if not ready:
+        out["error"] = (
+            gather.get("error")
+            or "No symbols ready for forecast after gather "
+            "(often short history / IPOs)."
+        )
+        out["ok"] = False
+        out["need_gather"] = True
+        return out
+
+    if dry_run:
+        fc = forecast_for_tickers(
+            ready,
+            forecast_start_date=None,
+            force_allow=True,
+            dry_run=True,
+            catchup_months=catchup_months,
+            max_tickers=max_tickers,
+        )
+        out["forecast"] = fc
+        out["ok"] = True
+        out["dry_run"] = True
+        out["messages"].append(
+            f"Would catch-up forecast {len(ready)} ready symbol(s)."
+        )
+        return out
+
+    fc = forecast_for_tickers(
+        ready,
+        forecast_start_date=None,
+        force_allow=True,
+        dry_run=False,
+        catchup_months=catchup_months,
+        max_tickers=max_tickers,
+    )
+    out["forecast"] = fc
+    out["ok"] = bool(fc.get("ok")) or bool(fc.get("partial") and fc.get("forecasted"))
+    if incomplete:
+        out["partial"] = True
+        out["messages"].append(
+            f"Gather left {len(incomplete)} symbol(s) not forecast-ready."
+        )
+    if not out["ok"]:
+        out["error"] = fc.get("error") or gather.get("error") or "Refresh incomplete."
+    else:
+        out["messages"].append("Refresh finished for forecast-ready symbols.")
+    return out
