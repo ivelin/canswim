@@ -387,41 +387,71 @@ def looks_like_remote_failure(
     extra_messages: Sequence[str] = (),
 ) -> bool:
     """Heuristic: is this likely a remote API / network issue vs local data policy?"""
-    text = _text_blob(err, extra_messages)
-    if not text.strip():
-        return False
-    # Local policy failures — not remote
+    # Primary error wins: history / IPO policy must not be overridden by soft
+    # notes like "FMP_API_KEY not set" that we always append when key is absent.
+    primary = _text_blob(err)
     local_markers = (
         "not enough trading history",
         "short history",
-        "incomplete",
-        "ipo",
+        "trading history yet",
+        "recent ipos",
         "invalid tickers",
         "no symbols",
         "mcp_allow_runs",
         "runs are disabled",
         "dimensionality",
         "past_covariates",
+        "feature mismatch",
         "already on file",
+        "week-aligned",
+        "could not resolve",
     )
-    if any(m in text for m in local_markers) and not any(
-        m in text
-        for m in ("http", "api key", "fmp", "connection", "timeout", "401", "403", "429")
-    ):
+    if primary.strip() and any(m in primary for m in local_markers):
+        # Still remote if primary itself is clearly an API failure
+        if not any(
+            m in primary
+            for m in (
+                "http",
+                "unauthorized",
+                "connection",
+                "timeout",
+                "rate limit",
+                "invalid api",
+                "subscription",
+                "premium",
+            )
+        ):
+            return False
+
+    text = _text_blob(err, extra_messages)
+    if not text.strip():
         return False
+
     issue = classify_remote_error(err, extra_messages=extra_messages)
-    return issue.kind != KIND_UNKNOWN or any(
+    if issue.kind in (
+        KIND_NETWORK,
+        KIND_TIMEOUT,
+        KIND_AUTH,
+        KIND_SUBSCRIPTION,
+        KIND_RATE_LIMIT,
+        KIND_MISSING_KEY,
+        KIND_HTTP,
+    ):
+        # Missing-key soft notes alone should not reclassify a local failure
+        if issue.kind == KIND_MISSING_KEY and primary.strip():
+            if any(m in primary for m in local_markers):
+                return False
+        return True
+    return any(
         m in text
         for m in (
-            "fmp",
-            "yfinance",
-            "api key",
-            "connection",
-            "timeout",
+            "connection refused",
+            "name resolution",
             "rate limit",
             "unauthorized",
             "premium",
-            "subscription",
+            "subscription expired",
+            "invalid api key",
         )
     )
 

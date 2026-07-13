@@ -644,9 +644,13 @@ def gather_for_tickers(
             "messages": messages,
             "need_gather": True,
         }
-        return enrich_result_with_remote_issue(
-            out_fail, e, extra_messages=[str(m) for m in messages]
-        )
+        # Classify from the exception first; soft FMP notes must not hide
+        # local short-history / IPO readiness failures.
+        if looks_like_remote_failure(e):
+            return enrich_result_with_remote_issue(
+                out_fail, e, extra_messages=[str(m) for m in messages]
+            )
+        return out_fail
 
 
 def _ensure_symbols_on_list(tickers: Sequence[str]) -> Path:
