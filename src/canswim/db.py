@@ -680,6 +680,57 @@ def list_tickers(db_path: str) -> list[str]:
     return stock_list
 
 
+def ensure_symbols_in_search_db(
+    db_path: str,
+    symbols: Sequence[str],
+) -> dict[str, Any]:
+    """Ensure symbols appear in ``stock_tickers`` (Charts dropdown) without prices.
+
+    Used after forecast/refresh so new names show up without reloading the page.
+    Does not invent close prices — only the symbol list.
+    """
+    syms = sorted({str(s).strip().upper() for s in symbols if s and str(s).strip()})
+    if not syms:
+        return {"ok": True, "added": [], "symbols": []}
+    if not Path(db_path).is_file():
+        return {
+            "ok": False,
+            "error": f"No search DB at {db_path}",
+            "added": [],
+            "symbols": syms,
+        }
+    added: list[str] = []
+    try:
+        with connect_readwrite(db_path) as db_con:
+            try:
+                cols = [
+                    r[0] for r in db_con.execute("DESCRIBE stock_tickers").fetchall()
+                ]
+            except Exception:
+                db_con.execute(
+                    "CREATE TABLE stock_tickers AS SELECT * FROM (VALUES ('__none__')) t(symbol) WHERE 1=0"
+                )
+                cols = ["symbol"]
+            sym_col = "Symbol" if "Symbol" in cols else "symbol"
+            existing = {
+                str(r[0]).upper()
+                for r in db_con.execute(
+                    f'SELECT "{sym_col}" FROM stock_tickers WHERE "{sym_col}" IS NOT NULL'
+                ).fetchall()
+                if r[0] is not None
+            }
+            for s in syms:
+                if s not in existing:
+                    db_con.execute(
+                        f'INSERT INTO stock_tickers ("{sym_col}") VALUES (?)', [s]
+                    )
+                    added.append(s)
+        return {"ok": True, "added": added, "symbols": syms}
+    except Exception as e:
+        logger.warning(f"ensure_symbols_in_search_db: {e}")
+        return {"ok": False, "error": str(e), "added": added, "symbols": syms}
+
+
 def sync_gathered_symbols(
     db_path: str,
     symbols: Sequence[str],

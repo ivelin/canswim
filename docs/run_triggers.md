@@ -9,7 +9,7 @@ User-facing actions for a **short list of symbols**. Implementation: `canswim.ru
 
 | Step | What it does | CLI | GUI | MCP |
 |------|----------------|-----|-----|-----|
-| **Refresh symbols** | Gather + catch-up forecasts (recommended default) | `forecast --tickers …` after gather, or MCP `refresh_tickers` | **Refresh symbols** | `refresh_tickers` |
+| **Refresh symbols** | Gather + catch-up forecasts (**default** GUI path) | MCP `refresh_tickers` (or gather then forecast) | **Refresh symbols** | `refresh_tickers` |
 | **Get market data** | Update local prices **and** model fundamentals for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
 | **Run a forecast** | Forecast those symbols (blank start = monthly catch-up + live) | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
 | **Check start date** | Show which forecast start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |

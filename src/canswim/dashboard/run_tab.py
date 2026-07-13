@@ -304,28 +304,33 @@ def _forecast_summary(result: dict) -> str:
 
     forecasted = _norm_syms(result.get("forecasted") or [])
     already = _norm_syms(result.get("already_have_forecast") or [])
+    incomplete_starts = result.get("incomplete_starts") or []
+    n_miss = len(incomplete_starts)
     if mode == "catchup":
-        lines = [
-            f"✅ **Catch-up forecast complete** — "
-            f"**{n_origins}** monthly/live origin(s)."
-        ]
+        if result.get("partial") or n_miss:
+            n_ok = max(n_origins - n_miss, 0)
+            lines = [
+                f"⚠️ **Catch-up mostly done** — **{n_ok} of {n_origins}** "
+                f"monthly/live origins OK"
+                + (f" ({n_miss} still missing)." if n_miss else ".")
+            ]
+        else:
+            lines = [
+                f"✅ **Catch-up complete** — all **{n_origins}** monthly/live origins OK."
+            ]
     else:
         lines = [f"✅ **Forecast complete** (start `{start}`)."]
-    if result.get("partial"):
-        lines[0] = "⚠️ " + lines[0].replace("✅ ", "")
-        lines.append("_Some symbol×start pairs still missing — see Advanced details._")
+        if result.get("partial"):
+            lines[0] = "⚠️ " + lines[0].replace("✅ ", "")
     if forecasted:
-        lines.append(
-            f"**New forecasts ({len(forecasted)} symbols):** {_fmt_syms(forecasted)}"
-        )
-    if already and mode == "single":
-        lines.append(
-            f"**Already on file, skipped ({len(already)}):** {_fmt_syms(already)}"
-        )
-    lines.append(
-        "**Next:** open **Charts** (reward/risk + history) or **Scans** "
-        "to rank by RR and backtest."
-    )
+        lines.append(f"**Symbols with new forecast data:** {_fmt_syms(forecasted)}")
+    elif not n_miss:
+        lines.append("No new files needed — everything was already on disk.")
+    if n_miss and n_miss <= 5:
+        lines.append(f"**Still missing:** {', '.join(incomplete_starts)}")
+    elif n_miss:
+        lines.append(f"**Still missing:** {n_miss} symbol×start pairs (see Advanced).")
+    lines.append("**Next:** open **Charts** for that symbol, or **Scans** to rank.")
     return "\n\n".join(lines)
 
 
@@ -423,128 +428,108 @@ class RunTab:
         self.charts_ticker_dropdown = charts_ticker_dropdown
         self.db_status_banner = db_status_banner
 
-        gr.Markdown(
-            """
-## Update data & run forecasts
-**Recommended:** **Refresh symbols** (gather + monthly catch-up forecasts + live).  
-Or use the separate steps below for finer control.
-            """
-        )
-
-        # ---- Primary: Refresh symbols ----
+        # ---- Primary path only (everything else under More options) ----
         with gr.Group():
             gr.Markdown(
-                f"### {REFRESH_SYMBOLS_SECTION_TITLE}\n{REFRESH_SYMBOLS_SECTION_HELP}"
+                f"### {REFRESH_SYMBOLS_SECTION_TITLE}\n"
+                f"{REFRESH_SYMBOLS_SECTION_HELP}"
             )
             self.refreshTickers = gr.Textbox(
-                label="Symbols to refresh",
-                lines=3,
-                placeholder="AAPL, MSFT, NVDA",
+                label="Symbols",
+                lines=2,
+                placeholder="LLY, AAPL, MSFT",
                 info=TICKERS_HELP,
             )
             self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
             self.refreshStatus = gr.Markdown(
-                value=(
-                    "_Enter symbols, then click **Refresh symbols**. "
-                    "Blank forecast start uses ~12 monthly backtests + live._"
-                )
+                value="_Enter symbols → **Refresh symbols**. That is usually all you need._"
             )
-            with gr.Accordion("Advanced details", open=False):
+            with gr.Accordion("Technical log", open=False):
                 self.refreshDetails = gr.Code(
-                    label="Technical log",
+                    label="JSON log",
                     language="json",
-                    lines=10,
+                    lines=6,
                     interactive=False,
                     value="",
                 )
 
-        gr.Markdown("---")
-
-        # ---- Gather panel ----
-        with gr.Group():
-            gr.Markdown(f"### {GATHER_SECTION_TITLE}\n{GATHER_SECTION_HELP}")
-            self.gatherTickers = gr.Textbox(
-                label="Symbols to update",
-                lines=3,
-                placeholder="AAPL, MSFT",
-                info=TICKERS_HELP,
-            )
-            self.gatherBtn = gr.Button(GATHER_BUTTON, variant="primary")
-            self.gatherStatus = gr.Markdown(
-                value="_Enter symbols, then click Update market data._"
-            )
-            with gr.Accordion("Advanced details", open=False):
-                self.gatherDetails = gr.Code(
-                    label="Technical log",
-                    language="json",
-                    lines=8,
-                    interactive=False,
-                    value="",
+        with gr.Accordion("More options (rarely needed)", open=False):
+            with gr.Group():
+                gr.Markdown(
+                    f"#### {GATHER_SECTION_TITLE}\n{GATHER_SECTION_HELP}"
                 )
-
-        gr.Markdown("---")
-
-        # ---- Forecast panel ----
-        with gr.Group():
-            gr.Markdown(f"### {FORECAST_SECTION_TITLE}\n{FORECAST_SECTION_HELP}")
-            self.forecastTickers = gr.Textbox(
-                label="Symbols to forecast",
-                lines=3,
-                placeholder="AAPL, MSFT",
-                info=TICKERS_HELP,
-            )
-            with gr.Row():
-                self.forecastDate = gr.Textbox(
-                    label="Start date (optional)",
-                    value="",
-                    placeholder="YYYY-MM-DD — leave blank for the default",
-                    info=FORECAST_START_HELP,
+                self.gatherTickers = gr.Textbox(
+                    label="Symbols",
+                    lines=2,
+                    placeholder="AAPL, MSFT",
                 )
-                self.resolveBtn = gr.Button(PREVIEW_START_BUTTON, scale=0)
-            self.forecastBtn = gr.Button(FORECAST_BUTTON, variant="primary")
-            self.forecastStatus = gr.Markdown(
-                value="_Enter symbols, optionally check the start date, then run a forecast._"
-            )
-            with gr.Accordion("Advanced details", open=False):
-                self.forecastDetails = gr.Code(
-                    label="Technical log",
-                    language="json",
-                    lines=8,
-                    interactive=False,
-                    value="",
-                )
-
-        gr.Markdown("---")
-
-        # ---- Search DB refresh (parquet → DuckDB) ----
-        with gr.Group():
-            gr.Markdown(
-                f"### {REFRESH_SEARCH_SECTION_TITLE}\n{REFRESH_SEARCH_SECTION_HELP}"
-            )
-            self.refreshDbBtn = gr.Button(REFRESH_SEARCH_BUTTON, variant="secondary")
-            initial_status = ""
-            if self.db_path:
-                try:
-                    initial_status = format_search_db_status_markdown(
-                        search_db_status(self.db_path)
+                self.gatherBtn = gr.Button(GATHER_BUTTON, variant="secondary")
+                self.gatherStatus = gr.Markdown(value="")
+                with gr.Accordion("Gather log", open=False):
+                    self.gatherDetails = gr.Code(
+                        language="json",
+                        lines=4,
+                        interactive=False,
+                        value="",
                     )
-                except Exception as e:
-                    logger.debug(f"initial search db status: {e}")
-                    initial_status = "_Search DB status unavailable._"
-            self.refreshDbStatus = gr.Markdown(value=initial_status)
-            with gr.Accordion("Advanced details", open=False):
-                self.refreshDbDetails = gr.Code(
-                    label="Technical log",
-                    language="json",
-                    lines=8,
-                    interactive=False,
-                    value="",
-                )
 
+            with gr.Group():
+                gr.Markdown(
+                    f"#### {FORECAST_SECTION_TITLE}\n{FORECAST_SECTION_HELP}"
+                )
+                self.forecastTickers = gr.Textbox(
+                    label="Symbols",
+                    lines=2,
+                    placeholder="LLY",
+                )
+                with gr.Row():
+                    self.forecastDate = gr.Textbox(
+                        label="Start date (optional)",
+                        value="",
+                        placeholder="Blank = monthly catch-up + live",
+                        info=FORECAST_START_HELP,
+                    )
+                    self.resolveBtn = gr.Button(PREVIEW_START_BUTTON, scale=0)
+                self.forecastBtn = gr.Button(FORECAST_BUTTON, variant="secondary")
+                self.forecastStatus = gr.Markdown(value="")
+                with gr.Accordion("Forecast log", open=False):
+                    self.forecastDetails = gr.Code(
+                        language="json",
+                        lines=4,
+                        interactive=False,
+                        value="",
+                    )
+
+            with gr.Group():
+                gr.Markdown(
+                    f"#### {REFRESH_SEARCH_SECTION_TITLE}\n"
+                    f"{REFRESH_SEARCH_SECTION_HELP}"
+                )
+                self.refreshDbBtn = gr.Button(
+                    REFRESH_SEARCH_BUTTON, variant="secondary"
+                )
+                initial_status = ""
+                if self.db_path:
+                    try:
+                        initial_status = format_search_db_status_markdown(
+                            search_db_status(self.db_path)
+                        )
+                    except Exception as e:
+                        logger.debug(f"initial search db status: {e}")
+                        initial_status = ""
+                self.refreshDbStatus = gr.Markdown(value=initial_status)
+                with gr.Accordion("Search DB log", open=False):
+                    self.refreshDbDetails = gr.Code(
+                        language="json",
+                        lines=4,
+                        interactive=False,
+                        value="",
+                    )
+
+        # ---- wire events ----
         refresh_outputs = [self.refreshStatus, self.refreshDetails]
         if self.charts_ticker_dropdown is not None:
             refresh_outputs.append(self.charts_ticker_dropdown)
-
         self.refreshBtn.click(
             fn=self.do_refresh_symbols,
             inputs=[self.refreshTickers],
@@ -554,7 +539,6 @@ Or use the separate steps below for finer control.
         gather_outputs = [self.gatherStatus, self.gatherDetails]
         if self.charts_ticker_dropdown is not None:
             gather_outputs.append(self.charts_ticker_dropdown)
-
         self.gatherBtn.click(
             fn=self.do_gather,
             inputs=[self.gatherTickers],
@@ -565,29 +549,44 @@ Or use the separate steps below for finer control.
             inputs=[self.forecastDate],
             outputs=[self.forecastStatus, self.forecastDetails],
         )
+        forecast_outputs = [self.forecastStatus, self.forecastDetails]
+        if self.charts_ticker_dropdown is not None:
+            forecast_outputs.append(self.charts_ticker_dropdown)
         self.forecastBtn.click(
             fn=self.do_forecast,
             inputs=[self.forecastTickers, self.forecastDate],
-            outputs=[self.forecastStatus, self.forecastDetails],
+            outputs=forecast_outputs,
         )
 
-        refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
+        db_refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
         if self.db_status_banner is not None:
-            refresh_outputs.append(self.db_status_banner)
+            db_refresh_outputs.append(self.db_status_banner)
         if self.charts_ticker_dropdown is not None:
-            refresh_outputs.append(self.charts_ticker_dropdown)
+            db_refresh_outputs.append(self.charts_ticker_dropdown)
         self.refreshDbBtn.click(
             fn=self.do_refresh_search_db,
             inputs=[],
-            outputs=refresh_outputs,
+            outputs=db_refresh_outputs,
         )
 
-    def _charts_dropdown_update(self):
+    def _charts_dropdown_update(self, prefer=None):
+        """Refresh Charts symbol list; prefer selecting the first preferred ticker."""
         if self.charts_ticker_dropdown is None or not self.db_path:
             return None
         try:
             choices = sorted(list_tickers(self.db_path))
-            current = choices[0] if choices else None
+            prefer_list = [
+                str(p).strip().upper()
+                for p in (prefer or [])
+                if p and str(p).strip()
+            ]
+            current = None
+            for p in prefer_list:
+                if p in choices:
+                    current = p
+                    break
+            if current is None:
+                current = choices[0] if choices else None
             return gr.update(choices=choices, value=current)
         except Exception as e:
             logger.warning(f"Could not refresh Charts dropdown: {e}")
@@ -613,7 +612,8 @@ Or use the separate steps below for finer control.
         status = _refresh_summary(result)
         details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
-            return status, details, self._charts_dropdown_update()
+            prefer = result.get("ready") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
         return status, details
 
     def do_gather(self, tickers_text):
@@ -632,33 +632,48 @@ Or use the separate steps below for finer control.
         status = _gather_summary(result)
         details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
-            return status, details, self._charts_dropdown_update()
+            prefer = result.get("ready") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
         return status, details
 
     def do_forecast(self, tickers_text, forecast_date):
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
-            return (
-                f"❌ **Forecast failed.**  \n{parsed.get('error') or 'Invalid symbols.'}",
-                _json_details(parsed),
+            status = (
+                f"❌ **Forecast failed.**  \n"
+                f"{parsed.get('error') or 'Invalid symbols.'}"
             )
-        start_preview = resolve_start_for_run(forecast_date or None)
-        if not start_preview.get("ok"):
-            return (
-                f"❌ **Forecast failed (start date).**  \n"
-                f"{start_preview.get('error') or ''}",
-                _json_details(start_preview),
-            )
+            details = _json_details(parsed)
+            if self.charts_ticker_dropdown is not None:
+                return status, details, gr.update()
+            return status, details
+        # catch-up if blank; single origin if date set
+        if forecast_date and str(forecast_date).strip():
+            start_preview = resolve_start_for_run(forecast_date)
+            if not start_preview.get("ok"):
+                status = (
+                    f"❌ **Forecast failed (start date).**  \n"
+                    f"{start_preview.get('error') or ''}"
+                )
+                details = _json_details(start_preview)
+                if self.charts_ticker_dropdown is not None:
+                    return status, details, gr.update()
+                return status, details
         logger.info(
             f"Dashboard forecast for {parsed['tickers']} "
-            f"start={start_preview.get('start')}"
+            f"start={forecast_date or 'catch-up'}"
         )
         result = forecast_for_tickers(
             tickers_text,
             forecast_start_date=forecast_date or None,
             force_allow=True,
         )
-        return _forecast_summary(result), _json_details(result)
+        status = _forecast_summary(result)
+        details = _json_details(result)
+        if self.charts_ticker_dropdown is not None:
+            prefer = result.get("forecasted") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
+        return status, details
 
     def do_refresh_search_db(self):
         """Rebuild DuckDB search cache from local parquet (full refresh)."""
