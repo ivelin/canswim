@@ -52,6 +52,10 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     # Two separate status outputs
     assert "gatherStatus" in src
     assert "forecastStatus" in src
+    # Search DB refresh (parquet → DuckDB)
+    assert "refreshDbBtn" in src
+    assert "do_refresh_search_db" in inspect.getsource(run_tab_mod.RunTab)
+    assert "REFRESH_SEARCH_BUTTON" in src or "Refresh search DB" in src
     # JSON is advanced/collapsed, not primary body
     assert "Advanced details" in src
     assert "gatherDetails" in src

@@ -11,7 +11,9 @@ import pytest
 from canswim.db import (
     SelectOnlyError,
     dataframe_to_records,
+    ensure_optional_search_tables,
     format_company_profile_markdown,
+    format_search_db_status_markdown,
     get_backtest_error,
     get_close_prices,
     get_company_profile,
@@ -23,6 +25,7 @@ from canswim.db import (
     list_tickers,
     run_select,
     scan_forecasts,
+    search_db_status,
     sync_gathered_symbols,
     sync_forecasts_to_search_db,
     tables_present,
@@ -302,6 +305,59 @@ def test_get_company_profile(mini_db):
     assert p["industry"] == "Software"
     assert get_company_profile(mini_db, "ZZZ") is None
     assert get_company_profile(mini_db, "") is None
+
+
+def test_search_db_status(mini_db):
+    st = search_db_status(mini_db)
+    assert st["db_exists"] is True
+    assert st["ok"] is True
+    assert st["counts"].get("stock_tickers") == 2
+    assert st["tables"].get("company_profile") is True
+    assert "missing_core" in st and st["missing_core"] == []
+    md = format_search_db_status_markdown(st, mode="reused")
+    assert "reusing" in md.lower() or "Reusing" in md or "reusing existing" in md.lower()
+    assert "symbols" in md.lower() or "2" in md
+
+
+def test_ensure_optional_search_tables_creates_missing_profile(tmp_path: Path):
+    """--same_data reuse path: add company_profile without wiping core tables."""
+    import duckdb
+
+    db = str(tmp_path / "core_only.duckdb")
+    with duckdb.connect(db) as con:
+        con.execute(
+            "CREATE TABLE stock_tickers AS SELECT 'AAA' AS symbol"
+        )
+        con.execute(
+            """
+            CREATE TABLE forecast AS
+            SELECT CAST('2025-01-06' AS DATE) AS date, 'AAA' AS symbol,
+                   CAST('2025-01-06' AS DATE) AS start_date,
+                   100.0 AS "close_quantile_0.5"
+            """
+        )
+        con.execute(
+            "CREATE TABLE latest_forecast AS SELECT 'AAA' AS symbol, "
+            "CAST('2025-01-06' AS DATE) AS date"
+        )
+        con.execute(
+            "CREATE TABLE close_price AS SELECT CAST('2025-01-03' AS DATE) AS Date, "
+            "'AAA' AS Symbol, 100.0 AS Close"
+        )
+        con.execute(
+            "CREATE TABLE backtest_error AS SELECT 'AAA' AS symbol, "
+            "CAST('2025-01-06' AS DATE) AS start_date, 0.01 AS mal_error"
+        )
+    assert tables_present(db) is True
+    st0 = search_db_status(db)
+    assert st0["tables"].get("company_profile") is not True
+    res = ensure_optional_search_tables(db)
+    assert res["ok"] is True
+    assert "company_profile" in res["repaired"]
+    st1 = search_db_status(db)
+    assert st1["tables"].get("company_profile") is True
+    # Core table still present (not wiped)
+    assert list_tickers(db) == ["AAA"]
 
 
 def test_format_company_profile_markdown():
