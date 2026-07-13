@@ -41,90 +41,263 @@ def _json_details(payload: dict) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
+def _norm_syms(symbols) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in symbols or []:
+        u = str(s).strip().upper()
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _fmt_syms(symbols, *, limit: int = 10) -> str:
+    """Compact ticker list for primary UI (full list lives in Advanced details)."""
+    syms = _norm_syms(symbols)
+    if not syms:
+        return "—"
+    if len(syms) <= limit:
+        return ", ".join(syms)
+    head = ", ".join(syms[:limit])
+    return f"{head} … +{len(syms) - limit} more"
+
+
+def _copy_line(symbols) -> str:
+    """Single pasteable line for the forecast box."""
+    syms = _norm_syms(symbols)
+    return ", ".join(syms) if syms else ""
+
+
 def _gather_summary(result: dict) -> str:
+    """Consumer-facing gather status: buckets, counts, clear next steps."""
+    tickers = _norm_syms(result.get("tickers") or [])
+    ready = _norm_syms(result.get("ready") or [])
+    incomplete = _norm_syms(result.get("incomplete") or [])
+    short = _norm_syms(result.get("short_history") or [])
+    no_hist = _norm_syms(result.get("no_history") or [])
+    skipped = _norm_syms(result.get("skipped_remote") or [])
+    fetched = _norm_syms(result.get("fetched") or [])
+    added = _norm_syms((result.get("db_sync") or {}).get("added") or [])
+    n_req = len(tickers) or (len(ready) + len(incomplete))
+    n_ready = len(ready)
+    n_not = len(incomplete) if incomplete else len(short) + len(no_hist)
+
+    # ---- hard failure (nothing forecast-ready) ----
     if not result.get("ok"):
-        err = result.get("error") or "Unknown error."
-        short = result.get("short_history") or []
-        none = result.get("no_history") or []
-        if short or none or "IPO" in err or "trading history" in err:
-            return f"❌ **Could not finish for every symbol.**  \n{err}"
-        return f"❌ **Could not update market data.**  \n{err}"
-    tickers = result.get("tickers") or []
-    ready = result.get("ready") or []
-    incomplete = result.get("incomplete") or []
-    skipped = result.get("skipped_remote") or []
-    fetched = result.get("fetched") or []
-    added = (result.get("db_sync") or {}).get("added") or []
-    short = result.get("short_history") or []
-    if result.get("partial") and incomplete:
-        show = ", ".join(ready) if ready else "—"
-        lines = [
-            f"⚠️ **Partial success** — ready: {show}.",
-            result.get("error")
-            or (
-                f"Not ready (often recent IPOs / short history): "
-                f"{', '.join(incomplete)}."
-            ),
-        ]
-        # Prefer full friendly text from messages if present
-        for m in result.get("messages") or []:
-            if "trading history" in m or "No usable price" in m:
-                lines = [
-                    f"⚠️ **Partial success** — ready: {show}.",
-                    m,
-                ]
-                break
-        if short:
+        err = (result.get("error") or "").strip()
+        is_hist = bool(
+            short
+            or no_hist
+            or "IPO" in err
+            or "trading history" in err.lower()
+            or "not enough" in err.lower()
+        )
+        lines: list[str] = []
+        if is_hist:
             lines.append(
-                "Tip: drop recent IPOs from the list, then run **Update market data** again."
+                f"❌ **None of these symbols are ready for forecasts yet** "
+                f"({n_not or n_req} checked)."
             )
+            if short:
+                lines.append(
+                    f"**Short history / recent listings ({len(short)}):** "
+                    f"{_fmt_syms(short)}"
+                )
+            if no_hist:
+                lines.append(
+                    f"**No usable price history ({len(no_hist)}):** "
+                    f"{_fmt_syms(no_hist)}"
+                )
+            if not short and not no_hist and incomplete:
+                lines.append(
+                    f"**Not ready ({len(incomplete)}):** {_fmt_syms(incomplete)}"
+                )
+            lines.append("")
+            lines.append("**What this means**")
+            lines.append(
+                "Forecasts need about **two years** of trading sessions. "
+                "Recent IPOs and new listings usually cannot be forecasted yet—"
+                "even if some prices were saved."
+            )
+            lines.append("")
+            lines.append("**What you can do next**")
+            lines.append(
+                "1. **Recommended:** Remove those names from the list and "
+                "**Update market data** only for symbols with longer history, "
+                "then **Run forecast**."
+            )
+            lines.append(
+                "2. Keep watching the short-history names in Charts later—"
+                "they become usable as more sessions accumulate."
+            )
+            lines.append(
+                "3. Full lists and technical notes are under **Advanced details**."
+            )
+        else:
+            lines.append("❌ **Could not update market data.**")
+            if err:
+                # Keep error short in primary UI
+                short_err = err if len(err) <= 220 else err[:217] + "…"
+                lines.append(short_err)
+            lines.append("")
+            lines.append("**What you can do next**")
+            lines.append(
+                "1. **Recommended:** Retry **Update market data** with a shorter list."
+            )
+            lines.append(
+                "2. Check API keys / network, then open **Advanced details** for the log."
+            )
+        return "\n\n".join(lines)
+
+    # ---- success (all or partial) ----
+    partial = bool(result.get("partial") and incomplete)
+    lines = []
+    if partial:
+        lines.append(
+            f"⚠️ **Partial update** — **{n_ready} of {n_req or (n_ready + n_not)}** "
+            f"symbols are ready for forecasts."
+        )
     else:
-        show = ", ".join(ready or tickers) or "—"
-        lines = [f"✅ **Market data ready** for {show}."]
+        show_n = n_ready or len(tickers)
+        lines.append(
+            f"✅ **Market data ready** — **{show_n}** symbol"
+            f"{'s' if show_n != 1 else ''} can be forecasted."
+        )
+
+    # Buckets (counts first; compact symbol lists)
+    if ready:
+        lines.append(
+            f"**Ready for forecasts ({n_ready}):** {_fmt_syms(ready)}"
+        )
+        if n_ready > 1:
+            lines.append(f"Paste into forecast box: `{_copy_line(ready)}`")
+
+    if incomplete:
+        why = "often recent IPOs or short listings"
+        if short and not no_hist:
+            why = "short trading history / recent listings"
+        elif no_hist and not short:
+            why = "no usable price history"
+        lines.append(
+            f"**Not ready for forecasts yet ({len(incomplete)}):** "
+            f"{_fmt_syms(incomplete)}  \n"
+            f"_Why: {why}. Prices may still be on file; forecasts need ~2 years of sessions._"
+        )
+
+    # Download activity as counts (avoid repeating every ticker twice)
+    dl_bits = []
     if skipped and not fetched:
-        lines.append("Already up to date locally — no download needed.")
-    elif skipped:
-        lines.append(f"Already local: {', '.join(skipped)}.")
-    if fetched:
-        lines.append(f"Downloaded or refreshed: {', '.join(fetched)}.")
+        dl_bits.append(f"already up to date locally ({len(skipped)})")
+    else:
+        if skipped:
+            dl_bits.append(f"already local, no download ({len(skipped)})")
+        if fetched:
+            dl_bits.append(f"downloaded or refreshed ({len(fetched)})")
     if added:
-        lines.append(f"Added to Charts list: {', '.join(added)}.")
-    return "  \n".join(lines)
+        dl_bits.append(f"new on Charts list: {_fmt_syms(added, limit=8)}")
+    if dl_bits:
+        lines.append("**Downloads:** " + " · ".join(dl_bits))
+
+    lines.append("**What you can do next**")
+    if ready and incomplete:
+        lines.append(
+            "1. **Recommended:** Copy the ready line above into "
+            "**Symbols to forecast** and click **Run forecast**."
+        )
+        lines.append(
+            "2. Leave the not-ready names off the forecast list for now "
+            "(try again in months as history grows)."
+        )
+        lines.append(
+            "3. Optional: trim them from **Symbols to update** before the next gather "
+            "to keep the status quieter."
+        )
+    elif ready:
+        lines.append(
+            "1. **Recommended:** Enter the same symbols under **Run a forecast** "
+            "and click **Run forecast**."
+        )
+        lines.append(
+            "2. Or open **Charts** to review a symbol visually first."
+        )
+    else:
+        lines.append(
+            "1. **Recommended:** Narrow the list to longer-history names and "
+            "run **Update market data** again."
+        )
+    lines.append(
+        "Full symbol lists and the technical log are under **Advanced details**."
+    )
+    return "\n\n".join(lines)
 
 
 def _forecast_summary(result: dict) -> str:
     start = (result.get("resolved_start") or {}).get("start") or "—"
     if result.get("dry_run"):
-        already = result.get("already_have_forecast") or []
+        already = _norm_syms(result.get("already_have_forecast") or [])
         if already:
             return (
-                f"ℹ️ **Check only** — start date `{start}`.  \n"
-                f"Already on file (would skip): {', '.join(already)}."
+                f"ℹ️ **Check only** — start date `{start}`.\n\n"
+                f"**Would skip (already on file, {len(already)}):** "
+                f"{_fmt_syms(already)}\n\n"
+                "No model run. Click **Run forecast** when ready."
             )
-        return f"ℹ️ **Check only** — start date `{start}`. No model run."
-    if result.get("already_saved") and not result.get("forecasted"):
-        already = result.get("already_have_forecast") or result.get("tickers") or []
         return (
-            f"✅ **Already done** for {', '.join(already)} "
-            f"(start `{start}`).  \n"
-            "Skipped re-run — no new forecast files written."
+            f"ℹ️ **Check only** — start date `{start}`.\n\n"
+            "No model run. Click **Run forecast** when ready."
+        )
+    if result.get("already_saved") and not result.get("forecasted"):
+        already = _norm_syms(
+            result.get("already_have_forecast") or result.get("tickers") or []
+        )
+        return (
+            f"✅ **Already done** for **{len(already)}** symbol"
+            f"{'s' if len(already) != 1 else ''} (start `{start}`).\n\n"
+            f"{_fmt_syms(already)}\n\n"
+            "Skipped re-run — no new forecast files written.\n\n"
+            "**Next:** open **Charts** or **Scans** to review results."
         )
     if not result.get("ok"):
         if result.get("need_covariates"):
             head = "❌ **Forecast inputs incomplete.**"
+            nexts = (
+                "1. **Recommended:** **Update market data** for these symbols "
+                "(includes fundamentals), then **Run forecast** again.\n\n"
+                "2. See **Advanced details** for which inputs failed."
+            )
         elif result.get("need_gather"):
             head = "❌ **Need more market data first.**"
+            nexts = (
+                "1. **Recommended:** **Update market data** for these symbols, "
+                "then **Run forecast**.\n\n"
+                "2. Recent IPOs may never be ready until enough history exists."
+            )
         else:
             head = "❌ **Forecast failed.**"
-        return f"{head}  \n{result.get('error') or 'Unknown error.'}"
-    forecasted = result.get("forecasted") or []
-    already = result.get("already_have_forecast") or []
+            nexts = (
+                "1. **Recommended:** Retry with a shorter list.\n\n"
+                "2. Open **Advanced details** for the error log."
+            )
+        err = (result.get("error") or "Unknown error.").strip()
+        short_err = err if len(err) <= 280 else err[:277] + "…"
+        return f"{head}\n\n{short_err}\n\n**What you can do next**\n\n{nexts}"
+
+    forecasted = _norm_syms(result.get("forecasted") or [])
+    already = _norm_syms(result.get("already_have_forecast") or [])
     lines = [f"✅ **Forecast complete** (start `{start}`)."]
     if forecasted:
-        lines.append(f"New: {', '.join(forecasted)}.")
+        lines.append(
+            f"**New forecasts ({len(forecasted)}):** {_fmt_syms(forecasted)}"
+        )
     if already:
-        lines.append(f"Already on file (skipped): {', '.join(already)}.")
-    return "  \n".join(lines)
+        lines.append(
+            f"**Already on file, skipped ({len(already)}):** {_fmt_syms(already)}"
+        )
+    lines.append(
+        "**Next:** open **Charts** for a symbol or **Scans** for the whole set."
+    )
+    return "\n\n".join(lines)
 
 
 def _start_summary(info: dict) -> str:
