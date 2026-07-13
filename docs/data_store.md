@@ -37,7 +37,7 @@ python -m canswim dashboard --same_data False
 ```
 
 - The dashboard shows a **search DB status** banner (path, reuse vs rebuild, row counts, whether parquet sources exist).
-- On the **Run** tab, **Refresh search DB from parquet** rebuilds DuckDB without restarting (same as `--same_data False`).
+- On the **Run** tab under More options, **Rebuild Charts database** rebuilds DuckDB without restarting (same as `--same_data False`).
 - With `--same_data True`, optional tables such as `company_profile` are **repaired lazily** if missing (no full wipe).
 - Prefer **`hfhub_sync=False`** for local work so gather does not pull the full HF dataset snapshot.
 - Do not commit gitignored `data/` artifacts or slimmed local-only symbol lists used for experiments (see `AGENTS.md`).
@@ -45,7 +45,7 @@ python -m canswim dashboard --same_data False
 ### If Charts look empty but parquet has data
 
 1. Confirm the status banner DB path matches the data you expect.
-2. Click **Refresh search DB from parquet** on the Run tab (or restart with `--same_data False`).
+2. Click **Rebuild Charts database** on the Run tab under More options (or restart with `--same_data False`).
 3. Charts still read **DuckDB only** — editing parquet alone does not update the UI until sync/rebuild.
 
 ## Related docs

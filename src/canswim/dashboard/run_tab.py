@@ -12,7 +12,6 @@ import gradio as gr
 from loguru import logger
 
 from canswim.db import (
-    format_search_db_status_markdown,
     init_search_db,
     list_tickers,
     search_db_status,
@@ -206,8 +205,8 @@ def _gather_summary(result: dict) -> str:
     lines.append("**What you can do next**")
     if ready and incomplete:
         lines.append(
-            "1. **Recommended:** Paste the ready line into **Refresh symbols** "
-            "(or **Run forecast** with blank start for catch-up)."
+            "1. **Recommended:** Paste the ready line and click "
+            f"**{REFRESH_SYMBOLS_BUTTON}**."
         )
         lines.append(
             "2. Leave the not-ready names off for now "
@@ -218,8 +217,8 @@ def _gather_summary(result: dict) -> str:
         )
     elif ready:
         lines.append(
-            "1. **Recommended:** **Refresh symbols** or **Run forecast** "
-            "(blank start = monthly catch-up + live)."
+            f"1. **Recommended:** **{REFRESH_SYMBOLS_BUTTON}** "
+            "(or **Run forecast** under More options)."
         )
         lines.append(
             "2. Or open **Charts** to review a symbol visually first."
@@ -249,7 +248,7 @@ def _forecast_summary(result: dict) -> str:
             return (
                 f"ℹ️ **Check only — catch-up** ({n_origins} monthly/live origins).\n\n"
                 f"**Jobs that would run:** {need} symbol×start pair(s).\n\n"
-                "No model run. Click **Run forecast** or **Refresh symbols** when ready."
+                f"No model run. Click **{REFRESH_SYMBOLS_BUTTON}** when ready."
             )
         already = _norm_syms(result.get("already_have_forecast") or [])
         if already:
@@ -257,11 +256,11 @@ def _forecast_summary(result: dict) -> str:
                 f"ℹ️ **Check only** — start date `{start}`.\n\n"
                 f"**Would skip (already on file, {len(already)}):** "
                 f"{_fmt_syms(already)}\n\n"
-                "No model run. Click **Run forecast** when ready."
+                f"No model run. Click **{REFRESH_SYMBOLS_BUTTON}** when ready."
             )
         return (
             f"ℹ️ **Check only** — start date `{start}`.\n\n"
-            "No model run. Click **Run forecast** when ready."
+            f"No model run. Click **{REFRESH_SYMBOLS_BUTTON}** when ready."
         )
     if result.get("already_saved") and not result.get("forecasted"):
         already = _norm_syms(
@@ -281,15 +280,14 @@ def _forecast_summary(result: dict) -> str:
         if result.get("need_covariates"):
             head = "❌ **Forecast inputs incomplete.**"
             nexts = (
-                "1. **Recommended:** **Refresh symbols** or **Update market data**, "
+                f"1. **Recommended:** **{REFRESH_SYMBOLS_BUTTON}**, "
                 "then try again.\n\n"
-                "2. See **Advanced details** for which inputs failed."
+                "2. See the technical log for details."
             )
         elif result.get("need_gather"):
             head = "❌ **Need more market data first.**"
             nexts = (
-                "1. **Recommended:** **Refresh symbols** (gather + forecast) "
-                "or **Update market data** then **Run forecast**.\n\n"
+                f"1. **Recommended:** **{REFRESH_SYMBOLS_BUTTON}**.\n\n"
                 "2. Recent IPOs may need more history first."
             )
         else:
@@ -335,7 +333,7 @@ def _forecast_summary(result: dict) -> str:
 
 
 def _refresh_summary(result: dict) -> str:
-    """Primary status for all-in-one Refresh symbols."""
+    """Primary status for all-in-one Refresh data & forecasts."""
     gather = result.get("gather") or {}
     forecast = result.get("forecast") or {}
     ready = _norm_syms(result.get("ready") or gather.get("ready") or [])
@@ -343,66 +341,68 @@ def _refresh_summary(result: dict) -> str:
         result.get("incomplete") or gather.get("incomplete") or []
     )
     lines: list[str] = []
+    btn = REFRESH_SYMBOLS_BUTTON
 
     if result.get("dry_run"):
-        lines.append("ℹ️ **Check only — Refresh symbols** (no downloads / model).")
-        lines.append(f"**Would gather then catch-up:** {_fmt_syms(ready)}")
+        lines.append(f"ℹ️ **Check only — {btn}** (no downloads / model).")
+        lines.append(f"**Would update then forecast:** {_fmt_syms(ready)}")
         if incomplete:
             lines.append(f"**Would skip (not ready):** {_fmt_syms(incomplete)}")
         return "\n\n".join(lines)
 
     if not result.get("ok") and not forecast.get("forecasted"):
         g_part = _gather_summary(gather) if gather else ""
-        head = "❌ **Refresh could not finish.**"
+        head = f"❌ **{btn} could not finish.**"
         if incomplete and not ready:
-            head = "❌ **Refresh stopped — no symbols ready for forecast yet.**"
+            head = (
+                f"❌ **{btn} stopped** — no symbols ready for forecast yet."
+            )
         return (
             f"{head}\n\n"
             f"{result.get('error') or ''}\n\n"
             f"{g_part}\n\n"
             "**What you can do next**\n\n"
-            "1. **Recommended:** Drop short-history / IPO names and "
-            "**Refresh symbols** again.\n\n"
-            "2. See **Advanced details** for the full log."
+            "1. **Recommended:** Drop short-history / IPO names and try again.\n\n"
+            "2. Open **Technical log** for details."
         )
 
     n_orig = len(forecast.get("origins") or [])
     new_fc = _norm_syms(forecast.get("forecasted") or [])
     if result.get("partial") or incomplete:
         lines.append(
-            f"⚠️ **Refresh partial** — **{len(ready)}** ready, "
+            f"⚠️ **{btn} partial** — **{len(ready)}** ready, "
             f"**{len(incomplete)}** not forecast-ready."
         )
     else:
         lines.append(
-            f"✅ **Refresh complete** for **{len(ready)}** symbol"
+            f"✅ **{btn} complete** for **{len(ready)}** symbol"
             f"{'s' if len(ready) != 1 else ''}."
         )
     if ready:
-        lines.append(f"**Forecast-ready:** {_fmt_syms(ready)}")
+        lines.append(f"**Ready for Charts / Scans:** {_fmt_syms(ready)}")
     if incomplete:
         lines.append(
-            f"**Not ready (short history etc.):** {_fmt_syms(incomplete)}"
+            f"**Not ready yet (short history etc.):** {_fmt_syms(incomplete)}"
         )
     if n_orig:
         lines.append(
-            f"**Catch-up origins:** {n_orig} monthly/live starts "
-            f"(skipped ones already on file)."
+            f"**Forecast history:** {n_orig} monthly/live starts "
+            f"(already-saved starts were skipped)."
         )
     if new_fc:
-        lines.append(f"**New forecast files:** {_fmt_syms(new_fc)}")
+        lines.append(f"**New forecasts written for:** {_fmt_syms(new_fc)}")
     elif forecast.get("already_saved"):
-        lines.append("Forecasts were already on file for all ready origins.")
+        lines.append("Forecasts were already up to date for ready symbols.")
     lines.append("**What you can do next**")
     lines.append(
-        "1. **Recommended:** Open **Scans** or **Charts** — backtest history "
-        "and the live forecast should be available for ready names."
+        "1. **Recommended:** Open **Charts** for a symbol, or **Scans** to rank "
+        "by reward/risk and backtest history."
     )
     if incomplete:
         lines.append(
             "2. Leave not-ready names for later (need more trading history)."
         )
-    lines.append("Full log under **Advanced details**.")
+    lines.append("Details under **Technical log** if needed.")
     return "\n\n".join(lines)
 
 
@@ -421,12 +421,12 @@ class RunTab:
         canswim_model=None,
         db_path=None,
         charts_ticker_dropdown=None,
-        db_status_banner=None,
+        db_status_banner=None,  # unused; kept for call-site compatibility
     ):
         self.canswim_model = canswim_model
         self.db_path = db_path
         self.charts_ticker_dropdown = charts_ticker_dropdown
-        self.db_status_banner = db_status_banner
+        self.db_status_banner = None  # no global debug banner
 
         # ---- Primary path only (everything else under More options) ----
         with gr.Group():
@@ -441,8 +441,9 @@ class RunTab:
             self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
             self.refreshStatus = gr.Markdown(
                 value=(
-                    "_Enter one or more symbols, then click **Refresh symbols**. "
-                    "Status of each step appears here when the run finishes._"
+                    "_Enter one or more symbols, then click "
+                    f"**{REFRESH_SYMBOLS_BUTTON}**. "
+                    "Status appears here when the run finishes._"
                 )
             )
             with gr.Accordion("Technical log", open=False):
@@ -509,17 +510,10 @@ class RunTab:
                 self.refreshDbBtn = gr.Button(
                     REFRESH_SEARCH_BUTTON, variant="secondary"
                 )
-                initial_status = ""
-                if self.db_path:
-                    try:
-                        initial_status = format_search_db_status_markdown(
-                            search_db_status(self.db_path)
-                        )
-                    except Exception as e:
-                        logger.debug(f"initial search db status: {e}")
-                        initial_status = ""
-                self.refreshDbStatus = gr.Markdown(value=initial_status)
-                with gr.Accordion("Search DB log", open=False):
+                self.refreshDbStatus = gr.Markdown(
+                    value="_Only needed if Charts stay empty after a data refresh._"
+                )
+                with gr.Accordion("Technical log", open=False):
                     self.refreshDbDetails = gr.Code(
                         language="json",
                         lines=4,
@@ -560,8 +554,6 @@ class RunTab:
         )
 
         db_refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
-        if self.db_status_banner is not None:
-            db_refresh_outputs.append(self.db_status_banner)
         if self.charts_ticker_dropdown is not None:
             db_refresh_outputs.append(self.charts_ticker_dropdown)
         self.refreshDbBtn.click(
@@ -678,11 +670,10 @@ class RunTab:
 
     def do_refresh_search_db(self):
         """Rebuild DuckDB search cache from local parquet (full refresh)."""
-        banner = "_Search DB status unavailable._"
         if not self.db_path:
             status = "❌ **No database path configured.**"
             details = _json_details({"ok": False, "error": "db_path missing"})
-            return self._refresh_outputs(status, details, banner, dropdown=False)
+            return self._refresh_outputs(status, details, dropdown=False)
 
         target_col = "Close"
         if self.canswim_model is not None:
@@ -696,33 +687,31 @@ class RunTab:
                 target_column=target_col,
             )
             st = result.get("status") or search_db_status(self.db_path)
-            banner = format_search_db_status_markdown(st, mode="rebuilt")
+            n_sym = (st.get("counts") or {}).get("stock_tickers")
             if st.get("ok"):
-                head = f"✅ **Search DB rebuilt** from parquet → `{self.db_path}`."
-            else:
-                head = (
-                    f"⚠️ **Rebuild finished but search DB looks incomplete.**  \n"
-                    f"Path: `{self.db_path}`"
+                status = (
+                    f"✅ **Charts database rebuilt.** "
+                    f"{n_sym or '—'} symbols available in Charts / Scans."
                 )
-            status = head + "  \n\n" + banner
+            else:
+                status = (
+                    "⚠️ **Rebuild finished, but some Charts data may be missing.** "
+                    "Try **Refresh data & forecasts** for your symbols."
+                )
             details = _json_details(result)
         except Exception as e:
             logger.exception("Search DB refresh failed")
             result = {"ok": False, "error": str(e)}
-            try:
-                st = search_db_status(self.db_path)
-                banner = format_search_db_status_markdown(st)
-            except Exception:
-                banner = f"_Could not read status: {e}_"
-            status = f"❌ **Could not rebuild search DB.**  \n{e}  \n\n{banner}"
+            status = (
+                "❌ **Could not rebuild Charts database.** "
+                "See technical log for details."
+            )
             details = _json_details(result)
 
-        return self._refresh_outputs(status, details, banner, dropdown=True)
+        return self._refresh_outputs(status, details, dropdown=True)
 
-    def _refresh_outputs(self, status, details, banner, *, dropdown: bool):
+    def _refresh_outputs(self, status, details, banner=None, *, dropdown: bool):
         outs = [status, details]
-        if self.db_status_banner is not None:
-            outs.append(banner)
         if self.charts_ticker_dropdown is not None:
             outs.append(
                 self._charts_dropdown_update() if dropdown else gr.update()

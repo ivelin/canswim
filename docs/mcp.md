@@ -74,7 +74,7 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `resolve_forecast_start` | Preview week-aligned start (≡ CLI `resolve_start`) | — |
 | `gather_tickers` | Scoped gather (≡ `gatherdata --tickers`) | `MCP_ALLOW_RUNS=1` |
 | `forecast_tickers` | Scoped forecast; blank start = monthly catch-up + live | `MCP_ALLOW_RUNS=1` |
-| `refresh_tickers` | Gather + catch-up forecast (≡ dashboard **Refresh symbols**) | `MCP_ALLOW_RUNS=1` |
+| `refresh_tickers` | Gather + catch-up forecast (≡ dashboard **Refresh data & forecasts**) | `MCP_ALLOW_RUNS=1` |
 
 ### Custom SQL (read-only)
 

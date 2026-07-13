@@ -202,7 +202,7 @@ def format_search_db_status_markdown(
     if not status.get("db_exists"):
         lines.append(
             "❌ **No DuckDB file yet.** Open with rebuild, or use "
-            "**Refresh search DB from parquet** on the Run tab."
+            "**Rebuild Charts database** on the Run tab (under More options)."
         )
         return "  \n".join(lines)
 
@@ -213,7 +213,7 @@ def format_search_db_status_markdown(
         lines.append(
             "⚠️ **Incomplete search DB** — missing: "
             + (", ".join(missing) if missing else "unknown")
-            + ". Use **Refresh search DB from parquet**."
+            + ". Use **Rebuild Charts database**."
         )
 
     counts = status.get("counts") or {}
