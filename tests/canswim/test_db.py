@@ -416,9 +416,14 @@ def test_sync_company_profiles_to_search_db(mini_db, tmp_path: Path):
 def test_is_select_only():
     assert is_select_only("SELECT 1") is True
     assert is_select_only("select * from forecast") is True
+    assert is_select_only(
+        "WITH x AS (SELECT 1 AS a) SELECT * FROM x"
+    ) is True
     assert is_select_only("INSERT INTO forecast VALUES (1)") is False
     assert is_select_only("DROP TABLE forecast") is False
     assert is_select_only("SELECT 1; DROP TABLE forecast") is False
+    assert is_select_only("PRAGMA show_tables") is False
+    assert is_select_only("ATTACH 'x.db' AS other") is False
 
 
 def test_run_select_rejects_dml(mini_db):
@@ -429,6 +434,20 @@ def test_run_select_rejects_dml(mini_db):
 def test_run_select_allows_select(mini_db):
     df = run_select(mini_db, "SELECT symbol FROM stock_tickers ORDER BY symbol")
     assert len(df) == 2
+
+
+def test_describe_search_schema(mini_db):
+    from canswim.db import describe_search_schema
+
+    schema = describe_search_schema(mini_db, include_row_counts=True)
+    assert schema["db_exists"] is True
+    assert schema["read_only"] is True
+    names = {t["name"] for t in schema["tables"]}
+    assert "stock_tickers" in names
+    assert "forecast" in names
+    md = schema.get("markdown") or ""
+    assert "stock_tickers" in md
+    assert "sql_policy" in schema
 
 
 def test_dataframe_to_records():

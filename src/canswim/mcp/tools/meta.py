@@ -22,6 +22,7 @@ READ_TOOL_NAMES = [
     "scan_forecasts",
     "get_close_price",
     "get_backtest_error",
+    "get_db_schema",
     "run_select",
     "resolve_forecast_start",
 ]
@@ -30,6 +31,7 @@ READ_TOOL_NAMES = [
 WRITE_TOOL_NAMES = [
     "gather_tickers",
     "forecast_tickers",
+    "refresh_tickers",
 ]
 
 TOOL_NAMES = READ_TOOL_NAMES + WRITE_TOOL_NAMES
@@ -67,8 +69,10 @@ def get_server_info_impl() -> dict[str, Any]:
             "runs_allowed": allow_runs,
             "model": (
                 "TiDE precomputed forecasts (read tools). "
-                "Write tools gather_tickers/forecast_tickers require MCP_ALLOW_RUNS=1 "
-                "and may load torch for forecast."
+                "Custom SQL: run_select is SELECT/WITH only on a read-only DuckDB "
+                "connection; get_db_schema exports tables/indexes for query authoring. "
+                "Write tools gather_tickers/forecast_tickers/refresh_tickers require "
+                "MCP_ALLOW_RUNS=1 and may load torch for forecast."
             ),
             "db_path": get_db_path(),
             "tools": TOOL_NAMES,

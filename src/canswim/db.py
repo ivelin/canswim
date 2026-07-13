@@ -1377,25 +1377,75 @@ def get_backtest_error(
 
 _FORBIDDEN_SQL = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|COPY|EXPORT|IMPORT|"
-    r"TRUNCATE|REPLACE|GRANT|REVOKE|CALL|EXECUTE|PRAGMA|LOAD|INSTALL|"
-    r"CHECKPOINT|VACUUM|FORCE|SET)\b",
+    r"TRUNCATE|REPLACE\s+INTO|GRANT|REVOKE|CALL|EXECUTE|PRAGMA|LOAD|INSTALL|"
+    r"CHECKPOINT|VACUUM|FORCE\b|SET\s+\w|MERGE|UPSERT|DETACH|UNLOAD|"
+    r"BEGIN|COMMIT|ROLLBACK|TRANSACTION)\b",
     re.IGNORECASE,
 )
 
+# Human-oriented purpose notes for MCP / agent SQL authoring
+SEARCH_TABLE_DOCS: dict[str, str] = {
+    "stock_tickers": (
+        "Universe of symbols available in Charts/Scans dropdown. "
+        "Column is usually Symbol or symbol."
+    ),
+    "forecast": (
+        "Quantile forecast paths. One row per (symbol, start_date, date) where "
+        "date is the forecast horizon calendar date and start_date is the origin. "
+        "Quantile columns: close_quantile_0.01 … close_quantile_0.99 "
+        "(0.5 ≈ median). Used for charts and scans."
+    ),
+    "latest_forecast": (
+        "Per-symbol max(start_date) of available forecasts. "
+        "Join to forecast on symbol + start_date = latest_forecast.date."
+    ),
+    "close_price": (
+        "Historical closes (Date, Symbol/symbol, Close). "
+        "Used for prior_close, charts, and backtest_error."
+    ),
+    "backtest_error": (
+        "Mean absolute log-error of median forecast vs actual close, "
+        "per (symbol, start_date). Lower is better model fit on that origin."
+    ),
+    "company_profile": (
+        "Optional company metadata: name, sector, industry, country, "
+        "exchange, mkt_cap, website, description. One row per symbol."
+    ),
+}
+
+
+def _strip_sql_comments(sql: str) -> str:
+    without = re.sub(r"/\*.*?\*/", "", sql.strip(), flags=re.DOTALL)
+    without = re.sub(r"--[^\n]*", "", without).strip()
+    return without
+
 
 def is_select_only(sql: str) -> bool:
+    """True only for a single read-only SELECT (or WITH … SELECT) statement.
+
+    Writes, DDL, multi-statements, and PRAGMA/ATTACH/etc. are rejected.
+    Free-form SQL for analytics must go through this gate; mutations use
+    dedicated gather/forecast/refresh tools only.
+    """
     stripped = sql.strip()
     if not stripped:
         return False
-    # allow leading comments
-    without_comments = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
-    without_comments = re.sub(r"--[^\n]*", "", without_comments).strip()
-    if not without_comments.upper().startswith("SELECT"):
+    without_comments = _strip_sql_comments(stripped)
+    if not without_comments:
+        return False
+    head = without_comments.lstrip().upper()
+    # Allow CTE form: WITH … SELECT …
+    if not (head.startswith("SELECT") or head.startswith("WITH")):
         return False
     if _FORBIDDEN_SQL.search(without_comments):
         return False
-    # single statement
+    # single statement (trailing semicolon ok)
     if ";" in without_comments.rstrip(";"):
+        return False
+    # WITH must eventually contain SELECT (not WITH RECURSIVE abuse alone)
+    if head.startswith("WITH") and not re.search(
+        r"\bSELECT\b", without_comments, re.IGNORECASE
+    ):
         return False
     return True
 
@@ -1410,10 +1460,12 @@ def run_select(
     *,
     row_limit: int = DEFAULT_ROW_LIMIT,
 ) -> pd.DataFrame:
-    """Run a SELECT-only query (AdvancedTab guard)."""
+    """Run a SELECT-only query (Advanced tab + MCP). Always opens read-only."""
     if not is_select_only(sql):
         raise SelectOnlyError(
-            "Only single SELECT statements are allowed (no DDL/DML/multi-statement)."
+            "Only single read-only SELECT (or WITH … SELECT) statements are allowed. "
+            "No DDL/DML/multi-statement. Writes must use dedicated tools "
+            "(gather_tickers / forecast_tickers / refresh_tickers)."
         )
     wrapped = f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _q LIMIT {int(row_limit)}"
     with connect_readonly(db_path) as db_con:
@@ -1424,6 +1476,194 @@ def run_select(
         if "date" in c.lower() or pd.api.types.is_datetime64_any_dtype(df[c])
     ]
     return _format_date_columns(df, date_like)
+
+
+def describe_search_schema(
+    db_path: Optional[str] = None,
+    *,
+    include_row_counts: bool = True,
+    include_sample_values: bool = False,
+) -> dict[str, Any]:
+    """Export DuckDB search-schema for MCP/agent SQL authoring.
+
+    Includes tables, columns (name/type/nullable), indexes, optional row
+    counts, and short purpose notes. Read-only connection only.
+    """
+    path = db_path or get_db_path()
+    out: dict[str, Any] = {
+        "db_path": path,
+        "db_exists": Path(path).is_file(),
+        "read_only": True,
+        "sql_policy": (
+            "Custom SQL via run_select: single SELECT or WITH…SELECT only; "
+            "enforced + DuckDB read-only connection. "
+            "Mutations only via gather_tickers / forecast_tickers / refresh_tickers "
+            "when MCP_ALLOW_RUNS=1."
+        ),
+        "tables": [],
+        "indexes": [],
+        "expected_tables": list(SEARCH_TABLES),
+        "notes": [
+            "Parquet under data/ is the system of record; this DuckDB is the "
+            "search/UI cache (Charts, Scans, MCP).",
+            "forecast.start_date = forecast origin; forecast.date = horizon day.",
+            "Join company_profile on upper(symbol) for sector/industry filters.",
+        ],
+    }
+    if not out["db_exists"]:
+        out["error"] = f"Database file not found: {path}"
+        return out
+
+    try:
+        with connect_readonly(path) as con:
+            existing = sorted(_list_main_tables(con))
+            out["table_names"] = existing
+
+            # Columns from information_schema
+            cols_df = con.execute(
+                """
+                SELECT table_name, column_name, data_type, is_nullable,
+                       ordinal_position
+                FROM information_schema.columns
+                WHERE table_schema = 'main'
+                ORDER BY table_name, ordinal_position
+                """
+            ).fetchdf()
+
+            by_table: dict[str, list[dict[str, Any]]] = {}
+            for _, row in cols_df.iterrows():
+                t = str(row["table_name"])
+                by_table.setdefault(t, []).append(
+                    {
+                        "name": str(row["column_name"]),
+                        "type": str(row["data_type"]),
+                        "nullable": str(row["is_nullable"]).upper()
+                        in ("YES", "TRUE", "1"),
+                        "position": int(row["ordinal_position"])
+                        if row["ordinal_position"] is not None
+                        else None,
+                    }
+                )
+
+            # Indexes (DuckDB catalog)
+            indexes: list[dict[str, Any]] = []
+            try:
+                idx_df = con.execute(
+                    """
+                    SELECT database_name, schema_name, table_name, index_name,
+                           is_unique, is_primary, sql
+                    FROM duckdb_indexes()
+                    WHERE schema_name = 'main' OR schema_name IS NULL
+                    """
+                ).fetchdf()
+                for _, row in idx_df.iterrows():
+                    indexes.append(
+                        {
+                            "table": str(row.get("table_name") or ""),
+                            "name": str(row.get("index_name") or ""),
+                            "unique": bool(row.get("is_unique")),
+                            "primary": bool(row.get("is_primary"))
+                            if row.get("is_primary") is not None
+                            else False,
+                            "sql": str(row.get("sql") or "") or None,
+                        }
+                    )
+            except Exception as e:
+                logger.debug(f"duckdb_indexes unavailable: {e}")
+                # Fallback: try sqlite_master-style (may be empty on DuckDB)
+                try:
+                    for r in con.execute(
+                        "SELECT name, tbl_name, sql FROM sqlite_master "
+                        "WHERE type = 'index'"
+                    ).fetchall():
+                        indexes.append(
+                            {
+                                "table": str(r[1]),
+                                "name": str(r[0]),
+                                "unique": None,
+                                "primary": False,
+                                "sql": r[2],
+                            }
+                        )
+                except Exception:
+                    pass
+            out["indexes"] = indexes
+
+            idx_by_table: dict[str, list[dict[str, Any]]] = {}
+            for ix in indexes:
+                idx_by_table.setdefault(ix["table"], []).append(ix)
+
+            tables_out: list[dict[str, Any]] = []
+            for t in existing:
+                entry: dict[str, Any] = {
+                    "name": t,
+                    "purpose": SEARCH_TABLE_DOCS.get(t, "Search/UI table."),
+                    "columns": by_table.get(t, []),
+                    "indexes": idx_by_table.get(t, []),
+                }
+                if include_row_counts:
+                    try:
+                        n = con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+                        entry["row_count"] = int(n)
+                    except Exception:
+                        entry["row_count"] = None
+                if include_sample_values and by_table.get(t):
+                    try:
+                        sample = con.execute(
+                            f'SELECT * FROM "{t}" LIMIT 3'
+                        ).fetchdf()
+                        entry["sample_rows"] = dataframe_to_records(sample)
+                    except Exception:
+                        entry["sample_rows"] = []
+                tables_out.append(entry)
+            out["tables"] = tables_out
+
+            # Compact markdown for agent context windows
+            out["markdown"] = format_schema_markdown(out)
+    except Exception as e:
+        logger.warning(f"describe_search_schema({path}): {e}")
+        out["error"] = str(e)
+    return out
+
+
+def format_schema_markdown(schema: dict[str, Any]) -> str:
+    """Compact Markdown schema dump for MCP client context."""
+    lines = [
+        f"# CANSWIM search DB schema",
+        f"Path: `{schema.get('db_path')}`",
+        "",
+        schema.get("sql_policy") or "",
+        "",
+    ]
+    for note in schema.get("notes") or []:
+        lines.append(f"- {note}")
+    lines.append("")
+    for t in schema.get("tables") or []:
+        rc = t.get("row_count")
+        rc_s = f" ({rc:,} rows)" if isinstance(rc, int) else ""
+        lines.append(f"## {t.get('name')}{rc_s}")
+        if t.get("purpose"):
+            lines.append(t["purpose"])
+        lines.append("")
+        lines.append("| column | type | nullable |")
+        lines.append("|--------|------|----------|")
+        for c in t.get("columns") or []:
+            null_s = "yes" if c.get("nullable") else "no"
+            lines.append(
+                f"| `{c.get('name')}` | {c.get('type')} | {null_s} |"
+            )
+        ixs = t.get("indexes") or []
+        if ixs:
+            lines.append("")
+            lines.append("**Indexes:**")
+            for ix in ixs:
+                u = " UNIQUE" if ix.get("unique") else ""
+                sql = ix.get("sql") or ""
+                lines.append(f"- `{ix.get('name')}`{u}" + (f" — `{sql}`" if sql else ""))
+        lines.append("")
+    if schema.get("error"):
+        lines.append(f"**Error:** {schema['error']}")
+    return "\n".join(lines)
 
 
 def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:

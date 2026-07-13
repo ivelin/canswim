@@ -145,10 +145,36 @@ def get_backtest_error(
 
 
 @mcp.tool(
+    name="get_db_schema",
+    description=(
+        "Export the local DuckDB search database schema for analytics SQL: "
+        "tables, columns (name/type/nullable), indexes, optional row counts, "
+        "and purpose notes. Also returns a compact markdown summary for agent "
+        "context. Use this before writing complex run_select queries. Read-only. "
+        "format: 'json' | 'markdown' | 'both' (default both)."
+    ),
+)
+def get_db_schema(
+    include_row_counts: bool = True,
+    include_sample_values: bool = False,
+    format: str = "both",
+) -> dict[str, Any]:
+    return query.get_db_schema_impl(
+        include_row_counts=include_row_counts,
+        include_sample_values=include_sample_values,
+        format=format,
+    )
+
+
+@mcp.tool(
     name="run_select",
     description=(
-        "Run a single read-only SELECT against the local DuckDB search database "
-        "(Advanced Queries tab). DDL/DML and multi-statements are rejected."
+        "Run a single read-only SQL query against the local DuckDB search database "
+        "(same as Advanced Queries). Allowed: one SELECT or WITH…SELECT. "
+        "DDL/DML/multi-statement/PRAGMA/ATTACH are rejected. Connection is always "
+        "read-only. Writes only via gather_tickers / forecast_tickers / refresh_tickers "
+        "when MCP_ALLOW_RUNS=1. Call get_db_schema first for table/index layout. "
+        "Results capped by row_limit (default 5000)."
     ),
 )
 def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
