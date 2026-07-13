@@ -352,20 +352,57 @@ def _refresh_summary(result: dict) -> str:
         return "\n\n".join(lines)
 
     if not result.get("ok") and not forecast.get("forecasted"):
-        g_part = _gather_summary(gather) if gather else ""
         head = f"❌ **{btn} could not finish.**"
         if incomplete and not ready:
             head = (
                 f"❌ **{btn} stopped** — no symbols ready for forecast yet."
             )
-        return (
-            f"{head}\n\n"
-            f"{result.get('error') or ''}\n\n"
-            f"{g_part}\n\n"
-            "**What you can do next**\n\n"
-            "1. **Recommended:** Drop short-history / IPO names and try again.\n\n"
-            "2. Open **Technical log** for details."
+        err = (result.get("error") or forecast.get("error") or "").strip()
+        err_l = err.lower()
+        is_cov = bool(
+            forecast.get("need_covariates")
+            or result.get("fail_reason") == "covariates"
+            or "dimensionality" in err_l
+            or "feature mismatch" in err_l
+            or "fund-thin" in err_l
+            or "past_covariates" in err_l
         )
+        is_hist = bool(incomplete and not ready and not is_cov)
+
+        lines = [head]
+        if err:
+            lines.append(err)
+        # Only restate gather hard-fail; skip green gather success + IPO advice
+        # when market data was fine and forecast covariates failed.
+        if incomplete and not ready:
+            g_part = _gather_summary(gather) if gather else ""
+            if g_part:
+                lines.append(g_part)
+        elif ready:
+            lines.append(
+                f"Market data looked ready for: {_fmt_syms(ready)}. "
+                "The forecast step could not finish."
+            )
+
+        lines.append("**What you can do next**")
+        if is_cov:
+            lines.append(
+                "1. **Recommended:** Try again after **Update market data** "
+                "(fundamentals). ETFs and other fund-thin names use zero-filled "
+                "fund inputs like IPOs—if it still fails, open **Technical log**."
+            )
+            lines.append(
+                "2. Or forecast a regular stock (e.g. LLY) to confirm the model path."
+            )
+        elif is_hist:
+            lines.append(
+                "1. **Recommended:** Drop short-history / IPO names and try again."
+            )
+            lines.append("2. Open **Technical log** for details.")
+        else:
+            lines.append("1. Open **Technical log** for details.")
+            lines.append("2. Retry, or try fewer symbols.")
+        return "\n\n".join(lines)
 
     n_orig = len(forecast.get("origins") or [])
     new_fc = _norm_syms(forecast.get("forecasted") or [])

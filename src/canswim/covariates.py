@@ -2,13 +2,35 @@ from pandas.tseries.offsets import BDay
 import pandas as pd
 from darts import TimeSeries
 from darts.dataprocessing.transformers import MissingValuesFiller
-from typing import Union
+from typing import Optional, Union
 import numpy as np
 from loguru import logger
 import os
 
 fiscal_periods = ["quarter", "annual"]
 fiscal_freq = {"annual": "Y", "quarter": "Q"}
+
+# When a scoped forecast batch has no fund rows at all (e.g. sector ETF XLF alone),
+# zero-fill still needs a column template. Load one of these well-covered names
+# without the batch filter so feature dim matches training.
+_TEMPLATE_SYMBOLS = ("AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "JPM")
+
+# Earnings columns after prepare_earn_series date-splitting / category coding.
+# Order matches insert(loc=n_cols) behavior (year→month→day inserted at same loc
+# yields day, month, year as final order).
+_EARN_FEATURE_COLS = (
+    "eps",
+    "epsEstimated",
+    "time",
+    "revenue",
+    "revenueEstimated",
+    "updatedFromDate_day",
+    "updatedFromDate_month",
+    "updatedFromDate_year",
+    "fiscalDateEnding_day",
+    "fiscalDateEnding_month",
+    "fiscalDateEnding_year",
+)
 
 
 # credit for implementation: https://stackoverflow.com/a/39068260/12015435
@@ -76,9 +98,32 @@ class Covariates:
         return t_earn
 
     def prepare_earn_series(self, tickers=None, stock_price_series: dict = None):
+        """Earnings past-covs; missing names (IPOs, ETFs, thin coverage) are zero-filled.
+
+        Fund-thin symbols never have EPS/revenue history; we still emit the train
+        schema so past_covariates dim matches the checkpoint (same idea as #33).
+        """
         logger.info("preparing past covariates: earnings estimates ")
+        price_map = stock_price_series if isinstance(stock_price_series, dict) else {}
+        ticker_list = list(price_map.keys()) if price_map else list(tickers or [])
+        t_earn_series = {}
+
+        earn_src = getattr(self, "earnings_loaded_df", None)
+        if earn_src is None or (hasattr(earn_src, "empty") and earn_src.empty):
+            # No earnings in this batch (e.g. sector ETF alone) — fixed schema
+            if price_map:
+                logger.info(
+                    "No earnings loaded for this batch (common for ETFs / fund-thin "
+                    f"names); zero-filling {len(_EARN_FEATURE_COLS)} earn columns"
+                )
+                for t, prices in price_map.items():
+                    t_earn_series[t] = self._zero_cov_from_columns(
+                        _EARN_FEATURE_COLS, prices, fillna_value=-1
+                    )
+            return t_earn_series
+
         # convert date strings to numerical representation
-        earn_df = self.earnings_loaded_df.copy()
+        earn_df = earn_src.copy()
         # logger.info("self.earnings_loaded_df.columns", self.earnings_loaded_df.columns)
         ufd = pd.to_datetime(earn_df["updatedFromDate"])
         ufd_year = ufd.dt.year
@@ -109,16 +154,7 @@ class Covariates:
         earn_df["time"] = pd.Categorical(
             earn_df["time"], categories=["bmo", "amc"]
         ).codes
-        # earn_df["time"] = (
-        #     earn_df["time"]
-        #     .replace(["bmo", "amc", "--", "dmh"], [0, 1, -1, -1], inplace=False)
-        #     .astype("int32")
-        # )
         # convert earnings dataframe to series
-        t_earn_series = {}
-        # Prefer full price dict when provided so missing symbols can be zero-filled
-        price_map = stock_price_series if isinstance(stock_price_series, dict) else {}
-        ticker_list = list(price_map.keys()) if price_map else list(tickers or [])
         for t in ticker_list:
             try:
                 # logger.info(f'ticker: {t}')
@@ -140,19 +176,29 @@ class Covariates:
                 t_earn_series[t] = tes
             except (KeyError, AssertionError, ValueError) as e:
                 logger.warning(
-                    f"No earnings series for {t} ({type(e)}: {e}); will zero-fill if template exists"
+                    f"No earnings series for {t} ({type(e)}: {e}); will zero-fill"
                 )
 
-        # Issue #33: keep IPOs / thin coverage in train by imputing missing earn covs
-        if t_earn_series and price_map:
-            template = next(iter(t_earn_series.values()))
-            for t, prices in price_map.items():
-                if t not in t_earn_series:
-                    logger.info(
-                        f"Zero-filling earnings covariates for {t} "
-                        f"({len(template.components)} columns)"
+        # Issue #33 / fund-thin (ETF, IPO): impute missing earn covs so dim matches train
+        if price_map:
+            template = next(iter(t_earn_series.values()), None)
+            if template is None:
+                logger.info(
+                    "No earnings in batch; zero-filling "
+                    f"{len(_EARN_FEATURE_COLS)} columns for all requested symbols"
+                )
+                for t, prices in price_map.items():
+                    t_earn_series[t] = self._zero_cov_from_columns(
+                        _EARN_FEATURE_COLS, prices, fillna_value=-1
                     )
-                    t_earn_series[t] = self._zero_cov_like(template, prices)
+            else:
+                for t, prices in price_map.items():
+                    if t not in t_earn_series:
+                        logger.info(
+                            f"Zero-filling earnings covariates for {t} "
+                            f"({len(template.components)} columns)"
+                        )
+                        t_earn_series[t] = self._zero_cov_like(template, prices)
 
         return t_earn_series
 
@@ -359,12 +405,47 @@ class Covariates:
 
     def _zero_cov_like(self, template: TimeSeries, like: TimeSeries) -> TimeSeries:
         """Zero-filled series with template columns, aligned to like's time index."""
+        return self._zero_cov_from_columns(list(template.components), like)
+
+    def _zero_cov_from_columns(
+        self, columns, like: TimeSeries, fillna_value: float = 0.0
+    ) -> TimeSeries:
+        """Zero-filled series with explicit column names, aligned to like's index."""
         from canswim.eligibility import timeseries_from_observed_df
 
         idx = pd.DatetimeIndex(pd.to_datetime(like.time_index)).normalize()
-        cols = list(template.components)
-        df = pd.DataFrame(0.0, index=idx, columns=cols)
+        cols = list(columns)
+        df = pd.DataFrame(float(fillna_value), index=idx, columns=cols)
         return timeseries_from_observed_df(df)
+
+    def _parquet_path(self, filename: str) -> str:
+        data_dir = getattr(self, "data_dir", None) or os.getenv("data_dir", "data")
+        third = getattr(self, "data_3rd_party", None) or os.getenv(
+            "data-3rd-party", "data-3rd-party"
+        )
+        # Some loaders use bare "data/data-3rd-party/..." paths historically
+        candidate = os.path.join(data_dir, third, filename)
+        if os.path.isfile(candidate):
+            return candidate
+        legacy = os.path.join("data", "data-3rd-party", filename)
+        return legacy if os.path.isfile(legacy) else candidate
+
+    def _read_template_symbol_frame(self, filename: str) -> Optional[pd.DataFrame]:
+        """Load fund rows for a well-covered template ticker (not the forecast batch)."""
+        path = self._parquet_path(filename)
+        if not os.path.isfile(path):
+            logger.warning(f"Template parquet missing: {path}")
+            return None
+        try:
+            df = pd.read_parquet(
+                path, filters=[("Symbol", "in", list(_TEMPLATE_SYMBOLS))]
+            )
+        except Exception as e:
+            logger.warning(f"Could not load template from {path}: {e}")
+            return None
+        if df is None or df.empty:
+            return None
+        return df
 
     @staticmethod
     def _align_series_on_common_index(a: TimeSeries, b: TimeSeries):
@@ -408,47 +489,49 @@ class Covariates:
         return timeseries_from_observed_df(aligned)
 
     def prepare_key_metrics(self, stock_price_series=None):
+        """Key metrics past-covs; missing names (IPOs, ETFs) are zero-filled to train dim."""
         logger.info("preparing past covariates: key metrics")
-        kms_loaded_df = self.kms_loaded_df.copy()
+        t_kms_series = {}
+        stock_price_series = stock_price_series or {}
+        kms_src = getattr(self, "kms_loaded_df", None)
+        if kms_src is None or (hasattr(kms_src, "empty") and kms_src.empty):
+            cols = self._key_metrics_template_columns()
+            if cols and stock_price_series:
+                logger.info(
+                    "No key metrics loaded for this batch (common for ETFs / "
+                    f"fund-thin names); zero-filling {len(cols)} columns"
+                )
+                for t, prices in stock_price_series.items():
+                    t_kms_series[t] = self._zero_cov_from_columns(
+                        cols, prices, fillna_value=-1
+                    )
+            return t_kms_series
+
+        kms_loaded_df = kms_src.copy()
         # logger.info(kms_loaded_df)
         kms_loaded_df = kms_loaded_df[~kms_loaded_df.index.duplicated(keep="first")]
         assert kms_loaded_df.index.is_unique
-        kms_loaded_df.index
-        len(kms_loaded_df.index)
-        # kms_loaded_df["date"] = pd.to_datetime(kms_loaded_df["date"])
         kms_unique = kms_loaded_df.drop_duplicates()  # subset=["symbol", "date"])
         assert not kms_unique.duplicated().any()
-        # kms_unique = kms_unique.set_index(keys=["symbol", "date"])
         assert not kms_unique.index.has_duplicates
         kms_loaded_df = kms_unique.copy()
-        # convert earnings reporting time - Before Market Open / After Market Close - categories to numerical representation
+        # convert period categories to numerical representation
         if "period" in kms_loaded_df.columns:
             kms_loaded_df["period"] = pd.Categorical(
                 kms_loaded_df["period"], categories=["_", "Q1", "Q2", "Q3", "Q4"]
             ).codes
-        # kms_loaded_df["period"] = (
-        #     kms_loaded_df["period"]
-        #     .replace(["Q1", "Q2", "Q3", "Q4"], [1, 2, 3, 4], inplace=False)
-        #     .astype("int32")
-        # )
 
-        t_kms_series = {}
         for t, prices in stock_price_series.items():
             try:
                 # logger.info(f"ticker {t}")
                 kms_df = kms_loaded_df.loc[[t]].copy()
-                # logger.info(f'ticker_series[{t}] start time, end time: {ticker_series[t].start_time()}, {ticker_series[t].end_time()}')
-                # logger.info(f'kms_ser_df start time, end time: {kms_df.index[0]}, {kms_df.index[-1]}')
                 kms_df = kms_df.droplevel("Symbol")
                 kms_df.index = pd.to_datetime(kms_df.index)
-                # logger.info(f'index type for {t}: {type(t_kms.index)}')
                 kms_df = kms_df[~kms_df.index.duplicated(keep="last")]
                 assert kms_df.index.is_unique
                 kms_df = kms_df.dropna()
-                # logger.info("kms_df\n", kms_df[kms_df.isnull()])
                 assert not kms_df.isnull().values.any()
                 assert len(kms_df) > 0, f"No key metrics available for {t}"
-                # logger.info(f'{t} earnings: \n{t_kms.columns}')
                 kms_df = self.df_index_to_biz_days(kms_df)
                 # Weekend/holiday mapping can create duplicate biz-day labels
                 # (issue #75: pandas reindex raises ValueError).
@@ -459,33 +542,58 @@ class Covariates:
                 tkms_series_tmp = TimeSeries.from_dataframe(
                     kms_df, freq="B", fill_missing_dates=True
                 )
-                # logger.info(f'kms_series_tmp start time, end time: {tkms_series_tmp.start_time()}, {tkms_series_tmp.end_time()}')
                 kms_df_ext = tkms_series_tmp.pd_dataframe()
                 kms_df_ext.ffill(inplace=True)
                 kms_ser = TimeSeries.from_dataframe(
                     kms_df_ext, freq="B", fillna_value=-1
                 )
                 kms_ser_padded = self.pad_covs(cov_series=kms_ser, price_series=prices)
-                # logger.info(f'kms_ser_padded start time, end time: {kms_ser_padded.start_time()}, {kms_ser_padded.end_time()}')
                 assert (
                     len(kms_ser_padded.gaps()) == 0
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
             except (KeyError, AssertionError, ValueError) as e:
-                # ValueError: duplicate-index reindex (dirty fund data) — skip ticker
-                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
-        # Issue #33: impute missing key metrics so symbols without coverage stay in train
-        if t_kms_series and stock_price_series:
-            template = next(iter(t_kms_series.values()))
-            for t, prices in stock_price_series.items():
-                if t not in t_kms_series:
+                logger.warning(
+                    f"No key metrics for {t} ({type(e)}: {e}); will zero-fill"
+                )
+        # Issue #33 / fund-thin (ETF, IPO): impute missing key metrics so dim matches
+        if stock_price_series:
+            template = next(iter(t_kms_series.values()), None)
+            if template is None:
+                cols = self._key_metrics_template_columns()
+                if cols:
                     logger.info(
-                        f"Zero-filling key metrics for {t} "
-                        f"({len(template.components)} columns)"
+                        f"No key metrics in batch; zero-filling {len(cols)} columns "
+                        "for all requested symbols"
                     )
-                    t_kms_series[t] = self._zero_cov_like(template, prices)
-        # logger.info("t_kms_series:", t_kms_series)
+                    for t, prices in stock_price_series.items():
+                        t_kms_series[t] = self._zero_cov_from_columns(
+                            cols, prices, fillna_value=-1
+                        )
+                else:
+                    logger.warning(
+                        "No key-metrics template available; stack will omit this block"
+                    )
+            else:
+                for t, prices in stock_price_series.items():
+                    if t not in t_kms_series:
+                        logger.info(
+                            f"Zero-filling key metrics for {t} "
+                            f"({len(template.components)} columns)"
+                        )
+                        t_kms_series[t] = self._zero_cov_like(template, prices)
         return t_kms_series
+
+    def _key_metrics_template_columns(self) -> list[str]:
+        """Column names for key-metrics past covs when the batch has no rows."""
+        src = getattr(self, "kms_loaded_df", None)
+        if src is not None and not src.empty:
+            return list(src.columns)
+        # Load a covered template symbol (batch filter left the frame empty)
+        df = self._read_template_symbol_frame("keymetrics_history.parquet")
+        if df is not None and not df.empty:
+            return list(df.columns)
+        return []
 
     def _price_covariate_series_from_df(self, df: pd.DataFrame, train_date_start=None):
         """Build multi-asset market price covariates (broad/sectors/industry funds).
@@ -733,57 +841,118 @@ class Covariates:
         """
         logger.info(f"preparing future covariates: analyst estimates[{period}]")
         assert period in fiscal_periods
+        stock_price_series = stock_price_series or {}
         t_est_series = {}
-        for t, prices in stock_price_series.items():
-            # logger.info(f'ticker {t}')
-            try:
-                est_df = all_est_df.loc[[t]].copy()
-                est_df = est_df.droplevel("Symbol")
-                est_df.index = pd.to_datetime(est_df.index)
-                assert not est_df.index.duplicated().any()
-                # expand series with estimates from future periods
-                est_df = self.est_add_future_periods(
-                    est_df=est_df, n_future_periods=n_future_periods, period=period
-                )
-                # logger.info(f'{t} estimates columns: \n{est_df.columns}')
-                # align dates to business days
-                est_df = self.df_index_to_biz_days(est_df)
-                # there should be no duplicate rows
-                est_df = est_df[~est_df.index.duplicated(keep="first")]
-                assert not est_df.index.duplicated().any()
-                # expand date index to match target price series dates and pad data
-                est_series_tmp = TimeSeries.from_dataframe(
-                    est_df, freq="B", fill_missing_dates=True
-                )
-                # logger.info(f'est_series_tmp start time, end time: {est_series_tmp.start_time()}, {est_series_tmp.end_time()}')
-                est_df = est_series_tmp.pd_dataframe()
-                # Make current annual/quarter period estimates available on all business days through end of the period
-                est_df.ffill(inplace=True)
-                est_ser = TimeSeries.from_dataframe(est_df, freq="B", fillna_value=-1)
-                est_padded = self.pad_covs(
-                    cov_series=est_ser, price_series=prices, fillna_value=-1
-                )
-                assert (
-                    len(est_padded.gaps()) == 0
-                ), f"found gaps in series: \n{est_padded.gaps()}"
-                t_est_series[t] = est_padded
-
-            except (KeyError, AssertionError, ValueError) as e:
-                logger.info(
-                    f"No analyst estimates[{period}] for {t} ({type(e)}: {e}); "
-                    "will zero-fill if template exists"
-                )
-        # Issue #33: impute missing analyst estimates so IPOs stay in train/forecast
-        if t_est_series and stock_price_series:
-            template = next(iter(t_est_series.values()))
+        empty_frame = (
+            all_est_df is None
+            or (hasattr(all_est_df, "empty") and all_est_df.empty)
+        )
+        if not empty_frame:
             for t, prices in stock_price_series.items():
-                if t not in t_est_series:
-                    logger.info(
-                        f"Zero-filling analyst estimates[{period}] for {t} "
-                        f"({len(template.components)} columns)"
+                # logger.info(f'ticker {t}')
+                try:
+                    est_df = all_est_df.loc[[t]].copy()
+                    est_df = est_df.droplevel("Symbol")
+                    est_df.index = pd.to_datetime(est_df.index)
+                    assert not est_df.index.duplicated().any()
+                    # expand series with estimates from future periods
+                    est_df = self.est_add_future_periods(
+                        est_df=est_df,
+                        n_future_periods=n_future_periods,
+                        period=period,
                     )
-                    t_est_series[t] = self._zero_cov_like(template, prices)
+                    # align dates to business days
+                    est_df = self.df_index_to_biz_days(est_df)
+                    est_df = est_df[~est_df.index.duplicated(keep="first")]
+                    assert not est_df.index.duplicated().any()
+                    est_series_tmp = TimeSeries.from_dataframe(
+                        est_df, freq="B", fill_missing_dates=True
+                    )
+                    est_df = est_series_tmp.pd_dataframe()
+                    # Make current period estimates available through end of period
+                    est_df.ffill(inplace=True)
+                    est_ser = TimeSeries.from_dataframe(
+                        est_df, freq="B", fillna_value=-1
+                    )
+                    est_padded = self.pad_covs(
+                        cov_series=est_ser, price_series=prices, fillna_value=-1
+                    )
+                    assert (
+                        len(est_padded.gaps()) == 0
+                    ), f"found gaps in series: \n{est_padded.gaps()}"
+                    t_est_series[t] = est_padded
+
+                except (KeyError, AssertionError, ValueError) as e:
+                    logger.info(
+                        f"No analyst estimates[{period}] for {t} ({type(e)}: {e}); "
+                        "will zero-fill"
+                    )
+        # Issue #33 / fund-thin (ETF, IPO): impute so future_cov dim matches train
+        if stock_price_series:
+            template = next(iter(t_est_series.values()), None)
+            if template is None:
+                logger.info(
+                    f"No analyst estimates[{period}] in batch "
+                    "(common for ETFs / fund-thin names); loading disk template"
+                )
+                template = self._build_est_template_from_disk(
+                    period=period,
+                    n_future_periods=n_future_periods,
+                    price_like=next(iter(stock_price_series.values())),
+                )
+            if template is not None:
+                for t, prices in stock_price_series.items():
+                    if t not in t_est_series:
+                        logger.info(
+                            f"Zero-filling analyst estimates[{period}] for {t} "
+                            f"({len(template.components)} columns)"
+                        )
+                        t_est_series[t] = self._zero_cov_like(template, prices)
+            else:
+                logger.warning(
+                    f"No analyst estimates[{period}] template; "
+                    "stack may omit this block (dim risk)"
+                )
         return t_est_series
+
+    def _build_est_template_from_disk(
+        self,
+        *,
+        period: str,
+        n_future_periods: int,
+        price_like: TimeSeries,
+    ) -> Optional[TimeSeries]:
+        """Build expanded estimate column template from a covered symbol on disk."""
+        df = self._read_template_symbol_frame(
+            f"analyst_estimates_{period}.parquet"
+        )
+        if df is None or df.empty:
+            # Fall back to already-loaded (possibly empty) frame's structure — fail
+            loaded = (getattr(self, "est_loaded_df", None) or {}).get(period)
+            if loaded is None or loaded.empty:
+                return None
+            df = loaded
+        try:
+            # Use first available template symbol
+            sym = df.index.get_level_values(0)[0]
+            est_df = df.loc[[sym]].copy()
+            est_df = est_df.droplevel("Symbol")
+            est_df.index = pd.to_datetime(est_df.index)
+            est_df = est_df[~est_df.index.duplicated(keep="last")]
+            if est_df.empty:
+                return None
+            est_df = self.est_add_future_periods(
+                est_df=est_df,
+                n_future_periods=n_future_periods,
+                period=period,
+            )
+            cols = list(est_df.columns)
+            return self._zero_cov_from_columns(cols, price_like, fillna_value=-1)
+        except Exception as e:
+            logger.warning(
+                f"Could not build estimates[{period}] template from disk: {e}"
+            )
+            return None
 
     def prepare_analyst_estimates(self, stock_price_series=None):
         logger.info("preparing future covariates: analyst estimates")

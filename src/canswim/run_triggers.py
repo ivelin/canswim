@@ -104,7 +104,16 @@ COVARIATE_FAIL_MSG = (
     "Could not build a forecast for: {symbols}. "
     "Prices may be fine, but model inputs (ownership, estimates, or other fundamentals) "
     "are missing or could not be aligned. "
-    "Try Update market data again (includes fundamentals), then re-run the forecast."
+    "Try Update market data again (includes fundamentals), then re-run the forecast. "
+    "ETFs and other fund-thin names use zero-filled fund covariates (like IPOs); "
+    "if this still fails, see Technical log for a feature-dimension mismatch."
+)
+
+DIMENSIONALITY_FAIL_MSG = (
+    "Model feature mismatch for: {symbols}. "
+    "Local market inputs did not match the trained model’s expected columns "
+    "(common for ETFs or incomplete fund data). "
+    "Retry after Update market data; if it persists, report via GitHub issues."
 )
 
 STALE_PRICE_START_MSG = (
@@ -1034,9 +1043,15 @@ def forecast_for_tickers(
         return out
     except Exception as e:
         logger.exception("forecast_for_tickers failed")
+        err = str(e)
+        # Map Darts dim errors to consumer language (ETFs / fund-thin often hit this)
+        if "dimensionality" in err.lower() or "past_covariates" in err.lower():
+            err = DIMENSIONALITY_FAIL_MSG.format(
+                symbols=", ".join(tickers) if tickers else "requested symbols"
+            )
         return {
             "ok": False,
-            "error": str(e),
+            "error": err,
             "mode": mode,
             "tickers": tickers,
             "resolved_start": start_info,
@@ -1046,6 +1061,7 @@ def forecast_for_tickers(
             "skipped": skipped_all,
             "messages": messages,
             "model_loaded": model_loaded,
+            "fail_reason": "covariates",
         }
     finally:
         if prev_list is None:

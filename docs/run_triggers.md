@@ -100,17 +100,30 @@ python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-0
 
 More CLI recipes: [cli.md](cli.md). MCP: [mcp.md](mcp.md).
 
-## Missing fundamentals (IPO / thin coverage)
+## Missing fundamentals (IPO / ETF / fund-thin)
 
 The model stack uses **zero-fill / sentinel fill** when a symbol has prices but no
-earnings, key metrics, institutional ownership, or analyst estimates (common for
-recent IPOs and small caps). That keeps feature dimensionality fixed for train
-and forecast so those names are not dropped solely for missing fundamentals.
+earnings, key metrics, institutional ownership, or analyst estimates. That keeps
+feature dimensionality fixed for train and forecast so those names are not
+dropped solely for missing fundamentals.
+
+Applies to:
+
+| Case | Why fund rows are missing |
+|------|---------------------------|
+| **Recent IPOs / thin coverage** | Too new or sparse for FMP fundamentals |
+| **ETFs / funds** | No corporate EPS, key metrics, or sell-side estimates by design |
+| **Batch of only fund-thin names** | No peer in the same run to copy a column template from |
+
+When the batch has **no** fund rows at all (e.g. refresh **XLF** alone), the
+pipeline still builds train-shaped columns from a fixed earnings schema and/or a
+disk template (covered large-cap symbols such as AAPL) so Darts
+`past_covariates` / `future_covariates` dims match the checkpoint.
 
 - Prices remain ground-truth (no invented OHLCV). Short price history still fails
   readiness checks (~2y for forecast-scoped runs).
-- Ownership fill: `0`. Earnings / estimates: same padding style as sparse known
-  series (`-1` / zero columns aligned to the price calendar when a template exists).
+- Ownership fill: `0`. Earnings / estimates: `-1` / zero columns aligned to the
+  price calendar (same idea as IPO imputation, issue #33).
 
 ## Design rules
 
