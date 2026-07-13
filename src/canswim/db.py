@@ -330,6 +330,19 @@ def init_search_db(
     if _should_reuse_db(db_path, same_data):
         logger.info("Reusing search database")
         repair = ensure_optional_search_tables(db_path, paths=paths)
+        # Grow Charts list from local prices/forecasts without a full rebuild
+        # (CSV-only stock_tickers used to hide gathered portfolio symbols).
+        try:
+            expanded = expand_stock_tickers_from_local_data(
+                db_path,
+                stock_tickers_path=stock_tickers_path,
+                stocks_price_path=stocks_price_path,
+                forecast_path=forecast_path,
+            )
+            repair = dict(repair or {})
+            repair["expanded_tickers"] = expanded
+        except Exception as e:
+            logger.warning(f"expand stock_tickers on reuse: {e}")
         status = search_db_status(db_path)
         return {
             "rebuilt": False,
@@ -342,19 +355,19 @@ def init_search_db(
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect_readwrite(db_path) as db_con:
         db_con.sql("SET enable_progress_bar = true;")
-        logger.info("Creating stock_tickers table")
-        db_con.sql(
-            f"""--sql
-            CREATE OR REPLACE TABLE stock_tickers
-            AS SELECT * FROM read_csv('{stock_tickers_path}', header=True)
-            """
+        logger.info(
+            "Creating stock_tickers table (CSV ∪ local prices ∪ local forecasts)"
         )
-        db_con.table("stock_tickers").show()
-        db_con.sql(
-            """--sql
-            CREATE UNIQUE INDEX stock_tickers_sym_idx ON stock_tickers (symbol)
-            """
+        _create_stock_tickers_table(
+            db_con,
+            stock_tickers_path=stock_tickers_path,
+            stocks_price_path=stocks_price_path,
+            forecast_path=forecast_path,
         )
+        try:
+            db_con.table("stock_tickers").show()
+        except Exception:
+            pass
         logger.info(
             """
             Creating forecast tables optimized for search. May take a few minutes.
@@ -667,17 +680,210 @@ def _format_date_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFra
 
 
 def list_tickers(db_path: str) -> list[str]:
-    """Return sorted unique symbols from stock_tickers."""
+    """Return sorted unique symbols from stock_tickers (Charts dropdown source)."""
     logger.info("Loading stock tickers from stock_tickers table")
     with connect_readonly(db_path) as db_con:
+        cols = [r[0] for r in db_con.execute("DESCRIBE stock_tickers").fetchall()]
+        sym_col = "Symbol" if "Symbol" in cols else "symbol"
         tickers_df = db_con.sql(
-            "SELECT symbol FROM stock_tickers WHERE symbol IS NOT NULL ORDER BY symbol"
+            f'SELECT "{sym_col}" AS symbol FROM stock_tickers '
+            f'WHERE "{sym_col}" IS NOT NULL ORDER BY 1'
         ).df()
     logger.info(f"Loaded {len(tickers_df)} symbols in total")
-    # Preserve dashboard behavior: column may appear as Symbol or symbol
-    col = "Symbol" if "Symbol" in tickers_df.columns else "symbol"
-    stock_list = sorted(set(tickers_df[col].tolist()))
+    stock_list = sorted(
+        {
+            str(s).strip().upper()
+            for s in tickers_df["symbol"].tolist()
+            if s is not None and str(s).strip()
+        }
+    )
     return stock_list
+
+
+def _symbols_from_ticker_csv(csv_path: str) -> set[str]:
+    path = Path(csv_path)
+    if not path.is_file():
+        return set()
+    try:
+        df = pd.read_csv(path, dtype=str)
+        col = "Symbol" if "Symbol" in df.columns else (
+            "symbol" if "symbol" in df.columns else df.columns[0]
+        )
+        return {
+            str(s).strip().upper()
+            for s in df[col].dropna().tolist()
+            if str(s).strip()
+        }
+    except Exception as e:
+        logger.warning(f"Could not read ticker CSV {csv_path}: {e}")
+        return set()
+
+
+def _symbols_from_price_parquet(price_path: str) -> set[str]:
+    path = Path(price_path)
+    if not path.is_file():
+        return set()
+    try:
+        # Lightweight: only Symbol level of multi-index or column
+        df = pd.read_parquet(path)
+        if isinstance(df.index, pd.MultiIndex):
+            names = list(df.index.names or [])
+            if "Symbol" in names:
+                lvl = names.index("Symbol")
+                return {
+                    str(s).strip().upper()
+                    for s in df.index.get_level_values(lvl).unique()
+                    if s is not None and str(s).strip()
+                }
+        for col in ("Symbol", "symbol"):
+            if col in df.columns:
+                return {
+                    str(s).strip().upper()
+                    for s in df[col].dropna().unique()
+                    if str(s).strip()
+                }
+    except Exception as e:
+        logger.warning(f"Could not scan price parquet symbols: {e}")
+    return set()
+
+
+def _symbols_from_forecast_hive(forecast_path: str) -> set[str]:
+    root = Path(forecast_path)
+    if not root.is_dir():
+        return set()
+    out: set[str] = set()
+    try:
+        for p in root.glob("symbol=*"):
+            # hive dir name: symbol=AAPL
+            part = p.name
+            if part.startswith("symbol="):
+                sym = part.split("=", 1)[1].strip().upper()
+                if sym:
+                    out.add(sym)
+    except Exception as e:
+        logger.warning(f"Could not scan forecast hive symbols: {e}")
+    return out
+
+
+def collect_search_universe_symbols(
+    *,
+    stock_tickers_path: Optional[str] = None,
+    stocks_price_path: Optional[str] = None,
+    forecast_path: Optional[str] = None,
+    extra_symbols: Optional[Sequence[str]] = None,
+) -> list[str]:
+    """Union of configured list + local price + local forecast symbols.
+
+    Charts dropdown should not be limited to a slim CSV (e.g. few_stocks.csv)
+    when the operator has gathered/forecast many more names locally.
+    """
+    paths = DataPaths.from_env()
+    stock_tickers_path = stock_tickers_path or paths.stock_tickers_path
+    stocks_price_path = stocks_price_path or paths.stocks_price_path
+    forecast_path = forecast_path or paths.forecast_path
+
+    universe: set[str] = set()
+    universe |= _symbols_from_ticker_csv(stock_tickers_path)
+    universe |= _symbols_from_price_parquet(stocks_price_path)
+    universe |= _symbols_from_forecast_hive(forecast_path)
+    if extra_symbols:
+        universe |= {
+            str(s).strip().upper()
+            for s in extra_symbols
+            if s and str(s).strip()
+        }
+    return sorted(universe)
+
+
+def _create_stock_tickers_table(
+    db_con,
+    *,
+    stock_tickers_path: str,
+    stocks_price_path: str,
+    forecast_path: str,
+) -> int:
+    """Create ``stock_tickers(symbol)`` from CSV ∪ price parquet ∪ forecast hive."""
+    symbols = collect_search_universe_symbols(
+        stock_tickers_path=stock_tickers_path,
+        stocks_price_path=stocks_price_path,
+        forecast_path=forecast_path,
+    )
+    if not symbols:
+        # Fall back to CSV only raw load if collection empty
+        if Path(stock_tickers_path).is_file():
+            db_con.sql(
+                f"""--sql
+                CREATE OR REPLACE TABLE stock_tickers AS
+                SELECT upper(CAST(Symbol AS VARCHAR)) AS symbol
+                FROM read_csv('{stock_tickers_path}', header=True)
+                WHERE Symbol IS NOT NULL
+                """
+            )
+        else:
+            db_con.sql(
+                """--sql
+                CREATE OR REPLACE TABLE stock_tickers (
+                    symbol VARCHAR
+                )
+                """
+            )
+    else:
+        # Parameterized insert via VALUES
+        values_sql = ", ".join(
+            "('" + s.replace("'", "''") + "')" for s in symbols
+        )
+        db_con.sql(
+            f"""--sql
+            CREATE OR REPLACE TABLE stock_tickers AS
+            SELECT * FROM (VALUES {values_sql}) t(symbol)
+            """
+        )
+    try:
+        db_con.sql(
+            """--sql
+            CREATE UNIQUE INDEX stock_tickers_sym_idx ON stock_tickers (symbol)
+            """
+        )
+    except Exception as e:
+        logger.debug(f"stock_tickers index: {e}")
+    n = db_con.execute("SELECT count(*) FROM stock_tickers").fetchone()[0]
+    logger.info(f"stock_tickers universe size: {n}")
+    return int(n)
+
+
+def expand_stock_tickers_from_local_data(
+    db_path: str,
+    *,
+    stock_tickers_path: Optional[str] = None,
+    stocks_price_path: Optional[str] = None,
+    forecast_path: Optional[str] = None,
+    sync_closes: bool = True,
+) -> dict[str, Any]:
+    """Add any local price/forecast/CSV symbols missing from stock_tickers.
+
+    Optionally sync close prices for newly added symbols so Charts can plot.
+    """
+    paths = DataPaths.from_env()
+    stocks_price_path = stocks_price_path or paths.stocks_price_path
+    universe = collect_search_universe_symbols(
+        stock_tickers_path=stock_tickers_path,
+        stocks_price_path=stocks_price_path,
+        forecast_path=forecast_path,
+    )
+    res = ensure_symbols_in_search_db(db_path, universe)
+    if sync_closes and res.get("ok") and (res.get("added") or universe):
+        # Load closes for symbols that may lack them after a slim rebuild
+        try:
+            sync = sync_gathered_symbols(
+                db_path,
+                universe,
+                stocks_price_path=stocks_price_path,
+            )
+            res["close_sync"] = sync
+        except Exception as e:
+            logger.warning(f"close sync after ticker expand: {e}")
+            res["close_sync"] = {"ok": False, "error": str(e)}
+    return res
 
 
 def ensure_symbols_in_search_db(
