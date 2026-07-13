@@ -76,6 +76,19 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `forecast_tickers` | Scoped forecast; blank start = monthly catch-up + live | `MCP_ALLOW_RUNS=1` |
 | `refresh_tickers` | Gather + catch-up forecast (≡ dashboard **Refresh data & forecasts**) | `MCP_ALLOW_RUNS=1` |
 
+### Progress streaming (long runs)
+
+`refresh_tickers`, `forecast_tickers`, and `gather_tickers` stream **live progress** while they run:
+
+| Channel | When the client sees it |
+|---------|-------------------------|
+| MCP `notifications/progress` | Client includes a `progressToken` in the tool call request meta (standard MCP progress protocol). Values are **0–100** with `total=100` and a human `message` (e.g. “Step 2/2: catch-up forecasts…”, origin/symbol stages). |
+| MCP log (`info`) | Same stage messages, when the client supports logging notifications. |
+
+Progress is the **same pipeline** as the dashboard Run-tab bar (`run_triggers` → `progress_cb`). Work runs off the MCP event loop so notifications can flush mid-run. Final tool result is still the usual `{ok, data|error}` payload when the job finishes.
+
+Clients that omit `progressToken` get only the final result (no error).
+
 ### Custom SQL (read-only)
 
 1. Call **`get_db_schema`** so the client AI sees tables, types, and indexes.

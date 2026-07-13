@@ -114,6 +114,70 @@ def test_write_tools_blocked_without_opt_in(mcp_env, monkeypatch):
     assert f["ok"] is False
 
 
+def test_bind_mcp_progress_streams_report_and_info():
+    """progress_cb from run_triggers → MCP report_progress + info."""
+    import asyncio
+
+    from canswim.mcp.tools._common import bind_mcp_progress
+
+    class _FakeCtx:
+        def __init__(self):
+            self.progress: list[tuple] = []
+            self.logs: list[str] = []
+
+        async def report_progress(self, progress, total=None, message=None):
+            self.progress.append((progress, total, message))
+
+        async def info(self, message, **extra):
+            self.logs.append(message)
+
+    async def _run():
+        ctx = _FakeCtx()
+        cb = bind_mcp_progress(ctx)
+        assert cb is not None
+        # Simulate worker-thread style calls on the same loop via to_thread
+        def _work():
+            cb(0.02, "Step 1/2: updating market data…")
+            cb(0.5, "Catch-up origin 3/13…")
+            cb(1.0, "Refresh data & forecasts complete.")
+
+        await asyncio.to_thread(_work)
+        return ctx
+
+    ctx = asyncio.run(_run())
+    assert len(ctx.progress) == 3
+    assert ctx.progress[0][0] == pytest.approx(2.0)
+    assert ctx.progress[0][1] == 100.0
+    assert "market data" in (ctx.progress[0][2] or "").lower()
+    assert ctx.progress[-1][0] == pytest.approx(100.0)
+    assert len(ctx.logs) == 3
+    assert "complete" in ctx.logs[-1].lower()
+
+
+def test_refresh_impl_forwards_progress_cb(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    seen: list[tuple[float, str]] = []
+
+    def _cb(frac: float, desc: str = "") -> None:
+        seen.append((frac, desc))
+
+    from unittest.mock import patch
+
+    with patch(
+        "canswim.mcp.tools.runs.refresh_symbols",
+        return_value={
+            "ok": True,
+            "ready": ["WWD"],
+            "incomplete": [],
+            "gather": {"ok": True},
+            "forecast": {"ok": True, "forecasted": ["WWD"]},
+        },
+    ) as rs:
+        out = run_tools.refresh_tickers_impl("WWD", progress_cb=_cb)
+    assert out["ok"] is True
+    assert rs.call_args.kwargs.get("progress_cb") is _cb
+
+
 def test_resolve_forecast_start_always_available(mcp_env, monkeypatch):
     monkeypatch.delenv("MCP_ALLOW_RUNS", raising=False)
     r = run_tools.resolve_forecast_start_impl(start_date="2026-03-05")
