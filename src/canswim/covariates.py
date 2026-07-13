@@ -75,7 +75,7 @@ class Covariates:
             assert is_business_day(i)
         return t_earn
 
-    def prepare_earn_series(self, tickers=None):
+    def prepare_earn_series(self, tickers=None, stock_price_series: dict = None):
         logger.info("preparing past covariates: earnings estimates ")
         # convert date strings to numerical representation
         earn_df = self.earnings_loaded_df.copy()
@@ -116,7 +116,10 @@ class Covariates:
         # )
         # convert earnings dataframe to series
         t_earn_series = {}
-        for t in list(tickers):
+        # Prefer full price dict when provided so missing symbols can be zero-filled
+        price_map = stock_price_series if isinstance(stock_price_series, dict) else {}
+        ticker_list = list(price_map.keys()) if price_map else list(tickers or [])
+        for t in ticker_list:
             try:
                 # logger.info(f'ticker: {t}')
                 t_earn = earn_df.loc[[t]].copy()
@@ -128,12 +131,6 @@ class Covariates:
                 t_earn = self.align_earn_to_business_days(t_earn)
                 # drop rows with duplicate datetime index values
                 t_earn = t_earn[~t_earn.index.duplicated(keep="last")]
-                # t_earn = (
-                #     t_earn.reset_index()
-                #     .drop_duplicates(subset="Date", keep="last")
-                #     .set_index("Date")
-                # )
-                # logger.info(f't_earn freq: {t_earn.index}')
                 tes_tmp = TimeSeries.from_dataframe(
                     t_earn, freq="B", fill_missing_dates=True
                 )
@@ -141,8 +138,21 @@ class Covariates:
                 tes = TimeSeries.from_dataframe(t_earn, fillna_value=-1)
                 assert len(tes.gaps()) == 0
                 t_earn_series[t] = tes
-            except KeyError as e:
-                logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+            except (KeyError, AssertionError, ValueError) as e:
+                logger.warning(
+                    f"No earnings series for {t} ({type(e)}: {e}); will zero-fill if template exists"
+                )
+
+        # Issue #33: keep IPOs / thin coverage in train by imputing missing earn covs
+        if t_earn_series and price_map:
+            template = next(iter(t_earn_series.values()))
+            for t, prices in price_map.items():
+                if t not in t_earn_series:
+                    logger.info(
+                        f"Zero-filling earnings covariates for {t} "
+                        f"({len(template.components)} columns)"
+                    )
+                    t_earn_series[t] = self._zero_cov_like(template, prices)
 
         return t_earn_series
 
@@ -464,6 +474,16 @@ class Covariates:
             except (KeyError, AssertionError, ValueError) as e:
                 # ValueError: duplicate-index reindex (dirty fund data) — skip ticker
                 logger.warning(f"Skipping {t} due to error: {type(e)}: {e}")
+        # Issue #33: impute missing key metrics so symbols without coverage stay in train
+        if t_kms_series and stock_price_series:
+            template = next(iter(t_kms_series.values()))
+            for t, prices in stock_price_series.items():
+                if t not in t_kms_series:
+                    logger.info(
+                        f"Zero-filling key metrics for {t} "
+                        f"({len(template.components)} columns)"
+                    )
+                    t_kms_series[t] = self._zero_cov_like(template, prices)
         # logger.info("t_kms_series:", t_kms_series)
         return t_kms_series
 
@@ -748,11 +768,21 @@ class Covariates:
                 ), f"found gaps in series: \n{est_padded.gaps()}"
                 t_est_series[t] = est_padded
 
-            except KeyError as e:
+            except (KeyError, AssertionError, ValueError) as e:
                 logger.info(
-                    f"""Skipping {t} from covariates series. 
-                        No analyst estimates available for {t}, error: {type(e)}, {e}"""
+                    f"No analyst estimates[{period}] for {t} ({type(e)}: {e}); "
+                    "will zero-fill if template exists"
                 )
+        # Issue #33: impute missing analyst estimates so IPOs stay in train/forecast
+        if t_est_series and stock_price_series:
+            template = next(iter(t_est_series.values()))
+            for t, prices in stock_price_series.items():
+                if t not in t_est_series:
+                    logger.info(
+                        f"Zero-filling analyst estimates[{period}] for {t} "
+                        f"({len(template.components)} columns)"
+                    )
+                    t_est_series[t] = self._zero_cov_like(template, prices)
         return t_est_series
 
     def prepare_analyst_estimates(self, stock_price_series=None):
@@ -782,12 +812,15 @@ class Covariates:
         past_covariates = self.get_price_covariates(
             stock_price_series=stock_price_series, target_columns=target_columns
         )
-        # add revenue and earnings covariates
-        earn_covariates = self.prepare_earn_series(tickers=stock_price_series.keys())
+        # add revenue and earnings covariates (missing → zero-fill for train IPOs #33)
+        earn_covariates = self.prepare_earn_series(
+            tickers=stock_price_series.keys(),
+            stock_price_series=stock_price_series,
+        )
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=earn_covariates
         )
-        # add key metrics covariates
+        # add key metrics covariates (missing → zero-fill inside prepare_key_metrics)
         kms_series = self.prepare_key_metrics(stock_price_series=stock_price_series)
         past_covariates = self.stack_covariates(
             old_covs=past_covariates, new_covs=kms_series
@@ -1087,17 +1120,20 @@ class Covariates:
         quarter_est_series, annual_est_series = self.prepare_analyst_estimates(
             stock_price_series=stock_price_series
         )
+        # min_samples=1 on optional estimate stacks so short/IPO series are not
+        # dropped solely for lacking analyst coverage (issue #33). Length vs
+        # train min_samples is enforced later on targets.
         if quarter_est_series:
             future_covariates = self.stack_covariates(
                 old_covs=future_covariates,
                 new_covs=quarter_est_series,
-                min_samples=min_samples,
+                min_samples=1,
             )
         if annual_est_series:
             future_covariates = self.stack_covariates(
                 old_covs=future_covariates,
                 new_covs=annual_est_series,
-                min_samples=min_samples,
+                min_samples=1,
             )
         # extend covars into forecast horizon future dates
         future_covariates = self.__extend_series(

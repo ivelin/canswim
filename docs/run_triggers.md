@@ -74,6 +74,18 @@ python -m canswim forecast --tickers "AAPL,MSFT" --forecast_start_date 2026-03-0
 
 More CLI recipes: [cli.md](cli.md). MCP: [mcp.md](mcp.md).
 
+## Missing fundamentals (IPO / thin coverage)
+
+The model stack uses **zero-fill / sentinel fill** when a symbol has prices but no
+earnings, key metrics, institutional ownership, or analyst estimates (common for
+recent IPOs and small caps). That keeps feature dimensionality fixed for train
+and forecast so those names are not dropped solely for missing fundamentals.
+
+- Prices remain ground-truth (no invented OHLCV). Short price history still fails
+  readiness checks (~2y for forecast-scoped runs).
+- Ownership fill: `0`. Earnings / estimates: same padding style as sparse known
+  series (`-1` / zero columns aligned to the price calendar when a template exists).
+
 ## Design rules
 
 1. One orchestration for CLI / GUI / MCP.
@@ -81,3 +93,4 @@ More CLI recipes: [cli.md](cli.md). MCP: [mcp.md](mcp.md).
 3. Fail closed on incomplete forecast data (prices or covariates).
 4. Consumer copy in the product; policy detail in this doc.
 5. Parquet is the system of record; DuckDB is the search/UI cache ([data_store.md](data_store.md)).
+6. Impute missing optional fundamentals rather than excluding symbols (train + forecast).
