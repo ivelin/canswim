@@ -72,14 +72,21 @@ def test_tool_names_cover_surface():
         "scan_forecasts",
         "get_close_price",
         "get_backtest_error",
+        "get_db_schema",
         "run_select",
         "resolve_forecast_start",
         "gather_tickers",
         "forecast_tickers",
+        "refresh_tickers",
     }
     assert set(TOOL_NAMES) == expected
-    assert set(WRITE_TOOL_NAMES) == {"gather_tickers", "forecast_tickers"}
+    assert set(WRITE_TOOL_NAMES) == {
+        "gather_tickers",
+        "forecast_tickers",
+        "refresh_tickers",
+    }
     assert "resolve_forecast_start" in READ_TOOL_NAMES
+    assert "get_db_schema" in READ_TOOL_NAMES
 
 
 def test_health_and_info(mcp_env, monkeypatch):
@@ -160,8 +167,31 @@ def test_close_and_error(mcp_env):
 def test_run_select_ok_and_reject(mcp_env):
     ok = query.run_select_impl("SELECT symbol FROM stock_tickers")
     assert ok["ok"] is True
+    assert ok["data"]["read_only"] is True
+    # CTE allowed
+    cte = query.run_select_impl(
+        "WITH t AS (SELECT symbol FROM stock_tickers) SELECT * FROM t"
+    )
+    assert cte["ok"] is True
     bad = query.run_select_impl("DROP TABLE forecast")
     assert bad["ok"] is False
+    bad2 = query.run_select_impl("INSERT INTO stock_tickers VALUES ('ZZZ')")
+    assert bad2["ok"] is False
+    bad3 = query.run_select_impl("SELECT 1; DELETE FROM forecast")
+    assert bad3["ok"] is False
+
+
+def test_get_db_schema(mcp_env):
+    res = query.get_db_schema_impl(include_row_counts=True, format="both")
+    assert res["ok"] is True
+    data = res["data"]
+    assert data["read_only"] is True
+    assert "stock_tickers" in (data.get("table_names") or [])
+    tables = {t["name"]: t for t in (data.get("tables") or [])}
+    assert "forecast" in tables
+    assert any(c["name"].lower() in ("symbol",) for c in tables["stock_tickers"]["columns"])
+    assert "markdown" in data and "stock_tickers" in data["markdown"]
+    assert "sql_policy" in data
 
 
 def test_server_registers_tools(mcp_env):
@@ -174,6 +204,8 @@ def test_server_registers_tools(mcp_env):
         names = set(tool_manager._tools.keys())
         assert "list_tickers" in names
         assert "run_select" in names
+        assert "get_db_schema" in names
+        assert "refresh_tickers" in names
     else:
         # Fallback: tools list API if present
         tools = getattr(mcp_server.mcp, "list_tools", None)
