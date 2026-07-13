@@ -450,6 +450,21 @@ def test_describe_search_schema(mini_db):
     assert "sql_policy" in schema
 
 
+def test_ensure_symbols_in_search_db(mini_db):
+    from canswim.db import ensure_symbols_in_search_db
+
+    before = list_tickers(mini_db)
+    assert "LLY" not in before
+    res = ensure_symbols_in_search_db(mini_db, ["lly", "AAA"])
+    assert res["ok"] is True
+    assert "LLY" in res["added"]
+    assert "LLY" in list_tickers(mini_db)
+    # idempotent
+    res2 = ensure_symbols_in_search_db(mini_db, ["LLY"])
+    assert res2["ok"] is True
+    assert res2["added"] == []
+
+
 def test_dataframe_to_records():
     df = pd.DataFrame({"a": [1.0, float("nan")], "b": ["x", "y"]})
     recs = dataframe_to_records(df)

@@ -549,10 +549,13 @@ class RunTab:
             inputs=[self.forecastDate],
             outputs=[self.forecastStatus, self.forecastDetails],
         )
+        forecast_outputs = [self.forecastStatus, self.forecastDetails]
+        if self.charts_ticker_dropdown is not None:
+            forecast_outputs.append(self.charts_ticker_dropdown)
         self.forecastBtn.click(
             fn=self.do_forecast,
             inputs=[self.forecastTickers, self.forecastDate],
-            outputs=[self.forecastStatus, self.forecastDetails],
+            outputs=forecast_outputs,
         )
 
         db_refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
@@ -566,12 +569,24 @@ class RunTab:
             outputs=db_refresh_outputs,
         )
 
-    def _charts_dropdown_update(self):
+    def _charts_dropdown_update(self, prefer=None):
+        """Refresh Charts symbol list; prefer selecting the first preferred ticker."""
         if self.charts_ticker_dropdown is None or not self.db_path:
             return None
         try:
             choices = sorted(list_tickers(self.db_path))
-            current = choices[0] if choices else None
+            prefer_list = [
+                str(p).strip().upper()
+                for p in (prefer or [])
+                if p and str(p).strip()
+            ]
+            current = None
+            for p in prefer_list:
+                if p in choices:
+                    current = p
+                    break
+            if current is None:
+                current = choices[0] if choices else None
             return gr.update(choices=choices, value=current)
         except Exception as e:
             logger.warning(f"Could not refresh Charts dropdown: {e}")
@@ -597,7 +612,8 @@ class RunTab:
         status = _refresh_summary(result)
         details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
-            return status, details, self._charts_dropdown_update()
+            prefer = result.get("ready") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
         return status, details
 
     def do_gather(self, tickers_text):
@@ -616,33 +632,48 @@ class RunTab:
         status = _gather_summary(result)
         details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
-            return status, details, self._charts_dropdown_update()
+            prefer = result.get("ready") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
         return status, details
 
     def do_forecast(self, tickers_text, forecast_date):
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
-            return (
-                f"❌ **Forecast failed.**  \n{parsed.get('error') or 'Invalid symbols.'}",
-                _json_details(parsed),
+            status = (
+                f"❌ **Forecast failed.**  \n"
+                f"{parsed.get('error') or 'Invalid symbols.'}"
             )
-        start_preview = resolve_start_for_run(forecast_date or None)
-        if not start_preview.get("ok"):
-            return (
-                f"❌ **Forecast failed (start date).**  \n"
-                f"{start_preview.get('error') or ''}",
-                _json_details(start_preview),
-            )
+            details = _json_details(parsed)
+            if self.charts_ticker_dropdown is not None:
+                return status, details, gr.update()
+            return status, details
+        # catch-up if blank; single origin if date set
+        if forecast_date and str(forecast_date).strip():
+            start_preview = resolve_start_for_run(forecast_date)
+            if not start_preview.get("ok"):
+                status = (
+                    f"❌ **Forecast failed (start date).**  \n"
+                    f"{start_preview.get('error') or ''}"
+                )
+                details = _json_details(start_preview)
+                if self.charts_ticker_dropdown is not None:
+                    return status, details, gr.update()
+                return status, details
         logger.info(
             f"Dashboard forecast for {parsed['tickers']} "
-            f"start={start_preview.get('start')}"
+            f"start={forecast_date or 'catch-up'}"
         )
         result = forecast_for_tickers(
             tickers_text,
             forecast_start_date=forecast_date or None,
             force_allow=True,
         )
-        return _forecast_summary(result), _json_details(result)
+        status = _forecast_summary(result)
+        details = _json_details(result)
+        if self.charts_ticker_dropdown is not None:
+            prefer = result.get("forecasted") or parsed["tickers"]
+            return status, details, self._charts_dropdown_update(prefer=prefer)
+        return status, details
 
     def do_refresh_search_db(self):
         """Rebuild DuckDB search cache from local parquet (full refresh)."""

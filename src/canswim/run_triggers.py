@@ -726,9 +726,19 @@ def forecast_for_tickers(
 
     if not any_to_run:
         try:
-            from canswim.db import get_db_path, sync_forecasts_to_search_db
+            from canswim.db import (
+                ensure_symbols_in_search_db,
+                get_db_path,
+                sync_forecasts_to_search_db,
+            )
 
-            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(tickers))
+            db_path = get_db_path()
+            ens = ensure_symbols_in_search_db(db_path, list(tickers))
+            if ens.get("added"):
+                messages.append(
+                    "Added to Charts symbol list: " + ", ".join(ens["added"])
+                )
+            sync_fc = sync_forecasts_to_search_db(db_path, list(tickers))
             if sync_fc.get("ok") and sync_fc.get("forecast_rows"):
                 messages.append(
                     f"Charts updated with {sync_fc.get('forecast_rows')} forecast rows."
@@ -897,11 +907,22 @@ def forecast_for_tickers(
                 reason=last_fail_reason or "covariates",
             )
 
-        # Push parquet → DuckDB (+ backtest_error refresh)
+        # Push parquet → DuckDB (+ backtest_error refresh) and Charts symbol list
         try:
-            from canswim.db import get_db_path, sync_forecasts_to_search_db
+            from canswim.db import (
+                ensure_symbols_in_search_db,
+                get_db_path,
+                sync_forecasts_to_search_db,
+            )
 
-            sync_fc = sync_forecasts_to_search_db(get_db_path(), list(tickers))
+            db_path = get_db_path()
+            # Always put requested symbols on Charts list (even partial runs)
+            ens = ensure_symbols_in_search_db(db_path, list(tickers))
+            if ens.get("added"):
+                messages.append(
+                    "Added to Charts symbol list: " + ", ".join(ens["added"])
+                )
+            sync_fc = sync_forecasts_to_search_db(db_path, list(tickers))
             if sync_fc.get("ok"):
                 messages.append(
                     f"Charts updated with {sync_fc.get('forecast_rows', 0)} forecast rows."
