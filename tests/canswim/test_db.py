@@ -465,6 +465,35 @@ def test_ensure_symbols_in_search_db(mini_db):
     assert res2["added"] == []
 
 
+def test_collect_search_universe_unions_sources(tmp_path: Path):
+    from canswim.db import collect_search_universe_symbols
+    import numpy as np
+
+    csv = tmp_path / "tickers.csv"
+    csv.write_text("Symbol\nAAPL\nMSFT\n")
+    # price parquet multi-index
+    idx = pd.MultiIndex.from_product(
+        [["AAPL", "NVDA", "QLYS"], pd.bdate_range("2025-01-02", periods=3)],
+        names=["Symbol", "Date"],
+    )
+    pdf = pd.DataFrame(
+        {"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0},
+        index=idx,
+    )
+    pq = tmp_path / "prices.parquet"
+    pdf.to_parquet(pq)
+    # forecast hive
+    froot = tmp_path / "forecast" / "symbol=LLY" / "forecast_start_year=2026"
+    froot.mkdir(parents=True)
+
+    uni = collect_search_universe_symbols(
+        stock_tickers_path=str(csv),
+        stocks_price_path=str(pq),
+        forecast_path=str(tmp_path / "forecast"),
+    )
+    assert set(uni) >= {"AAPL", "MSFT", "NVDA", "QLYS", "LLY"}
+
+
 def test_dataframe_to_records():
     df = pd.DataFrame({"a": [1.0, float("nan")], "b": ["x", "y"]})
     recs = dataframe_to_records(df)

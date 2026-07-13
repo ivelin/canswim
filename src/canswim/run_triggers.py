@@ -498,7 +498,7 @@ def gather_for_tickers(
                 "for names that need more history."
             )
 
-        # Covariates + DB sync only for forecast-ready symbols
+        # Covariates only for forecast-ready symbols (model inputs)
         work_tickers = ready if ready else tickers
         if include_covariates and work_tickers:
             prev_set = g.stocks_ticker_set
@@ -520,26 +520,36 @@ def gather_for_tickers(
             finally:
                 g.stocks_ticker_set = prev_set
 
-        _ensure_symbols_on_list(work_tickers)
+        # Watchlist + Charts list: all *requested* symbols (not only ready)
+        _ensure_symbols_on_list(tickers)
 
         db_sync: dict[str, Any] | None = None
         try:
             from canswim.db import (
+                ensure_symbols_in_search_db,
                 sync_gathered_symbols,
                 sync_company_profiles_to_search_db,
                 get_db_path,
             )
 
             db_path = get_db_path()
-            db_sync = sync_gathered_symbols(db_path, work_tickers)
-            if db_sync.get("ok"):
-                if db_sync.get("added"):
+            # Always put every requested symbol on Charts dropdown
+            ens = ensure_symbols_in_search_db(db_path, tickers)
+            # Load close prices for anyone with local history (ready + incomplete)
+            db_sync = sync_gathered_symbols(db_path, tickers)
+            if ens.get("added") or (db_sync.get("ok") and db_sync.get("added")):
+                added = sorted(
+                    set(ens.get("added") or []) | set(db_sync.get("added") or [])
+                )
+                if added:
                     messages.append(
-                        "Added to Charts symbol list: "
-                        + ", ".join(db_sync["added"])
+                        "Added to Charts symbol list: " + ", ".join(added)
                     )
                 else:
                     messages.append("Charts symbol list already included these.")
+            elif db_sync.get("ok"):
+                messages.append("Charts symbol list already included these.")
+            if db_sync.get("ok"):
                 messages.append(
                     f"Synced {db_sync.get('close_rows', 0)} local close prices "
                     "into search DB."
