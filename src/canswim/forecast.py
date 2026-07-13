@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
 from loguru import logger
@@ -16,6 +17,133 @@ from pandas.tseries.offsets import BDay
 from canswim import constants
 from canswim.hfhub import HFHub
 from canswim.model import CanswimModel
+
+
+def validate_forecast_dataframe(
+    forecast_df: pd.DataFrame,
+    *,
+    expected_horizon: int | None = None,
+    quantiles: list[float] | None = None,
+    drop_bad_symbols: bool = True,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Sanity-check forecast rows before they hit parquet / search DB (issue #32).
+
+    Checks:
+    - required partition / quantile columns present
+    - no empty frame
+    - unique (symbol, forecast date) rows
+    - median quantile finite and positive
+    - quantile columns non-decreasing across configured quantiles (per row)
+    - optional per-symbol row count near ``expected_horizon``
+
+    Returns
+    -------
+    cleaned_df, errors
+        ``cleaned_df`` may drop entire symbols that fail hard checks when
+        ``drop_bad_symbols`` is True. ``errors`` is a list of human-readable issues.
+    """
+    errors: list[str] = []
+    if forecast_df is None or forecast_df.empty:
+        return forecast_df if forecast_df is not None else pd.DataFrame(), [
+            "forecast dataframe is empty"
+        ]
+
+    qlist = list(quantiles if quantiles is not None else constants.quantiles)
+    qcols = [f"close_quantile_{q}" for q in qlist]
+    required = ["symbol", "forecast_start_year", "forecast_start_month", "forecast_start_day"]
+    missing = [c for c in required + qcols if c not in forecast_df.columns]
+    if missing:
+        return forecast_df, [f"missing required columns: {missing}"]
+
+    df = forecast_df.copy()
+    # Normalize time index to a column for uniqueness
+    if not isinstance(df.index, pd.RangeIndex) or df.index.name is not None:
+        time_col = df.index.name or "time"
+        if time_col not in df.columns:
+            df = df.reset_index()
+            # reset may name index "index" or "time"
+            if "index" in df.columns and time_col not in df.columns:
+                df = df.rename(columns={"index": "time"})
+                time_col = "time"
+            elif df.columns[0] != "symbol" and time_col not in df.columns:
+                # first column often the former index
+                time_col = str(df.columns[0])
+        else:
+            time_col = "time"
+    else:
+        df = df.reset_index()
+        time_col = "time" if "time" in df.columns else str(df.columns[0])
+
+    if time_col not in df.columns:
+        # last resort: use positional date from index values already reset
+        for cand in ("time", "Date", "date", "level_0"):
+            if cand in df.columns:
+                time_col = cand
+                break
+    if time_col not in df.columns:
+        return forecast_df, ["could not identify forecast date/time column"]
+
+    df[time_col] = pd.to_datetime(df[time_col]).dt.normalize()
+    df["symbol"] = df["symbol"].astype(str).str.upper()
+
+    # Uniqueness
+    dup_mask = df.duplicated(subset=["symbol", time_col], keep=False)
+    if dup_mask.any():
+        bad_syms = sorted(df.loc[dup_mask, "symbol"].unique().tolist())
+        errors.append(
+            f"duplicate (symbol, date) rows for: {', '.join(bad_syms)}"
+        )
+        if drop_bad_symbols:
+            df = df[~df["symbol"].isin(bad_syms)]
+
+    # Drop rows with non-finite median
+    med_col = "close_quantile_0.5"
+    if med_col in df.columns:
+        bad_med = ~np.isfinite(df[med_col].astype(float)) | (df[med_col].astype(float) <= 0)
+        if bad_med.any():
+            bad_syms = sorted(df.loc[bad_med, "symbol"].unique().tolist())
+            errors.append(
+                f"non-finite or non-positive median quantile for: {', '.join(bad_syms)}"
+            )
+            if drop_bad_symbols:
+                df = df[~df["symbol"].isin(bad_syms)]
+
+    # Quantile monotonicity (weak: allow tiny float noise)
+    present_q = [c for c in qcols if c in df.columns]
+    if len(present_q) >= 2 and not df.empty:
+        arr = df[present_q].astype(float).to_numpy()
+        # each row: diffs >= -eps
+        diffs = np.diff(arr, axis=1)
+        row_bad = (diffs < -1e-6).any(axis=1)
+        if row_bad.any():
+            bad_syms = sorted(df.loc[row_bad, "symbol"].unique().tolist())
+            errors.append(
+                f"quantile order violated (expected non-decreasing) for: "
+                f"{', '.join(bad_syms)}"
+            )
+            if drop_bad_symbols:
+                df = df[~df["symbol"].isin(bad_syms)]
+
+    # Horizon length check
+    if expected_horizon is not None and expected_horizon > 0 and not df.empty:
+        counts = df.groupby("symbol", sort=False).size()
+        for sym, n in counts.items():
+            if abs(int(n) - int(expected_horizon)) > 2:
+                errors.append(
+                    f"{sym}: forecast rows={n}, expected ~{expected_horizon}"
+                )
+                if drop_bad_symbols:
+                    df = df[df["symbol"] != sym]
+
+    if df.empty and not forecast_df.empty:
+        errors.append("all symbols failed forecast sanity checks")
+
+    # Restore original column layout for parquet write: time as index if it was
+    if time_col in df.columns:
+        df = df.set_index(time_col)
+        df.index.name = time_col if time_col != "index" else None
+
+    return df, errors
 
 
 class CanswimForecaster:
@@ -296,8 +424,30 @@ class CanswimForecaster:
 
         assert forecasts is not None and len(forecasts) > 0
         forecast_df = _list_to_df(forecasts)
+        horizon = None
+        try:
+            horizon = int(self.canswim_model.pred_horizon)
+        except Exception:
+            try:
+                horizon = int(self.canswim_model.torch_model.output_chunk_length)
+            except Exception:
+                horizon = None
+        forecast_df, sanity_errors = validate_forecast_dataframe(
+            forecast_df,
+            expected_horizon=horizon,
+            quantiles=list(constants.quantiles),
+            drop_bad_symbols=True,
+        )
+        for msg in sanity_errors:
+            logger.warning(f"Forecast sanity: {msg}")
+        if forecast_df is None or forecast_df.empty:
+            raise ValueError(
+                "Forecast sanity check failed; nothing left to save. "
+                + ("; ".join(sanity_errors) if sanity_errors else "")
+            )
         logger.info(
-            f"Saving forecast_df with {len(forecast_df.columns)} columns, {len(forecast_df)} rows: {forecast_df}"
+            f"Saving forecast_df with {len(forecast_df.columns)} columns, "
+            f"{len(forecast_df)} rows: {forecast_df}"
         )
         forecast_df.to_parquet(
             f"{self.data_dir}/{self.forecast_subdir}",
