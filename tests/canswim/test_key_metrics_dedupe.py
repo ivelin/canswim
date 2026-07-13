@@ -24,18 +24,13 @@ def _price_ts(n: int = 40, start: str = "2024-01-02") -> TimeSeries:
     return timeseries_from_observed_df(df)
 
 
-def test_prepare_key_metrics_collapses_biz_day_duplicates():
-    """Two calendar dates that map to the same business day must not raise."""
+def test_prepare_key_metrics_collapses_exact_duplicate_dates():
+    """Exact duplicate (Symbol, Date) rows must not raise."""
     c = Covariates()
-    # Sat + Mon can both land on the same Monday via to_biz_day depending on path;
-    # force duplicate after normalize by using two identical dates first, then
-    # one weekend + one weekday pair that is known to collide.
-    # Explicit duplicate index (as if already collapsed) + a unique row.
     idx = pd.MultiIndex.from_tuples(
         [
-            ("BAD", pd.Timestamp("2024-01-05")),  # Friday
-            ("BAD", pd.Timestamp("2024-01-06")),  # Saturday → may map near Fri/Mon
-            ("BAD", pd.Timestamp("2024-01-06")),  # exact duplicate calendar date
+            ("BAD", pd.Timestamp("2024-01-05")),
+            ("BAD", pd.Timestamp("2024-01-05")),  # exact duplicate
             ("GOOD", pd.Timestamp("2024-01-05")),
             ("GOOD", pd.Timestamp("2024-04-05")),
         ],
@@ -43,23 +38,61 @@ def test_prepare_key_metrics_collapses_biz_day_duplicates():
     )
     c.kms_loaded_df = pd.DataFrame(
         {
-            "period": ["Q1", "Q1", "Q1", "Q1", "Q2"],
-            "revenuePerShare": [1.0, 1.1, 1.2, 2.0, 2.1],
-            "netIncomePerShare": [0.1, 0.11, 0.12, 0.2, 0.21],
+            "period": ["Q1", "Q1", "Q1", "Q2"],
+            "revenuePerShare": [1.0, 1.1, 2.0, 2.1],
+            "netIncomePerShare": [0.1, 0.11, 0.2, 0.21],
         },
         index=idx,
     )
-
     prices = {"BAD": _price_ts(), "GOOD": _price_ts()}
-    # Must not raise ValueError (issue #75)
     out = c.prepare_key_metrics(stock_price_series=prices)
-    # GOOD always builds; BAD may build after dedupe or be skipped if empty/invalid
     assert "GOOD" in out
     assert isinstance(out["GOOD"], TimeSeries)
+    # BAD should succeed after dedupe (not abort the whole call)
+    assert "BAD" in out
 
 
-def test_prepare_key_metrics_skips_value_error_without_aborting():
-    """Per-ticker ValueError is skipped; other symbols still prepared."""
+def test_prepare_key_metrics_collapses_biz_day_collision():
+    """Sat + Sun both map to Monday via to_biz_day → must not raise (issue #75)."""
+    from canswim.covariates import to_biz_day
+
+    sat = pd.Timestamp("2024-01-06")  # Saturday
+    sun = pd.Timestamp("2024-01-07")  # Sunday
+    mon = pd.Timestamp("2024-01-08")  # Monday
+    assert to_biz_day(date=sat) == mon
+    assert to_biz_day(date=sun) == mon
+
+    c = Covariates()
+    idx = pd.MultiIndex.from_tuples(
+        [
+            ("COLLIDE", sat),
+            ("COLLIDE", sun),  # both → Monday after df_index_to_biz_days
+            ("COLLIDE", pd.Timestamp("2024-04-01")),  # unique later report
+            ("OK", pd.Timestamp("2024-01-05")),
+            ("OK", pd.Timestamp("2024-04-05")),
+        ],
+        names=["Symbol", "Date"],
+    )
+    c.kms_loaded_df = pd.DataFrame(
+        {
+            "period": ["Q1", "Q1", "Q2", "Q1", "Q2"],
+            "revenuePerShare": [1.0, 1.5, 2.0, 3.0, 3.1],
+            "netIncomePerShare": [0.1, 0.15, 0.2, 0.3, 0.31],
+        },
+        index=idx,
+    )
+    prices = {
+        "COLLIDE": _price_ts(n=80, start="2023-12-01"),
+        "OK": _price_ts(n=80, start="2023-12-01"),
+    }
+    # Pre-fix this raised ValueError on reindex and aborted the whole method
+    out = c.prepare_key_metrics(stock_price_series=prices)
+    assert "OK" in out
+    assert "COLLIDE" in out  # dedupe keeps last Mon row + April report
+
+
+def test_prepare_key_metrics_skips_missing_symbol_without_aborting():
+    """Missing KMS for one ticker must not prevent others from preparing."""
     c = Covariates()
     idx = pd.MultiIndex.from_tuples(
         [
@@ -77,7 +110,6 @@ def test_prepare_key_metrics_skips_value_error_without_aborting():
         },
         index=idx,
     )
-    # MISSING has no rows → KeyError skip
     prices = {"OK": _price_ts(n=80, start="2023-01-03"), "MISSING": _price_ts()}
     out = c.prepare_key_metrics(stock_price_series=prices)
     assert "OK" in out
