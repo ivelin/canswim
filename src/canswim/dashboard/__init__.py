@@ -91,7 +91,7 @@ class CanswimPlayground:
                 RunTab(
                     self.canswim_model,
                     db_path=self.db_path,
-                    charts_ticker_dropdown=charts_tab.tickerDropdown,
+                    charts_tab=charts_tab,
                 )
             with gr.Tab("Advanced Queries"):
                 AdvancedTab(
