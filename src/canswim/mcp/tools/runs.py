@@ -13,7 +13,7 @@ from canswim.run_triggers import (
     resolve_start_for_run,
     runs_allowed,
 )
-from canswim.mcp.tools._common import err_result, ok_result
+from canswim.mcp.tools._common import ProgressCb, err_result, ok_result
 
 
 RUN_TOOL_NAMES = [
@@ -37,6 +37,7 @@ def resolve_forecast_start_impl(
 def gather_tickers_impl(
     tickers: str,
     include_covariates: bool = True,
+    progress_cb: ProgressCb = None,
 ) -> dict[str, Any]:
     blocked = require_runs_allowed()
     if blocked is not None:
@@ -46,11 +47,27 @@ def gather_tickers_impl(
     if not parsed["ok"]:
         return err_result(parsed.get("error") or "bad tickers", data=parsed)
 
+    if progress_cb is not None:
+        try:
+            progress_cb(0.05, "Updating market data…")
+        except Exception:
+            pass
+
     result = gather_for_tickers(
         tickers,
         include_covariates=include_covariates,
         force_allow=False,
     )
+    if progress_cb is not None:
+        try:
+            progress_cb(
+                1.0,
+                "Market data update complete."
+                if result.get("ok")
+                else "Market data update finished with errors.",
+            )
+        except Exception:
+            pass
     if result.get("ok"):
         return ok_result(result)
     return err_result(result.get("error") or "gather failed", data=result)
@@ -60,6 +77,7 @@ def forecast_tickers_impl(
     tickers: str,
     start_date: Optional[str] = None,
     dry_run: bool = False,
+    progress_cb: ProgressCb = None,
 ) -> dict[str, Any]:
     blocked = require_runs_allowed()
     if blocked is not None:
@@ -74,6 +92,7 @@ def forecast_tickers_impl(
         forecast_start_date=start_date,
         dry_run=dry_run,
         force_allow=False,
+        progress_cb=progress_cb,
     )
     if result.get("ok"):
         return ok_result(result)
@@ -84,8 +103,13 @@ def refresh_tickers_impl(
     tickers: str,
     include_covariates: bool = True,
     dry_run: bool = False,
+    progress_cb: ProgressCb = None,
 ) -> dict[str, Any]:
-    """Gather + monthly catch-up forecasts (all-in-one)."""
+    """Gather + monthly catch-up forecasts (all-in-one).
+
+    ``progress_cb(fraction 0..1, desc)`` streams to MCP clients when bound
+    via :func:`canswim.mcp.tools._common.bind_mcp_progress`.
+    """
     blocked = require_runs_allowed()
     if blocked is not None:
         return err_result(blocked["error"], runs_allowed=False)
@@ -99,6 +123,7 @@ def refresh_tickers_impl(
         include_covariates=include_covariates,
         dry_run=dry_run,
         force_allow=False,
+        progress_cb=progress_cb,
     )
     if result.get("ok"):
         return ok_result(result)

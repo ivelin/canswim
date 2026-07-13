@@ -70,23 +70,19 @@ PREVIEW_START_BUTTON = "Check start date"
 
 # Primary Run-tab CTA (keep labels self-descriptive for consumers)
 REFRESH_SYMBOLS_SECTION_TITLE = "Refresh data & forecasts"
-# Shown under the primary Run-tab CTA (plain language; keep scannable)
-REFRESH_SYMBOLS_SECTION_HELP = """
-For the symbols you enter, this does **everything needed** so Charts and Scans
-can show a fresh picture:
+# Short main-screen blurb (details live under a collapsible accordion on the Run tab)
+REFRESH_SYMBOLS_SECTION_HELP = (
+    "Market data + ~12 months of catch-up forecasts + Charts list. "
+    "Skips work already on file and short-history names. Can take a few minutes."
+)
+# Optional detail for accordion / docs — not the primary Run-tab body
+REFRESH_SYMBOLS_SECTION_DETAILS = """
+1. **Market data** — download or refresh prices and fundamentals (local files when already complete).
+2. **Catch-up forecasts** — ~12 monthly origins plus the live start (reward/risk and backtest history).
+3. **Charts list** — symbols appear in the Charts dropdown automatically.
 
-1. **Market data** — download or refresh recent prices and fundamentals  
-   (uses local files when already complete; only fetches what’s missing or stale).
-2. **Catch-up forecasts** — run the model for about the **last 12 months**  
-   (one origin per month) **plus** the latest live start, so you get history for  
-   reward/risk and backtest quality—not only today’s forecast.
-3. **Charts list** — add those symbols to the Charts dropdown automatically.
-
-**Skipped automatically:** work already on file for a given start, and names  
-with too little trading history (e.g. recent IPOs)—reported in the status below.
-
-**After it finishes:** open **Charts** for a symbol, or **Scans** to rank by  
-reward/risk and backtest. A full run can take several minutes for many symbols.
+Skipped: starts already saved; names with too little trading history (e.g. recent IPOs).  
+When done: open **Charts** or **Scans**. See also docs/run_triggers.md.
 """
 REFRESH_SYMBOLS_BUTTON = "Refresh data & forecasts"
 

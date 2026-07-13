@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 
@@ -12,6 +13,67 @@ from canswim.db import (
     init_search_db,
     tables_present,
 )
+
+# Matches canswim.run_triggers.ProgressCb: (fraction 0..1, description) -> None
+ProgressCb = Optional[Callable[[float, str], None]]
+
+
+def bind_mcp_progress(ctx: Any) -> ProgressCb:
+    """Bridge run_triggers ``progress_cb`` → MCP ``notifications/progress`` + info logs.
+
+    Designed for use with ``asyncio.to_thread``: the callback is sync and may run
+    on a worker thread while the FastMCP event loop is free to flush notifications.
+
+    Clients only receive ``notifications/progress`` when they pass a
+    ``progressToken`` in the tool request meta (MCP progress protocol). Info logs
+    are still sent when the client supports logging.
+    """
+    if ctx is None:
+        return None
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def progress_cb(frac: float, desc: str = "") -> None:
+        try:
+            f = max(0.0, min(1.0, float(frac)))
+        except (TypeError, ValueError):
+            f = 0.0
+        msg = (str(desc).strip() if desc is not None else "") or None
+        # 0..100 with total=100 → clear percent for clients
+        progress_val = f * 100.0
+        total = 100.0
+
+        async def _emit() -> None:
+            try:
+                await ctx.report_progress(
+                    progress=progress_val, total=total, message=msg
+                )
+            except Exception:
+                pass
+            if msg:
+                try:
+                    await ctx.info(msg)
+                except Exception:
+                    pass
+
+        if loop is None or not loop.is_running():
+            try:
+                asyncio.run(_emit())
+            except Exception:
+                pass
+            return
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_emit(), loop)
+            fut.result(timeout=5.0)
+        except Exception:
+            # Best-effort: never fail the run because progress notify failed
+            pass
+
+    return progress_cb
 
 
 def resolve_db_path() -> str:

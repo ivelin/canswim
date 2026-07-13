@@ -40,15 +40,24 @@ def test_consumer_copy_avoids_dev_jargon():
 
 
 def test_refresh_symbols_help_explains_steps():
+    # Main-screen blurb stays short; details are separate / accordion.
     h = REFRESH_SYMBOLS_SECTION_HELP.lower()
     assert "market data" in h
     assert "forecast" in h
-    assert "12" in h or "monthly" in h
+    assert "12" in h or "monthly" in h or "catch-up" in h
     assert "charts" in h
     assert "skip" in h
+    # Not a multi-paragraph wall on the main screen
+    assert REFRESH_SYMBOLS_SECTION_HELP.count("\n") <= 2
+    assert len(REFRESH_SYMBOLS_SECTION_HELP) < 280
     # Self-descriptive primary CTA (not vague "Refresh symbols")
     assert "data" in REFRESH_SYMBOLS_BUTTON.lower()
     assert "forecast" in REFRESH_SYMBOLS_BUTTON.lower()
+    from canswim.run_triggers import REFRESH_SYMBOLS_SECTION_DETAILS
+
+    d = REFRESH_SYMBOLS_SECTION_DETAILS.lower()
+    assert "market data" in d
+    assert "catch-up" in d or "monthly" in d
 
 
 def test_date_policy_summary_not_technical_dump():
@@ -59,14 +68,18 @@ def test_date_policy_summary_not_technical_dump():
 
 def test_run_tab_has_separate_gather_and_forecast_controls():
     src = inspect.getsource(run_tab_mod.RunTab.__init__)
-    # Primary path: Refresh data & forecasts + progress line
+    run_src = inspect.getsource(run_tab_mod.RunTab)
+    # Primary path: Refresh data & forecasts; single gr.Progress (no Progress textbox)
     assert "refreshBtn" in src or "refreshTickers" in src
     assert "REFRESH_SYMBOLS" in src or REFRESH_SYMBOLS_BUTTON in src
-    assert "refreshProgress" in src
-    assert "do_refresh_symbols" in inspect.getsource(run_tab_mod.RunTab)
-    assert "gr.Progress" in inspect.getsource(run_tab_mod.RunTab)
+    assert "refreshProgress" not in src
+    assert "do_refresh_symbols" in run_src
+    assert "gr.Progress" in run_src
+    assert "show_progress" in src
+    # Do not wire Charts-tab widgets as inputs (cross-tab Gradio bug)
+    assert "charts_tab.lowq" not in src
+    assert "What this does" in src
     # After refresh, Charts plot must be re-rendered (same-symbol case)
-    run_src = inspect.getsource(run_tab_mod.RunTab)
     assert "_replot_charts" in run_src
     assert "charts_tab" in src
     # Secondary still present but under collapsed "More options"
@@ -81,7 +94,7 @@ def test_run_tab_has_separate_gather_and_forecast_controls():
     assert "forecastStatus" in src
     # Search DB rebuild tucked under More options
     assert "refreshDbBtn" in src
-    assert "do_refresh_search_db" in inspect.getsource(run_tab_mod.RunTab)
+    assert "do_refresh_search_db" in run_src
     assert "REFRESH_SEARCH_BUTTON" in src or "Rebuild Charts" in src
     assert "gatherDetails" in src
     assert "forecastDetails" in src
@@ -214,6 +227,8 @@ def test_mcp_tool_descriptions_are_plain():
     # Tool description block for forecast should be plain language
     assert "Run a forecast for listed stock symbols" in src
     assert 'name="refresh_tickers"' in src
+    assert "progressToken" in src or "progress" in src.lower()
+    assert "bind_mcp_progress" in src
 
 
 def test_docs_exist_for_operators():

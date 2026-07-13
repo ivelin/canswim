@@ -29,6 +29,7 @@ from canswim.run_triggers import (
     REFRESH_SEARCH_SECTION_HELP,
     REFRESH_SEARCH_SECTION_TITLE,
     REFRESH_SYMBOLS_BUTTON,
+    REFRESH_SYMBOLS_SECTION_DETAILS,
     REFRESH_SYMBOLS_SECTION_HELP,
     REFRESH_SYMBOLS_SECTION_TITLE,
     TICKERS_HELP,
@@ -439,29 +440,21 @@ class RunTab:
         with gr.Group():
             gr.Markdown(f"### {REFRESH_SYMBOLS_SECTION_TITLE}")
             gr.Markdown(REFRESH_SYMBOLS_SECTION_HELP.strip())
+            with gr.Accordion("What this does", open=False):
+                gr.Markdown(REFRESH_SYMBOLS_SECTION_DETAILS.strip())
             self.refreshTickers = gr.Textbox(
                 label="Symbols to refresh",
-                lines=2,
+                lines=1,
+                max_lines=3,
                 placeholder="LLY, AAPL, MSFT",
                 info=TICKERS_HELP,
             )
             self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
-            self.refreshProgress = gr.Textbox(
-                label="Progress",
-                value="",
-                interactive=False,
-                lines=1,
-                max_lines=2,
-                show_label=True,
-                visible=True,
-                placeholder="Progress updates appear here while a run is active…",
-            )
+            # Single progress UI: gr.Progress() on the handler (no separate Progress textbox —
+            # that doubled the bar with Gradio's built-in progress).
             self.refreshStatus = gr.Markdown(
                 value=(
-                    "_Enter one or more symbols, then click "
-                    f"**{REFRESH_SYMBOLS_BUTTON}**. "
-                    "Progress updates while the run is active; "
-                    "a full summary appears when it finishes._"
+                    f"_Enter symbols, then **{REFRESH_SYMBOLS_BUTTON}**._"
                 )
             )
             with gr.Accordion("Technical log", open=False):
@@ -540,17 +533,17 @@ class RunTab:
                     )
 
         # ---- wire events ----
-        # progress + status + log (+ Charts dropdown + replot when charts_tab given)
-        refresh_inputs = [self.refreshTickers]
+        # IMPORTANT: do NOT take Charts-tab widgets as *inputs* here.
+        # Cross-tab inputs are not delivered by Gradio (handler gets fewer
+        # values than declared → hard Error toast; refresh never runs).
+        # Replot uses default confidence (80) via handler defaults.
         refresh_outputs = [
-            self.refreshProgress,
             self.refreshStatus,
             self.refreshDetails,
         ]
         if self.charts_ticker_dropdown is not None:
             refresh_outputs.append(self.charts_ticker_dropdown)
         if self.charts_tab is not None:
-            refresh_inputs.append(self.charts_tab.lowq)
             refresh_outputs.extend(
                 [
                     self.charts_tab.plotComponent,
@@ -560,16 +553,16 @@ class RunTab:
             )
         self.refreshBtn.click(
             fn=self.do_refresh_symbols,
-            inputs=refresh_inputs,
+            inputs=[self.refreshTickers],
             outputs=refresh_outputs,
+            # One progress chrome only (handler uses gr.Progress for %).
+            show_progress="full",
         )
 
-        gather_inputs = [self.gatherTickers]
         gather_outputs = [self.gatherStatus, self.gatherDetails]
         if self.charts_ticker_dropdown is not None:
             gather_outputs.append(self.charts_ticker_dropdown)
         if self.charts_tab is not None:
-            gather_inputs.append(self.charts_tab.lowq)
             gather_outputs.extend(
                 [
                     self.charts_tab.plotComponent,
@@ -579,20 +572,19 @@ class RunTab:
             )
         self.gatherBtn.click(
             fn=self.do_gather,
-            inputs=gather_inputs,
+            inputs=[self.gatherTickers],
             outputs=gather_outputs,
+            show_progress="full",
         )
         self.resolveBtn.click(
             fn=self.preview_start,
             inputs=[self.forecastDate],
             outputs=[self.forecastStatus, self.forecastDetails],
         )
-        forecast_inputs = [self.forecastTickers, self.forecastDate]
         forecast_outputs = [self.forecastStatus, self.forecastDetails]
         if self.charts_ticker_dropdown is not None:
             forecast_outputs.append(self.charts_ticker_dropdown)
         if self.charts_tab is not None:
-            forecast_inputs.append(self.charts_tab.lowq)
             forecast_outputs.extend(
                 [
                     self.charts_tab.plotComponent,
@@ -602,18 +594,15 @@ class RunTab:
             )
         self.forecastBtn.click(
             fn=self.do_forecast,
-            inputs=forecast_inputs,
+            inputs=[self.forecastTickers, self.forecastDate],
             outputs=forecast_outputs,
+            show_progress="full",
         )
 
-        db_refresh_inputs = []
         db_refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
         if self.charts_ticker_dropdown is not None:
             db_refresh_outputs.append(self.charts_ticker_dropdown)
         if self.charts_tab is not None:
-            db_refresh_inputs.append(self.charts_tab.lowq)
-            # Need current dropdown value for replot after rebuild
-            db_refresh_inputs.append(self.charts_tab.tickerDropdown)
             db_refresh_outputs.extend(
                 [
                     self.charts_tab.plotComponent,
@@ -623,8 +612,9 @@ class RunTab:
             )
         self.refreshDbBtn.click(
             fn=self.do_refresh_search_db,
-            inputs=db_refresh_inputs,
+            inputs=[],
             outputs=db_refresh_outputs,
+            show_progress="full",
         )
 
     def _charts_dropdown_update(self, prefer=None):
@@ -730,8 +720,20 @@ class RunTab:
         info = resolve_start_for_run(forecast_date or None)
         return _start_summary(info), _json_details(info)
 
-    def do_refresh_symbols(self, tickers_text, lowq=80, progress=gr.Progress()):
-        """Run refresh with Gradio progress bar + live progress text + Charts replot."""
+    def _charts_lowq_default(self) -> int:
+        """Confidence for post-run replot without reading Charts-tab inputs.
+
+        Cross-tab Gradio inputs are unreliable; default matches Charts Radio.
+        """
+        return 80
+
+    def do_refresh_symbols(self, tickers_text, progress=gr.Progress()):
+        """Run refresh with a single Gradio progress bar + Charts replot on finish.
+
+        Not a generator: intermediate yields + gr.Progress both draw bars (double UI).
+        Live % comes only from ``progress``; status/details update once at the end.
+        """
+        lowq = self._charts_lowq_default()
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             status = (
@@ -739,32 +741,14 @@ class RunTab:
                 f"{parsed.get('error') or 'Invalid symbols.'}"
             )
             details = _json_details(parsed)
-            return self._pack_run_outputs(
-                "—", status, details, replot=False
-            )
+            return self._pack_run_outputs(status, details, replot=False)
 
-        n = len(parsed["tickers"])
         logger.info(f"Dashboard refresh_symbols for {parsed['tickers']}")
         progress(0.0, desc="Starting…")
-        # Stream an immediate "working" line so the user is not stuck on a timer alone
-        yield self._pack_run_outputs(
-            f"0% · Starting for {n} symbol(s)…",
-            f"⏳ **Working…**  \n"
-            f"**{REFRESH_SYMBOLS_BUTTON}** for `{', '.join(parsed['tickers'][:12])}`"
-            + (f" +{n - 12} more" if n > 12 else "")
-            + "  \n"
-            "Step 1/2: updating market data (this can take a few minutes).",
-            "",
-            replot=False,
-        )
-
-        last_desc = {"text": "Working…"}
 
         def progress_cb(frac: float, desc: str = "") -> None:
-            label = desc or "Working…"
-            last_desc["text"] = label
             try:
-                progress(frac, desc=label)
+                progress(frac, desc=desc or "Working…")
             except Exception:
                 pass
 
@@ -781,17 +765,9 @@ class RunTab:
         progress(1.0, desc="Done")
         status = _refresh_summary(result)
         details = _json_details(result)
-        if result.get("ok") and not result.get("partial"):
-            final_prog = "100% · Complete"
-        elif result.get("partial"):
-            final_prog = "100% · Finished with partial results"
-        else:
-            final_prog = f"Stopped · {last_desc['text']}"
-
         prefer = result.get("ready") or result.get("forecasted") or parsed["tickers"]
         # Replot so Charts tab shows new forecasts without re-selecting the symbol
-        yield self._pack_run_outputs(
-            final_prog,
+        return self._pack_run_outputs(
             status,
             details,
             prefer=prefer,
@@ -799,7 +775,8 @@ class RunTab:
             replot=True,
         )
 
-    def do_gather(self, tickers_text, lowq=80):
+    def do_gather(self, tickers_text):
+        lowq = self._charts_lowq_default()
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             status = (
@@ -817,7 +794,8 @@ class RunTab:
             status, details, prefer=prefer, lowq=lowq, replot=True
         )
 
-    def do_forecast(self, tickers_text, forecast_date, lowq=80, progress=gr.Progress()):
+    def do_forecast(self, tickers_text, forecast_date, progress=gr.Progress()):
+        lowq = self._charts_lowq_default()
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             status = (
@@ -862,8 +840,9 @@ class RunTab:
             status, details, prefer=prefer, lowq=lowq, replot=True
         )
 
-    def do_refresh_search_db(self, lowq=80, current_ticker=None):
+    def do_refresh_search_db(self):
         """Rebuild DuckDB search cache from local parquet (full refresh)."""
+        lowq = self._charts_lowq_default()
         if not self.db_path:
             status = "❌ **No database path configured.**"
             details = _json_details({"ok": False, "error": "db_path missing"})
@@ -902,7 +881,6 @@ class RunTab:
             )
             details = _json_details(result)
 
-        prefer = [current_ticker] if current_ticker else None
         return self._pack_run_outputs(
-            status, details, prefer=prefer, lowq=lowq, replot=True
+            status, details, prefer=None, lowq=lowq, replot=True
         )

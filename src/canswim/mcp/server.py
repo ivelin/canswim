@@ -7,6 +7,7 @@ registered for discoverability but require ``MCP_ALLOW_RUNS=1`` to execute.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -14,11 +15,12 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from loguru import logger  # noqa: E402
-from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
 
 from canswim.mcp import __version__ as SERVER_VERSION  # noqa: E402
 from canswim.mcp.tools import forecasts, meta, prices, query, tickers  # noqa: E402
 from canswim.mcp.tools import runs as run_tools  # noqa: E402
+from canswim.mcp.tools._common import bind_mcp_progress  # noqa: E402
 from canswim.run_triggers import runs_allowed  # noqa: E402
 
 if runs_allowed():
@@ -199,15 +201,22 @@ def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
         "Get / update market data for listed stock symbols (comma or newline separated). "
         "Only downloads what is missing or out of date (~last 2 years for forecast use). "
         "Same as CLI `gatherdata --tickers` and dashboard “Update market data”. "
+        "Streams progress notifications when the client sends a progressToken. "
         "Requires MCP_ALLOW_RUNS=1."
     ),
 )
-def gather_tickers(
+async def gather_tickers(
     tickers: str,
     include_covariates: bool = True,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
-    return run_tools.gather_tickers_impl(
-        tickers=tickers, include_covariates=include_covariates
+    # Run in a worker so MCP progress/log notifications can flush during the call
+    progress_cb = bind_mcp_progress(ctx)
+    return await asyncio.to_thread(
+        run_tools.gather_tickers_impl,
+        tickers,
+        include_covariates,
+        progress_cb,
     )
 
 
@@ -219,17 +228,24 @@ def gather_tickers(
         "(skips starts already on file). Explicit start_date = single origin. "
         "Fails clearly if market history is incomplete—use refresh_tickers or "
         "gather_tickers first. Same as CLI `forecast --tickers` and dashboard "
-        "“Run forecast”. Requires MCP_ALLOW_RUNS=1. May take several minutes. "
-        "dry_run=true only checks symbols and origins."
+        "“Run forecast”. Streams progress (origins / symbols) when the client "
+        "sends a progressToken. Requires MCP_ALLOW_RUNS=1. May take several "
+        "minutes. dry_run=true only checks symbols and origins."
     ),
 )
-def forecast_tickers(
+async def forecast_tickers(
     tickers: str,
     start_date: Optional[str] = None,
     dry_run: bool = False,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
-    return run_tools.forecast_tickers_impl(
-        tickers=tickers, start_date=start_date, dry_run=dry_run
+    progress_cb = bind_mcp_progress(ctx)
+    return await asyncio.to_thread(
+        run_tools.forecast_tickers_impl,
+        tickers,
+        start_date,
+        dry_run,
+        progress_cb,
     )
 
 
@@ -239,19 +255,26 @@ def forecast_tickers(
         "All-in-one refresh for listed symbols: update market data, then catch-up "
         "forecasts (monthly origins for ~12 months + live). Best default when a "
         "user or agent says “gather and forecast” or “refresh these names”. "
-        "Same as dashboard “Refresh data & forecasts”. Requires MCP_ALLOW_RUNS=1. "
-        "May take many minutes for large lists. dry_run=true plans only."
+        "Same as dashboard “Refresh data & forecasts”. Streams live progress "
+        "(notifications/progress + info logs) when the client sends a "
+        "progressToken — same stages as the Run-tab progress bar. "
+        "Requires MCP_ALLOW_RUNS=1. May take many minutes for large lists. "
+        "dry_run=true plans only."
     ),
 )
-def refresh_tickers(
+async def refresh_tickers(
     tickers: str,
     include_covariates: bool = True,
     dry_run: bool = False,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
-    return run_tools.refresh_tickers_impl(
-        tickers=tickers,
-        include_covariates=include_covariates,
-        dry_run=dry_run,
+    progress_cb = bind_mcp_progress(ctx)
+    return await asyncio.to_thread(
+        run_tools.refresh_tickers_impl,
+        tickers,
+        include_covariates,
+        dry_run,
+        progress_cb,
     )
 
 
