@@ -91,8 +91,8 @@ def test_prepare_key_metrics_collapses_biz_day_collision():
     assert "COLLIDE" in out  # dedupe keeps last Mon row + April report
 
 
-def test_prepare_key_metrics_skips_missing_symbol_without_aborting():
-    """Missing KMS for one ticker must not prevent others from preparing."""
+def test_prepare_key_metrics_imputes_missing_symbol_without_aborting():
+    """Missing KMS for one ticker is zero-filled (#33); others still prepare."""
     c = Covariates()
     idx = pd.MultiIndex.from_tuples(
         [
@@ -113,7 +113,9 @@ def test_prepare_key_metrics_skips_missing_symbol_without_aborting():
     prices = {"OK": _price_ts(n=80, start="2023-01-03"), "MISSING": _price_ts()}
     out = c.prepare_key_metrics(stock_price_series=prices)
     assert "OK" in out
-    assert "MISSING" not in out
+    # Issue #33: impute rather than drop
+    assert "MISSING" in out
+    assert len(out["MISSING"].components) == len(out["OK"].components)
 
 
 def test_pad_covs_handles_duplicate_cov_index():
