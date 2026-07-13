@@ -12,6 +12,7 @@ User-facing actions for a **short list of symbols**. Implementation: `canswim.ru
 | **Get market data** | Update local prices **and** model fundamentals for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
 | **Run a forecast** | Forecast those symbols | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
 | **Check start date** | Show which start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |
+| **Refresh search DB** | Rebuild DuckDB Charts/Scans cache from parquet | `dashboard --same_data False` | **Refresh search DB from parquet** | (rebuild via dashboard / `MCP_INIT_DB`) |
 
 MCP write tools need `MCP_ALLOW_RUNS=1`. CLI and dashboard do not.
 

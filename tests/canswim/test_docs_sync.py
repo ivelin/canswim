@@ -16,11 +16,17 @@ def _read(rel: str) -> str:
 
 def test_run_tab_button_labels_in_docs():
     """README + run_triggers must use product button names from run_triggers.py."""
-    labels = {rt.GATHER_BUTTON, rt.FORECAST_BUTTON, rt.PREVIEW_START_BUTTON}
+    labels = {
+        rt.GATHER_BUTTON,
+        rt.FORECAST_BUTTON,
+        rt.PREVIEW_START_BUTTON,
+        rt.REFRESH_SEARCH_BUTTON,
+    }
     for path in ("README.md", "docs/run_triggers.md"):
         text = _read(path)
         for lab in labels:
             assert lab in text, f"{path} missing button label {lab!r}"
+    assert rt.REFRESH_SEARCH_BUTTON in _read("docs/data_store.md")
     readme = _read("README.md")
     # Stale pre-split UX strings should not reappear as the primary CTA
     assert "Preview start date" not in readme

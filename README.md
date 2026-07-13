@@ -96,7 +96,7 @@ python -m canswim dashboard --same_data True
 |-----|---------|
 | **Charts** | Price history + forecast bands for a symbol |
 | **Scans** | Filter forecasts by as-of date, reward, risk, confidence |
-| **Run** | **Update market data** / **Run forecast** / **Check start date** |
+| **Run** | **Update market data** / **Run forecast** / **Check start date** / **Refresh search DB from parquet** |
 | **Advanced Queries** | Read-only SQL against the search DB |
 
 ### Sample screenshots

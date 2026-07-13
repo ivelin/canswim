@@ -11,7 +11,12 @@ import json
 import gradio as gr
 from loguru import logger
 
-from canswim.db import list_tickers
+from canswim.db import (
+    format_search_db_status_markdown,
+    init_search_db,
+    list_tickers,
+    search_db_status,
+)
 from canswim.run_triggers import (
     FORECAST_BUTTON,
     FORECAST_SECTION_HELP,
@@ -21,6 +26,9 @@ from canswim.run_triggers import (
     GATHER_SECTION_HELP,
     GATHER_SECTION_TITLE,
     PREVIEW_START_BUTTON,
+    REFRESH_SEARCH_BUTTON,
+    REFRESH_SEARCH_SECTION_HELP,
+    REFRESH_SEARCH_SECTION_TITLE,
     TICKERS_HELP,
     forecast_for_tickers,
     gather_for_tickers,
@@ -134,10 +142,12 @@ class RunTab:
         canswim_model=None,
         db_path=None,
         charts_ticker_dropdown=None,
+        db_status_banner=None,
     ):
         self.canswim_model = canswim_model
         self.db_path = db_path
         self.charts_ticker_dropdown = charts_ticker_dropdown
+        self.db_status_banner = db_status_banner
 
         gr.Markdown(
             """
@@ -200,6 +210,33 @@ Two separate steps: **get market data**, then **run a forecast**.
                     value="",
                 )
 
+        gr.Markdown("---")
+
+        # ---- Search DB refresh (parquet → DuckDB) ----
+        with gr.Group():
+            gr.Markdown(
+                f"### {REFRESH_SEARCH_SECTION_TITLE}\n{REFRESH_SEARCH_SECTION_HELP}"
+            )
+            self.refreshDbBtn = gr.Button(REFRESH_SEARCH_BUTTON, variant="secondary")
+            initial_status = ""
+            if self.db_path:
+                try:
+                    initial_status = format_search_db_status_markdown(
+                        search_db_status(self.db_path)
+                    )
+                except Exception as e:
+                    logger.debug(f"initial search db status: {e}")
+                    initial_status = "_Search DB status unavailable._"
+            self.refreshDbStatus = gr.Markdown(value=initial_status)
+            with gr.Accordion("Advanced details", open=False):
+                self.refreshDbDetails = gr.Code(
+                    label="Technical log",
+                    language="json",
+                    lines=8,
+                    interactive=False,
+                    value="",
+                )
+
         gather_outputs = [self.gatherStatus, self.gatherDetails]
         if self.charts_ticker_dropdown is not None:
             gather_outputs.append(self.charts_ticker_dropdown)
@@ -218,6 +255,17 @@ Two separate steps: **get market data**, then **run a forecast**.
             fn=self.do_forecast,
             inputs=[self.forecastTickers, self.forecastDate],
             outputs=[self.forecastStatus, self.forecastDetails],
+        )
+
+        refresh_outputs = [self.refreshDbStatus, self.refreshDbDetails]
+        if self.db_status_banner is not None:
+            refresh_outputs.append(self.db_status_banner)
+        if self.charts_ticker_dropdown is not None:
+            refresh_outputs.append(self.charts_ticker_dropdown)
+        self.refreshDbBtn.click(
+            fn=self.do_refresh_search_db,
+            inputs=[],
+            outputs=refresh_outputs,
         )
 
     def _charts_dropdown_update(self):
@@ -278,3 +326,56 @@ Two separate steps: **get market data**, then **run a forecast**.
             force_allow=True,
         )
         return _forecast_summary(result), _json_details(result)
+
+    def do_refresh_search_db(self):
+        """Rebuild DuckDB search cache from local parquet (full refresh)."""
+        banner = "_Search DB status unavailable._"
+        if not self.db_path:
+            status = "❌ **No database path configured.**"
+            details = _json_details({"ok": False, "error": "db_path missing"})
+            return self._refresh_outputs(status, details, banner, dropdown=False)
+
+        target_col = "Close"
+        if self.canswim_model is not None:
+            target_col = getattr(self.canswim_model, "target_column", None) or "Close"
+
+        logger.info(f"Refreshing search DB from parquet → {self.db_path}")
+        try:
+            result = init_search_db(
+                self.db_path,
+                same_data=False,
+                target_column=target_col,
+            )
+            st = result.get("status") or search_db_status(self.db_path)
+            banner = format_search_db_status_markdown(st, mode="rebuilt")
+            if st.get("ok"):
+                head = f"✅ **Search DB rebuilt** from parquet → `{self.db_path}`."
+            else:
+                head = (
+                    f"⚠️ **Rebuild finished but search DB looks incomplete.**  \n"
+                    f"Path: `{self.db_path}`"
+                )
+            status = head + "  \n\n" + banner
+            details = _json_details(result)
+        except Exception as e:
+            logger.exception("Search DB refresh failed")
+            result = {"ok": False, "error": str(e)}
+            try:
+                st = search_db_status(self.db_path)
+                banner = format_search_db_status_markdown(st)
+            except Exception:
+                banner = f"_Could not read status: {e}_"
+            status = f"❌ **Could not rebuild search DB.**  \n{e}  \n\n{banner}"
+            details = _json_details(result)
+
+        return self._refresh_outputs(status, details, banner, dropdown=True)
+
+    def _refresh_outputs(self, status, details, banner, *, dropdown: bool):
+        outs = [status, details]
+        if self.db_status_banner is not None:
+            outs.append(banner)
+        if self.charts_ticker_dropdown is not None:
+            outs.append(
+                self._charts_dropdown_update() if dropdown else gr.update()
+            )
+        return tuple(outs)

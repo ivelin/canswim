@@ -109,6 +109,193 @@ def tables_present(db_path: str, tables: Sequence[str] = CORE_SEARCH_TABLES) -> 
         return False
 
 
+def _list_main_tables(db_con) -> set[str]:
+    return {
+        row[0]
+        for row in db_con.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+
+
+def search_db_status(db_path: Optional[str] = None) -> dict[str, Any]:
+    """Inspect DuckDB search cache + whether source parquet files exist.
+
+    Charts/Scans/MCP read DuckDB only. Parquet is the system of record used
+    to (re)build or sync the search DB.
+    """
+    paths = DataPaths.from_env()
+    path = db_path or paths.db_path
+    profile_pq = company_profile_parquet_path(paths)
+    forecast_root = Path(paths.forecast_path)
+    forecast_files = 0
+    if forecast_root.is_dir():
+        try:
+            forecast_files = sum(1 for _ in forecast_root.glob("**/*.parquet"))
+        except Exception:
+            forecast_files = 0
+
+    out: dict[str, Any] = {
+        "db_path": path,
+        "db_exists": Path(path).is_file(),
+        "tables": {},
+        "counts": {},
+        "missing_core": list(CORE_SEARCH_TABLES),
+        "missing_optional": ["company_profile"],
+        "parquet": {
+            "prices": Path(paths.stocks_price_path).is_file(),
+            "prices_path": paths.stocks_price_path,
+            "forecast_dir": paths.forecast_path,
+            "forecast_parquet_files": forecast_files,
+            "company_profile": Path(profile_pq).is_file(),
+            "company_profile_path": profile_pq,
+            "stock_tickers_csv": Path(paths.stock_tickers_path).is_file(),
+            "stock_tickers_path": paths.stock_tickers_path,
+        },
+        "ok": False,
+    }
+    if not out["db_exists"]:
+        return out
+    try:
+        with connect_readonly(path) as con:
+            existing = _list_main_tables(con)
+            for t in SEARCH_TABLES:
+                present = t in existing
+                out["tables"][t] = present
+                if present:
+                    try:
+                        n = con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+                        out["counts"][t] = int(n)
+                    except Exception:
+                        out["counts"][t] = None
+            out["missing_core"] = [t for t in CORE_SEARCH_TABLES if t not in existing]
+            out["missing_optional"] = [
+                t for t in ("company_profile",) if t not in existing
+            ]
+            out["ok"] = len(out["missing_core"]) == 0
+    except Exception as e:
+        logger.warning(f"search_db_status({path}): {e}")
+        out["error"] = str(e)
+        out["ok"] = False
+    return out
+
+
+def format_search_db_status_markdown(
+    status: Optional[dict[str, Any]],
+    *,
+    mode: Optional[str] = None,
+    repaired: Optional[Sequence[str]] = None,
+) -> str:
+    """Operator-facing Markdown: which DB, reuse vs rebuild, row counts."""
+    if not status:
+        return "_Search database status unavailable._"
+    path = status.get("db_path") or "—"
+    lines: list[str] = ["### Search database (Charts / Scans / MCP)"]
+    if mode == "reused":
+        lines.append(f"**Mode:** reusing existing DuckDB at `{path}`")
+    elif mode == "rebuilt":
+        lines.append(f"**Mode:** rebuilt from parquet → `{path}`")
+    else:
+        lines.append(f"**Path:** `{path}`")
+
+    if not status.get("db_exists"):
+        lines.append(
+            "❌ **No DuckDB file yet.** Open with rebuild, or use "
+            "**Refresh search DB from parquet** on the Run tab."
+        )
+        return "  \n".join(lines)
+
+    if status.get("ok"):
+        lines.append("✅ Core search tables present.")
+    else:
+        missing = status.get("missing_core") or []
+        lines.append(
+            "⚠️ **Incomplete search DB** — missing: "
+            + (", ".join(missing) if missing else "unknown")
+            + ". Use **Refresh search DB from parquet**."
+        )
+
+    counts = status.get("counts") or {}
+    if counts:
+        bits = []
+        for key, label in (
+            ("stock_tickers", "symbols"),
+            ("forecast", "forecast rows"),
+            ("close_price", "closes"),
+            ("company_profile", "profiles"),
+        ):
+            if key in counts and counts[key] is not None:
+                bits.append(f"{label}: **{counts[key]:,}**")
+        if bits:
+            lines.append(" · ".join(bits))
+
+    if repaired:
+        lines.append("Repaired optional tables: " + ", ".join(repaired))
+
+    pq = status.get("parquet") or {}
+    pq_bits = []
+    if pq.get("prices"):
+        pq_bits.append("prices ✓")
+    else:
+        pq_bits.append("prices ✗")
+    n_fc = pq.get("forecast_parquet_files") or 0
+    pq_bits.append(f"forecast files: {n_fc}")
+    if pq.get("company_profile"):
+        pq_bits.append("profiles ✓")
+    else:
+        pq_bits.append("profiles ✗")
+    lines.append("Parquet (system of record): " + " · ".join(pq_bits))
+    lines.append(
+        "_Charts read DuckDB only. After bulk parquet changes, refresh the search DB._"
+    )
+    return "  \n".join(lines)
+
+
+def ensure_optional_search_tables(
+    db_path: str,
+    *,
+    paths: Optional[DataPaths] = None,
+) -> dict[str, Any]:
+    """Lazy-create optional tables (e.g. company_profile) without a full rebuild.
+
+    Safe for ``--same_data True``: does not drop core tables.
+    """
+    paths = paths or DataPaths.from_env()
+    if not db_file_exists(db_path):
+        return {
+            "ok": False,
+            "repaired": [],
+            "error": f"No database file at {db_path}",
+        }
+    repaired: list[str] = []
+    notes: list[str] = []
+    try:
+        with connect_readwrite(db_path) as db_con:
+            existing = _list_main_tables(db_con)
+            need_profile = "company_profile" not in existing
+            if not need_profile:
+                try:
+                    n = db_con.execute(
+                        "SELECT count(*) FROM company_profile"
+                    ).fetchone()[0]
+                    pq = company_profile_parquet_path(paths)
+                    if int(n) == 0 and Path(pq).is_file():
+                        need_profile = True
+                        notes.append(
+                            "company_profile was empty; reloading from parquet"
+                        )
+                except Exception:
+                    need_profile = True
+            if need_profile:
+                _create_or_load_company_profile_table(db_con, paths)
+                repaired.append("company_profile")
+        return {"ok": True, "repaired": repaired, "notes": notes}
+    except Exception as e:
+        logger.warning(f"ensure_optional_search_tables: {e}")
+        return {"ok": False, "repaired": repaired, "notes": notes, "error": str(e)}
+
+
 def _should_reuse_db(db_path: str, same_data: bool) -> bool:
     if not same_data or not db_file_exists(db_path):
         return False
@@ -128,10 +315,12 @@ def init_search_db(
     stock_tickers_path: Optional[str] = None,
     forecast_path: Optional[str] = None,
     stocks_price_path: Optional[str] = None,
-) -> bool:
+) -> dict[str, Any]:
     """Build or reuse the search-optimized DuckDB (dashboard initdb semantics).
 
-    Returns True if the database was (re)created, False if reused.
+    Returns a dict with ``rebuilt``, ``reused``, ``repair``, and ``status``
+    (see :func:`search_db_status`). On reuse, optionally repairs missing
+    optional tables (e.g. ``company_profile``) without wiping core data.
     """
     paths = DataPaths.from_env()
     stock_tickers_path = stock_tickers_path or paths.stock_tickers_path
@@ -140,7 +329,14 @@ def init_search_db(
 
     if _should_reuse_db(db_path, same_data):
         logger.info("Reusing search database")
-        return False
+        repair = ensure_optional_search_tables(db_path, paths=paths)
+        status = search_db_status(db_path)
+        return {
+            "rebuilt": False,
+            "reused": True,
+            "repair": repair,
+            "status": status,
+        }
 
     logger.info("Creating search optimized database")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -257,7 +453,13 @@ def init_search_db(
             """
         )
         _create_or_load_company_profile_table(db_con, paths)
-    return True
+    status = search_db_status(db_path)
+    return {
+        "rebuilt": True,
+        "reused": False,
+        "repair": {"ok": True, "repaired": [], "notes": []},
+        "status": status,
+    }
 
 
 def company_profile_parquet_path(paths: Optional[DataPaths] = None) -> str:

@@ -70,6 +70,15 @@ FORECAST_SECTION_HELP = (
 FORECAST_BUTTON = "Run forecast"
 PREVIEW_START_BUTTON = "Check start date"
 
+REFRESH_SEARCH_SECTION_TITLE = "Search database (Charts / Scans)"
+REFRESH_SEARCH_SECTION_HELP = (
+    "Charts and Scans read the local DuckDB search cache, not parquet files directly. "
+    "Parquet under data/ is the system of record. "
+    "After bulk data changes—or if Charts look empty while parquet exists—"
+    "use **Refresh search DB from parquet** to rebuild the cache."
+)
+REFRESH_SEARCH_BUTTON = "Refresh search DB from parquet"
+
 INCOMPLETE_DATA_MSG = (
     "Market history is incomplete or not ready for: {symbols}. "
     "Use Update market data for these symbols, then run the forecast again. "
