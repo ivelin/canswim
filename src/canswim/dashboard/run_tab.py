@@ -439,11 +439,22 @@ class RunTab:
                 info=TICKERS_HELP,
             )
             self.refreshBtn = gr.Button(REFRESH_SYMBOLS_BUTTON, variant="primary")
+            self.refreshProgress = gr.Textbox(
+                label="Progress",
+                value="",
+                interactive=False,
+                lines=1,
+                max_lines=2,
+                show_label=True,
+                visible=True,
+                placeholder="Progress updates appear here while a run is active…",
+            )
             self.refreshStatus = gr.Markdown(
                 value=(
                     "_Enter one or more symbols, then click "
                     f"**{REFRESH_SYMBOLS_BUTTON}**. "
-                    "Status appears here when the run finishes._"
+                    "Progress updates while the run is active; "
+                    "a full summary appears when it finishes._"
                 )
             )
             with gr.Accordion("Technical log", open=False):
@@ -522,7 +533,12 @@ class RunTab:
                     )
 
         # ---- wire events ----
-        refresh_outputs = [self.refreshStatus, self.refreshDetails]
+        # progress line + status + log (+ optional Charts dropdown)
+        refresh_outputs = [
+            self.refreshProgress,
+            self.refreshStatus,
+            self.refreshDetails,
+        ]
         if self.charts_ticker_dropdown is not None:
             refresh_outputs.append(self.charts_ticker_dropdown)
         self.refreshBtn.click(
@@ -589,25 +605,80 @@ class RunTab:
         info = resolve_start_for_run(forecast_date or None)
         return _start_summary(info), _json_details(info)
 
-    def do_refresh_symbols(self, tickers_text):
+    def do_refresh_symbols(self, tickers_text, progress=gr.Progress()):
+        """Run refresh with Gradio progress bar + live progress text."""
+
+        def _out(prog_text, status, details, dropdown=None):
+            if self.charts_ticker_dropdown is not None:
+                return prog_text, status, details, dropdown
+            return prog_text, status, details
+
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             status = (
-                f"❌ **Could not refresh symbols.**  \n"
+                f"❌ **Could not start {REFRESH_SYMBOLS_BUTTON}.**  \n"
                 f"{parsed.get('error') or 'Invalid symbols.'}"
             )
             details = _json_details(parsed)
-            if self.charts_ticker_dropdown is not None:
-                return status, details, gr.update()
-            return status, details
+            return _out(
+                "—",
+                status,
+                details,
+                gr.update() if self.charts_ticker_dropdown is not None else None,
+            )
+
+        n = len(parsed["tickers"])
         logger.info(f"Dashboard refresh_symbols for {parsed['tickers']}")
-        result = refresh_symbols(tickers_text, force_allow=True)
+        progress(0.0, desc="Starting…")
+        # Stream an immediate "working" line so the user is not stuck on a timer alone
+        yield _out(
+            f"0% · Starting for {n} symbol(s)…",
+            f"⏳ **Working…**  \n"
+            f"**{REFRESH_SYMBOLS_BUTTON}** for `{', '.join(parsed['tickers'][:12])}`"
+            + (f" +{n - 12} more" if n > 12 else "")
+            + "  \n"
+            "Step 1/2: updating market data (this can take a few minutes).",
+            "",
+            gr.update() if self.charts_ticker_dropdown is not None else None,
+        )
+
+        last_desc = {"text": "Working…"}
+
+        def progress_cb(frac: float, desc: str = "") -> None:
+            pct = int(max(0.0, min(1.0, float(frac))) * 100)
+            label = desc or "Working…"
+            last_desc["text"] = label
+            try:
+                progress(frac, desc=label)
+            except Exception:
+                pass
+
+        try:
+            result = refresh_symbols(
+                tickers_text,
+                force_allow=True,
+                progress_cb=progress_cb,
+            )
+        except Exception as e:
+            logger.exception("refresh_symbols failed")
+            result = {"ok": False, "error": str(e), "tickers": parsed["tickers"]}
+
+        progress(1.0, desc="Done")
         status = _refresh_summary(result)
         details = _json_details(result)
+        final_prog = f"100% · {last_desc['text']}" if result.get("ok") else (
+            f"Stopped · {last_desc['text']}"
+        )
+        if result.get("ok") and not result.get("partial"):
+            final_prog = "100% · Complete"
+        elif result.get("partial"):
+            final_prog = "100% · Finished with partial results"
+
+        dd = None
         if self.charts_ticker_dropdown is not None:
             prefer = result.get("ready") or parsed["tickers"]
-            return status, details, self._charts_dropdown_update(prefer=prefer)
-        return status, details
+            dd = self._charts_dropdown_update(prefer=prefer)
+        yield _out(final_prog, status, details, dd)
 
     def do_gather(self, tickers_text):
         parsed = parse_ticker_list(tickers_text)
@@ -629,7 +700,12 @@ class RunTab:
             return status, details, self._charts_dropdown_update(prefer=prefer)
         return status, details
 
-    def do_forecast(self, tickers_text, forecast_date):
+    def do_forecast(self, tickers_text, forecast_date, progress=gr.Progress()):
+        def _out(status, details, dropdown=None):
+            if self.charts_ticker_dropdown is not None:
+                return status, details, dropdown
+            return status, details
+
         parsed = parse_ticker_list(tickers_text)
         if not parsed["ok"]:
             status = (
@@ -637,9 +713,11 @@ class RunTab:
                 f"{parsed.get('error') or 'Invalid symbols.'}"
             )
             details = _json_details(parsed)
-            if self.charts_ticker_dropdown is not None:
-                return status, details, gr.update()
-            return status, details
+            return _out(
+                status,
+                details,
+                gr.update() if self.charts_ticker_dropdown is not None else None,
+            )
         # catch-up if blank; single origin if date set
         if forecast_date and str(forecast_date).strip():
             start_preview = resolve_start_for_run(forecast_date)
@@ -649,24 +727,38 @@ class RunTab:
                     f"{start_preview.get('error') or ''}"
                 )
                 details = _json_details(start_preview)
-                if self.charts_ticker_dropdown is not None:
-                    return status, details, gr.update()
-                return status, details
+                return _out(
+                    status,
+                    details,
+                    gr.update() if self.charts_ticker_dropdown is not None else None,
+                )
         logger.info(
             f"Dashboard forecast for {parsed['tickers']} "
             f"start={forecast_date or 'catch-up'}"
         )
+
+        def progress_cb(frac: float, desc: str = "") -> None:
+            try:
+                progress(frac, desc=desc or "Forecasting…")
+            except Exception:
+                pass
+
+        progress(0.0, desc="Starting forecast…")
         result = forecast_for_tickers(
             tickers_text,
             forecast_start_date=forecast_date or None,
             force_allow=True,
+            progress_cb=progress_cb,
         )
+        progress(1.0, desc="Done")
         status = _forecast_summary(result)
         details = _json_details(result)
         if self.charts_ticker_dropdown is not None:
             prefer = result.get("forecasted") or parsed["tickers"]
-            return status, details, self._charts_dropdown_update(prefer=prefer)
-        return status, details
+            return _out(
+                status, details, self._charts_dropdown_update(prefer=prefer)
+            )
+        return _out(status, details)
 
     def do_refresh_search_db(self):
         """Rebuild DuckDB search cache from local parquet (full refresh)."""

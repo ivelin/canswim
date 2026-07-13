@@ -203,6 +203,43 @@ def test_refresh_symbols_calls_gather_then_forecast(monkeypatch):
     )
 
 
+def test_refresh_symbols_progress_callback(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    seen: list[tuple[float, str]] = []
+
+    def _cb(frac: float, desc: str = "") -> None:
+        seen.append((frac, desc))
+
+    with patch(
+        "canswim.run_triggers.gather_for_tickers",
+        return_value={
+            "ok": True,
+            "tickers": ["AAPL"],
+            "ready": ["AAPL"],
+            "incomplete": [],
+            "messages": [],
+        },
+    ):
+        with patch(
+            "canswim.run_triggers.forecast_for_tickers",
+            return_value={
+                "ok": True,
+                "mode": "catchup",
+                "tickers": ["AAPL"],
+                "forecasted": ["AAPL"],
+                "origins": ["2026-07-13"],
+                "messages": [],
+            },
+        ) as f:
+            r = refresh_symbols("AAPL", force_allow=True, progress_cb=_cb)
+    assert r["ok"] is True
+    assert seen, "progress_cb should be invoked"
+    assert seen[0][0] < seen[-1][0] or seen[-1][0] == 1.0
+    assert any("market data" in d.lower() for _, d in seen)
+    # progress_cb forwarded into forecast
+    assert f.call_args.kwargs.get("progress_cb") is not None
+
+
 def test_forecast_passes_resolved_start_to_forecaster(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     monkeypatch.setenv("data_dir", "/tmp/canswim_test_data_unused")

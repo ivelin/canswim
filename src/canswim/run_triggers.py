@@ -21,7 +21,10 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Callable, Optional, Sequence, Union
+
+# fraction in [0, 1], human-readable desc for UI progress bars
+ProgressCb = Optional[Callable[[float, str], None]]
 
 import pandas as pd
 from loguru import logger
@@ -133,6 +136,15 @@ def default_catchup_months() -> int:
     except (TypeError, ValueError):
         n = DEFAULT_CATCHUP_MONTHS
     return max(1, min(36, n))
+
+
+def _report_progress(cb: ProgressCb, fraction: float, desc: str = "") -> None:
+    if cb is None:
+        return
+    try:
+        cb(max(0.0, min(1.0, float(fraction))), str(desc or ""))
+    except Exception:
+        pass
 
 
 def _cap_start_to_local_prices(
@@ -626,6 +638,7 @@ def forecast_for_tickers(
     force_allow: bool = False,
     dry_run: bool = False,
     catchup_months: Optional[int] = None,
+    progress_cb: ProgressCb = None,
 ) -> dict[str, Any]:
     """Run forecast for an explicit ticker list.
 
@@ -635,12 +648,14 @@ def forecast_for_tickers(
     * **Explicit start date** → single week-aligned origin (existing behavior).
 
     ``dry_run=True`` only resolves origins + which partitions exist (no torch).
+    ``progress_cb(fraction, desc)`` optional UI progress (0..1).
     """
     if not force_allow:
         blocked = require_runs_allowed()
         if blocked is not None:
             return blocked
 
+    _report_progress(progress_cb, 0.0, "Planning forecast starts…")
     parsed = parse_ticker_list(tickers_text, max_tickers=max_tickers)
     if not parsed["ok"]:
         return {
@@ -750,6 +765,9 @@ def forecast_for_tickers(
         }
 
     if not any_to_run:
+        _report_progress(
+            progress_cb, 0.9, "All starts already on file — updating Charts…"
+        )
         try:
             from canswim.db import (
                 ensure_symbols_in_search_db,
@@ -770,6 +788,7 @@ def forecast_for_tickers(
                 )
         except Exception as e:
             messages.append(f"Charts forecast sync note: {e}")
+        _report_progress(progress_cb, 1.0, "Already up to date.")
         return {
             "ok": True,
             "mode": mode,
@@ -792,9 +811,15 @@ def forecast_for_tickers(
     need_any = sorted(
         {t for v in by_start.values() for t in v["to_run"]}
     )
+    n_starts_todo = sum(1 for v in by_start.values() if v["to_run"])
     messages.append(
         f"Will forecast {len(need_any)} symbol(s) across "
-        f"{sum(1 for v in by_start.values() if v['to_run'])} start(s)."
+        f"{n_starts_todo} start(s)."
+    )
+    _report_progress(
+        progress_cb,
+        0.05,
+        f"Loading model — {n_starts_todo} forecast start(s) to run…",
     )
 
     data_dir = os.getenv("data_dir", "data")
@@ -854,12 +879,24 @@ def forecast_for_tickers(
         cf.download_model()
         cf.download_data()
         model_loaded = True
+        _report_progress(progress_cb, 0.12, "Model ready — running forecasts…")
 
+        starts_done = 0
         for o in origins:
             plan = by_start[o]
             to_run = list(plan["to_run"])
             if not to_run:
                 continue
+            starts_done += 1
+            frac = 0.12 + 0.75 * (starts_done - 1) / max(n_starts_todo, 1)
+            sym_hint = ", ".join(to_run[:4]) + (
+                f" +{len(to_run) - 4}" if len(to_run) > 4 else ""
+            )
+            _report_progress(
+                progress_cb,
+                frac,
+                f"Forecast {starts_done}/{n_starts_todo}: start {o} ({sym_hint})…",
+            )
             pd.DataFrame({"Symbol": to_run}).to_csv(dest_list, index=False)
             os.environ["n_stocks"] = str(max(len(to_run), 1))
             # Forecaster caches symbol list from env at load — set stocks on model if present
@@ -912,6 +949,11 @@ def forecast_for_tickers(
                     f"Start {o}: new={len(forecasted_o)}, "
                     f"already={len(plan['already'])}."
                 )
+            _report_progress(
+                progress_cb,
+                0.12 + 0.75 * starts_done / max(n_starts_todo, 1),
+                f"Finished start {starts_done}/{n_starts_todo} ({o}).",
+            )
 
         try:
             cf.upload_data()
@@ -933,6 +975,7 @@ def forecast_for_tickers(
             )
 
         # Push parquet → DuckDB (+ backtest_error refresh) and Charts symbol list
+        _report_progress(progress_cb, 0.92, "Updating Charts / Scans database…")
         try:
             from canswim.db import (
                 ensure_symbols_in_search_db,
@@ -954,6 +997,8 @@ def forecast_for_tickers(
                 )
         except Exception as e:
             messages.append(f"Charts forecast sync note: {e}")
+
+        _report_progress(progress_cb, 1.0, "Forecast complete.")
 
         ok = len(incomplete) == 0
         out: dict[str, Any] = {
@@ -1025,10 +1070,12 @@ def refresh_symbols(
     force_allow: bool = False,
     catchup_months: Optional[int] = None,
     dry_run: bool = False,
+    progress_cb: ProgressCb = None,
 ) -> dict[str, Any]:
     """All-in-one: gather market data, then catch-up forecasts for ready symbols.
 
     Primary path for “refresh my portfolio / new symbol” (GUI, MCP, CLI).
+    ``progress_cb(fraction, desc)`` optional UI progress (0..1).
     """
     if not force_allow:
         blocked = require_runs_allowed()
@@ -1036,6 +1083,9 @@ def refresh_symbols(
             return blocked
 
     messages: list[str] = ["Refresh data & forecasts: gather + catch-up forecast."]
+    _report_progress(
+        progress_cb, 0.02, "Step 1/2: updating market data…"
+    )
     gather = gather_for_tickers(
         tickers_text,
         include_covariates=include_covariates,
@@ -1067,6 +1117,7 @@ def refresh_symbols(
         )
         out["ok"] = False
         out["need_gather"] = True
+        _report_progress(progress_cb, 1.0, "Stopped — no forecast-ready symbols.")
         return out
 
     if dry_run:
@@ -1077,6 +1128,7 @@ def refresh_symbols(
             dry_run=True,
             catchup_months=catchup_months,
             max_tickers=max_tickers,
+            progress_cb=progress_cb,
         )
         out["forecast"] = fc
         out["ok"] = True
@@ -1086,6 +1138,16 @@ def refresh_symbols(
         )
         return out
 
+    _report_progress(
+        progress_cb,
+        0.28,
+        f"Step 2/2: catch-up forecasts for {len(ready)} symbol(s)…",
+    )
+
+    def _fc_progress(frac: float, desc: str = "") -> None:
+        # Map forecast 0..1 into overall 0.28..0.98
+        _report_progress(progress_cb, 0.28 + 0.70 * float(frac), desc)
+
     fc = forecast_for_tickers(
         ready,
         forecast_start_date=None,
@@ -1093,6 +1155,7 @@ def refresh_symbols(
         dry_run=False,
         catchup_months=catchup_months,
         max_tickers=max_tickers,
+        progress_cb=_fc_progress,
     )
     out["forecast"] = fc
     out["ok"] = bool(fc.get("ok")) or bool(fc.get("partial") and fc.get("forecasted"))
@@ -1103,6 +1166,8 @@ def refresh_symbols(
         )
     if not out["ok"]:
         out["error"] = fc.get("error") or gather.get("error") or "Refresh incomplete."
+        _report_progress(progress_cb, 1.0, "Finished with errors.")
     else:
         out["messages"].append("Refresh finished for forecast-ready symbols.")
+        _report_progress(progress_cb, 1.0, "Refresh data & forecasts complete.")
     return out
