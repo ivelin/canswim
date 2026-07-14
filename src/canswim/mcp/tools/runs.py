@@ -70,7 +70,13 @@ def gather_tickers_impl(
             pass
     if result.get("ok"):
         return ok_result(result)
-    return err_result(result.get("error") or "gather failed", data=result)
+    # Surface structured remote_api (network / key / plan) for MCP clients
+    return err_result(
+        result.get("error") or "gather failed",
+        data=result,
+        remote_api=result.get("remote_api"),
+        fail_reason=result.get("fail_reason"),
+    )
 
 
 def forecast_tickers_impl(
@@ -96,7 +102,12 @@ def forecast_tickers_impl(
     )
     if result.get("ok"):
         return ok_result(result)
-    return err_result(result.get("error") or "forecast failed", data=result)
+    return err_result(
+        result.get("error") or "forecast failed",
+        data=result,
+        remote_api=result.get("remote_api"),
+        fail_reason=result.get("fail_reason"),
+    )
 
 
 def refresh_tickers_impl(
@@ -127,7 +138,17 @@ def refresh_tickers_impl(
     )
     if result.get("ok"):
         return ok_result(result)
-    return err_result(result.get("error") or "refresh failed", data=result)
+    # Propagate gather remote_api if present under nested gather
+    remote = result.get("remote_api") or (result.get("gather") or {}).get(
+        "remote_api"
+    )
+    return err_result(
+        result.get("error") or "refresh failed",
+        data=result,
+        remote_api=remote,
+        fail_reason=result.get("fail_reason")
+        or (result.get("gather") or {}).get("fail_reason"),
+    )
 
 
 def runs_enabled() -> bool:

@@ -32,6 +32,10 @@ from loguru import logger
 from canswim.calendar_weeks import list_monthly_catchup_origins, resolve_forecast_start
 from canswim.eligibility import is_valid_ticker_symbol
 from canswim.hfhub import _env_bool
+from canswim.remote_api_errors import (
+    enrich_result_with_remote_issue,
+    looks_like_remote_failure,
+)
 
 # Soft cap so accidental pastes do not launch huge jobs
 DEFAULT_MAX_TICKERS = 50
@@ -433,6 +437,12 @@ def gather_for_tickers(
         # Scoped user runs: ~2y missing-only (not multi-decade train history)
         g.gather_mode = "forecast"
 
+        if not getattr(g, "FMP_API_KEY", None):
+            messages.append(
+                "FMP_API_KEY not set — will try yfinance for prices; "
+                "fundamentals (ownership, estimates, profiles) need FMP."
+            )
+
         # Broad market / sectors: reuse local files on small scopes
         try:
             g.gather_broad_market_data()
@@ -491,7 +501,7 @@ def gather_for_tickers(
             friendly = ""
 
         if still_incomplete and not ready:
-            return {
+            out_inc: dict[str, Any] = {
                 "ok": False,
                 "error": friendly
                 or INCOMPLETE_DATA_MSG.format(symbols=", ".join(still_incomplete)),
@@ -507,6 +517,18 @@ def gather_for_tickers(
                 "ready": [],
                 "need_gather": True,
             }
+            # Remote download planned but nothing usable → often API/network
+            if planned_fetch and planned_but_empty:
+                out_inc = enrich_result_with_remote_issue(
+                    out_inc,
+                    extra_messages=messages
+                    + [
+                        "No usable download after remote market-data request.",
+                        "FMP or yfinance may be unreachable or rejecting the API key.",
+                    ],
+                    provider="FMP / yfinance",
+                )
+            return out_inc
 
         if still_incomplete and ready:
             messages.append(friendly)
@@ -585,7 +607,7 @@ def gather_for_tickers(
         except Exception as e:
             messages.append(f"Charts list sync note: {e}")
 
-        return {
+        out_ok: dict[str, Any] = {
             "ok": True,
             "partial": bool(still_incomplete),
             "tickers": tickers,
@@ -601,10 +623,20 @@ def gather_for_tickers(
             "ready": ready,
             "db_sync": db_sync,
         }
+        # Soft remote notes (e.g. fund endpoint failed) → attach structured hint
+        if any(
+            looks_like_remote_failure(m) for m in messages if isinstance(m, str)
+        ):
+            out_ok = enrich_result_with_remote_issue(
+                out_ok, extra_messages=[str(m) for m in messages]
+            )
+            # success path keeps ok=True; remote_api is advisory for UI
+            out_ok["ok"] = True
+        return out_ok
     except Exception as e:
         logger.exception("gather_for_tickers failed")
         err = str(e)
-        return {
+        out_fail: dict[str, Any] = {
             "ok": False,
             "error": err,
             "tickers": tickers,
@@ -612,6 +644,13 @@ def gather_for_tickers(
             "messages": messages,
             "need_gather": True,
         }
+        # Classify from the exception first; soft FMP notes must not hide
+        # local short-history / IPO readiness failures.
+        if looks_like_remote_failure(e):
+            return enrich_result_with_remote_issue(
+                out_fail, e, extra_messages=[str(m) for m in messages]
+            )
+        return out_fail
 
 
 def _ensure_symbols_on_list(tickers: Sequence[str]) -> Path:
@@ -1129,6 +1168,11 @@ def refresh_symbols(
         )
         out["ok"] = False
         out["need_gather"] = True
+        if gather.get("remote_api"):
+            out["remote_api"] = gather["remote_api"]
+            out["fail_reason"] = gather.get("fail_reason") or "remote_api"
+        elif looks_like_remote_failure(out.get("error"), extra_messages=messages):
+            out = enrich_result_with_remote_issue(out, out.get("error"))
         _report_progress(progress_cb, 1.0, "Stopped — no forecast-ready symbols.")
         return out
 
