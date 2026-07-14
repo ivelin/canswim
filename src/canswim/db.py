@@ -136,6 +136,8 @@ def search_db_status(db_path: Optional[str] = None) -> dict[str, Any]:
         except Exception:
             forecast_files = 0
 
+    from canswim.db_migrations import CURRENT_SCHEMA_VERSION, get_schema_version
+
     out: dict[str, Any] = {
         "db_path": path,
         "db_exists": Path(path).is_file(),
@@ -143,6 +145,9 @@ def search_db_status(db_path: Optional[str] = None) -> dict[str, Any]:
         "counts": {},
         "missing_core": list(CORE_SEARCH_TABLES),
         "missing_optional": ["company_profile"],
+        "schema_version": None,
+        "schema_version_current": CURRENT_SCHEMA_VERSION,
+        "schema_needs_migration": False,
         "parquet": {
             "prices": Path(paths.stocks_price_path).is_file(),
             "prices_path": paths.stocks_price_path,
@@ -174,6 +179,11 @@ def search_db_status(db_path: Optional[str] = None) -> dict[str, Any]:
                 t for t in ("company_profile",) if t not in existing
             ]
             out["ok"] = len(out["missing_core"]) == 0
+        ver = get_schema_version(path)
+        out["schema_version"] = ver
+        out["schema_needs_migration"] = (
+            ver is None or int(ver) < CURRENT_SCHEMA_VERSION
+        )
     except Exception as e:
         logger.warning(f"search_db_status({path}): {e}")
         out["error"] = str(e)
@@ -329,6 +339,12 @@ def init_search_db(
 
     if _should_reuse_db(db_path, same_data):
         logger.info("Reusing search database")
+        # Versioned migrations before optional repairs (see db_migrations.py)
+        from canswim.db_migrations import apply_migrations
+
+        migration = apply_migrations(db_path, paths=paths)
+        if not migration.get("ok"):
+            logger.warning(f"Search DB migration issue: {migration.get('error')}")
         repair = ensure_optional_search_tables(db_path, paths=paths)
         # Grow Charts list from local prices/forecasts without a full rebuild
         # (CSV-only stock_tickers used to hide gathered portfolio symbols).
@@ -348,6 +364,7 @@ def init_search_db(
             "rebuilt": False,
             "reused": True,
             "repair": repair,
+            "migration": migration,
             "status": status,
         }
 
@@ -466,11 +483,16 @@ def init_search_db(
             """
         )
         _create_or_load_company_profile_table(db_con, paths)
+    # Stamp schema version after full rebuild (escape hatch for any prior version)
+    from canswim.db_migrations import stamp_current_schema_version
+
+    migration = stamp_current_schema_version(db_path)
     status = search_db_status(db_path)
     return {
         "rebuilt": True,
         "reused": False,
         "repair": {"ok": True, "repaired": [], "notes": []},
+        "migration": migration,
         "status": status,
     }
 
@@ -1668,6 +1690,11 @@ SEARCH_TABLE_DOCS: dict[str, str] = {
         "Optional company metadata: name, sector, industry, country, "
         "exchange, mkt_cap, website, description. One row per symbol."
     ),
+    "canswim_schema_meta": (
+        "Search-DB schema versioning (key/value). "
+        "schema_version tracks migrations in canswim.db_migrations; "
+        "see docs/data_store.md Migration log."
+    ),
 }
 
 
@@ -1746,11 +1773,20 @@ def describe_search_schema(
     Includes tables, columns (name/type/nullable), indexes, optional row
     counts, and short purpose notes. Read-only connection only.
     """
+    from canswim.db_migrations import (
+        CURRENT_SCHEMA_VERSION,
+        get_schema_version,
+        list_migrations,
+    )
+
     path = db_path or get_db_path()
     out: dict[str, Any] = {
         "db_path": path,
         "db_exists": Path(path).is_file(),
         "read_only": True,
+        "schema_version": None,
+        "schema_version_current": CURRENT_SCHEMA_VERSION,
+        "migrations": list_migrations(),
         "sql_policy": (
             "Custom SQL via run_select: single SELECT or WITH…SELECT only; "
             "enforced + DuckDB read-only connection. "
@@ -1765,11 +1801,14 @@ def describe_search_schema(
             "search/UI cache (Charts, Scans, MCP).",
             "forecast.start_date = forecast origin; forecast.date = horizon day.",
             "Join company_profile on upper(symbol) for sector/industry filters.",
+            "Schema version is stored in canswim_schema_meta; "
+            "see docs/data_store.md for migration steps between app versions.",
         ],
     }
     if not out["db_exists"]:
         out["error"] = f"Database file not found: {path}"
         return out
+    out["schema_version"] = get_schema_version(path)
 
     try:
         with connect_readonly(path) as con:
