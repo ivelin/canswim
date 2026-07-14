@@ -1140,30 +1140,72 @@ def sync_forecasts_to_search_db(
             WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
             """
         )
-        # Hive parquet: time column may be "time" or already "date"
-        # Darts forecast parquet uses time index column "time" + hive partition cols
+        # Production hive parquet uses column "date"; older fixtures used "time".
+        # DuckDB errors if a referenced column is missing, so pick from schema.
+        sample_files = sorted(glob.glob(forecast_glob, recursive=True))
+        pq_cols = {
+            str(r[0]).lower()
+            for r in db_con.execute(
+                f"DESCRIBE SELECT * FROM read_parquet('{sample_files[0]}') LIMIT 0"
+            ).fetchall()
+        }
+        if "date" in pq_cols:
+            date_expr = "CAST(f.date AS DATE)"
+        elif "time" in pq_cols:
+            date_expr = "CAST(f.time AS DATE)"
+        else:
+            return {
+                "ok": False,
+                "error": (
+                    f"Forecast parquet missing date/time column; cols={sorted(pq_cols)}"
+                ),
+                "symbols": syms,
+                "forecast_rows": 0,
+            }
+        # Dedupe when multiple part files share symbol/start/date (common in hive dirs).
         db_con.execute(
             f"""--sql
             INSERT INTO forecast
-            SELECT
-                CAST(f.time AS DATE) AS date,
-                upper(CAST(f.symbol AS VARCHAR)) AS symbol,
-                CAST(
-                    make_date(
-                        CAST(f.forecast_start_year AS INTEGER),
-                        CAST(f.forecast_start_month AS INTEGER),
-                        CAST(f.forecast_start_day AS INTEGER)
-                    ) AS DATE
-                ) AS start_date,
-                f."close_quantile_0.01",
-                f."close_quantile_0.05",
-                f."close_quantile_0.2",
-                f."close_quantile_0.5",
-                f."close_quantile_0.8",
-                f."close_quantile_0.95",
-                f."close_quantile_0.99"
-            FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
-            WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+            SELECT date, symbol, start_date,
+                "close_quantile_0.01",
+                "close_quantile_0.05",
+                "close_quantile_0.2",
+                "close_quantile_0.5",
+                "close_quantile_0.8",
+                "close_quantile_0.95",
+                "close_quantile_0.99"
+            FROM (
+                SELECT
+                    {date_expr} AS date,
+                    upper(CAST(f.symbol AS VARCHAR)) AS symbol,
+                    CAST(
+                        make_date(
+                            CAST(f.forecast_start_year AS INTEGER),
+                            CAST(f.forecast_start_month AS INTEGER),
+                            CAST(f.forecast_start_day AS INTEGER)
+                        ) AS DATE
+                    ) AS start_date,
+                    f."close_quantile_0.01",
+                    f."close_quantile_0.05",
+                    f."close_quantile_0.2",
+                    f."close_quantile_0.5",
+                    f."close_quantile_0.8",
+                    f."close_quantile_0.95",
+                    f."close_quantile_0.99",
+                    row_number() OVER (
+                        PARTITION BY upper(CAST(f.symbol AS VARCHAR)),
+                            make_date(
+                                CAST(f.forecast_start_year AS INTEGER),
+                                CAST(f.forecast_start_month AS INTEGER),
+                                CAST(f.forecast_start_day AS INTEGER)
+                            ),
+                            {date_expr}
+                        ORDER BY f.symbol
+                    ) AS rn
+                FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+                WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+            )
+            WHERE rn = 1
             """
         )
         n = db_con.execute(
