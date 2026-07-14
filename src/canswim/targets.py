@@ -33,7 +33,9 @@ class Targets:
         ]
 
     def load_stock_prices(self):
-        stocks_price_file = "data/data-3rd-party/all_stocks_price_hist_1d.parquet"
+        from canswim.db import DataPaths
+
+        stocks_price_file = DataPaths.from_env().stocks_price_path
         logger.info(
             f"Loading data from: {stocks_price_file} with filter: {self.pyarrow_filters}"
         )
