@@ -164,14 +164,18 @@ def test_get_forecast_rows_latest(mini_db):
 
 
 def test_sync_forecasts_to_search_db_from_hive_parquet(mini_db, tmp_path: Path):
-    """Forecast parquet must land in DuckDB so Charts can plot lines."""
-    # Build a tiny hive-style forecast partition for CCC
+    """Forecast parquet must land in DuckDB so Charts can plot lines.
+
+    Production hive layout uses column ``date`` (not ``time``) plus hive
+    partition keys for symbol / forecast_start_*.
+    """
+    # Build a tiny hive-style forecast partition for CCC (production shape)
     froot = tmp_path / "forecast" / "symbol=CCC" / "forecast_start_year=2026" / "forecast_start_month=3" / "forecast_start_day=2"
     froot.mkdir(parents=True)
     dates = pd.bdate_range("2026-03-02", periods=42)
     fdf = pd.DataFrame(
         {
-            "time": dates,
+            "date": dates,
             "symbol": "CCC",
             "close_quantile_0.01": 90.0,
             "close_quantile_0.05": 92.0,
@@ -192,10 +196,48 @@ def test_sync_forecasts_to_search_db_from_hive_parquet(mini_db, tmp_path: Path):
     res = sync_forecasts_to_search_db(
         mini_db, ["CCC"], forecast_path=str(tmp_path / "forecast")
     )
-    assert res["ok"] is True
+    assert res["ok"] is True, res
     assert res["forecast_rows"] == 42
     after = get_forecast_rows(mini_db, "CCC", latest_only=False)
     assert len(after) == 42
+
+
+def test_sync_forecasts_to_search_db_accepts_legacy_time_column(
+    mini_db, tmp_path: Path
+):
+    """Older fixtures used ``time``; sync must still load them."""
+    froot = (
+        tmp_path
+        / "forecast"
+        / "symbol=CCC"
+        / "forecast_start_year=2026"
+        / "forecast_start_month=4"
+        / "forecast_start_day=6"
+    )
+    froot.mkdir(parents=True)
+    dates = pd.bdate_range("2026-04-06", periods=5)
+    pd.DataFrame(
+        {
+            "time": dates,
+            "symbol": "CCC",
+            "close_quantile_0.01": 90.0,
+            "close_quantile_0.05": 92.0,
+            "close_quantile_0.2": 95.0,
+            "close_quantile_0.5": 100.0,
+            "close_quantile_0.8": 105.0,
+            "close_quantile_0.95": 108.0,
+            "close_quantile_0.99": 110.0,
+            "forecast_start_year": 2026,
+            "forecast_start_month": 4,
+            "forecast_start_day": 6,
+        }
+    ).to_parquet(froot / "part.parquet", index=False)
+
+    res = sync_forecasts_to_search_db(
+        mini_db, ["CCC"], forecast_path=str(tmp_path / "forecast")
+    )
+    assert res["ok"] is True, res
+    assert res["forecast_rows"] == 5
 
 
 def test_get_close_prices(mini_db):

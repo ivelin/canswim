@@ -274,3 +274,81 @@ def test_server_registers_tools(mcp_env):
         # Fallback: tools list API if present
         tools = getattr(mcp_server.mcp, "list_tools", None)
         assert tools is not None or hasattr(mcp_server.mcp, "_mcp_server")
+
+
+def test_resolve_transport_defaults_and_aliases(monkeypatch):
+    """Shipped transport resolver: stdio default; http → streamable-http."""
+    from canswim.mcp.server import _resolve_transport
+
+    monkeypatch.delenv("CANSWIM_MCP_TRANSPORT", raising=False)
+    monkeypatch.delenv("MCP_TRANSPORT", raising=False)
+    assert _resolve_transport() == "stdio"
+    assert _resolve_transport(http=True) == "streamable-http"
+    assert _resolve_transport("http") == "streamable-http"
+    assert _resolve_transport("streamable_http") == "streamable-http"
+    assert _resolve_transport("sse") == "sse"
+    monkeypatch.setenv("CANSWIM_MCP_TRANSPORT", "http")
+    assert _resolve_transport() == "streamable-http"
+    with pytest.raises(ValueError, match="Unknown MCP transport"):
+        _resolve_transport("udp")
+
+
+def test_apply_http_settings_from_args_and_env(monkeypatch):
+    """apply_http_settings mutates the real FastMCP instance host/port."""
+    from canswim.mcp import server as mcp_server
+
+    monkeypatch.delenv("CANSWIM_MCP_HOST", raising=False)
+    monkeypatch.delenv("CANSWIM_MCP_PORT", raising=False)
+    monkeypatch.delenv("MCP_HOST", raising=False)
+    monkeypatch.delenv("MCP_PORT", raising=False)
+
+    prev_host = mcp_server.mcp.settings.host
+    prev_port = mcp_server.mcp.settings.port
+    try:
+        h, p = mcp_server.apply_http_settings(host="127.0.0.1", port=3472)
+        assert (h, p) == ("127.0.0.1", 3472)
+        assert mcp_server.mcp.settings.host == "127.0.0.1"
+        assert mcp_server.mcp.settings.port == 3472
+
+        monkeypatch.setenv("CANSWIM_MCP_HOST", "0.0.0.0")
+        monkeypatch.setenv("CANSWIM_MCP_PORT", "3499")
+        h2, p2 = mcp_server.apply_http_settings()
+        assert (h2, p2) == ("0.0.0.0", 3499)
+        assert mcp_server.mcp.settings.port == 3499
+    finally:
+        mcp_server.mcp.settings.host = prev_host
+        mcp_server.mcp.settings.port = prev_port
+
+
+def test_main_passes_streamable_http_to_fastmcp_run(monkeypatch):
+    """main() drives the real entry path: resolve transport + settings + mcp.run."""
+    from canswim.mcp import server as mcp_server
+
+    calls: list[dict] = []
+
+    def _fake_run(transport="stdio", mount_path=None):
+        calls.append(
+            {
+                "transport": transport,
+                "mount_path": mount_path,
+                "host": mcp_server.mcp.settings.host,
+                "port": mcp_server.mcp.settings.port,
+            }
+        )
+
+    monkeypatch.setattr(mcp_server.mcp, "run", _fake_run)
+    prev_host = mcp_server.mcp.settings.host
+    prev_port = mcp_server.mcp.settings.port
+    try:
+        mcp_server.main(http=True, host="127.0.0.1", port=3472)
+        assert len(calls) == 1
+        assert calls[0]["transport"] == "streamable-http"
+        assert calls[0]["host"] == "127.0.0.1"
+        assert calls[0]["port"] == 3472
+
+        calls.clear()
+        mcp_server.main(transport="stdio")
+        assert calls[0]["transport"] == "stdio"
+    finally:
+        mcp_server.mcp.settings.host = prev_host
+        mcp_server.mcp.settings.port = prev_port

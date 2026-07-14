@@ -29,7 +29,7 @@ Local work should keep **`hfhub_sync=False`** (default) unless you intentionally
 | `gatherdata` | Get market data (full universe or scoped) | `--tickers`, `--no_covariates` |
 | `forecast` | Run forecasts (full or scoped) | `--tickers`, `--forecast_start_date`, `--dry_run` |
 | `resolve_start` | Print which forecast start date would be used | `--forecast_start_date` |
-| `mcp` | MCP server for clients | env `MCP_ALLOW_RUNS=1` for writes |
+| `mcp` | MCP server for clients | env `MCP_ALLOW_RUNS=1` for writes; `--http --host --port` for Streamable HTTP |
 | `train` | Continuous model training (full history) | `--new_model` |
 | `modelsearch` | Hyperparameter search | — |
 | `downloaddata` | Download train/forecast data from HF Hub | needs `hfhub_sync` / tokens as configured |
@@ -73,6 +73,9 @@ Without `--tickers`, `gatherdata` / `forecast` keep **full-universe / train-styl
 | `--no_covariates` | `gatherdata --tickers` | Prices (+ broad market path) only; skip earnings, ownership, etc. |
 | `--same_data True` | `dashboard` | Reuse DuckDB search DB (faster start) |
 | `--new_model True` | `train` | Train a new model instead of continuing |
+| `--http` | `mcp` | Streamable HTTP (gateway) instead of stdio |
+| `--transport …` | `mcp` | `stdio` / `streamable-http` / `http` / `sse` |
+| `--host` / `--port` | `mcp` | Bind for HTTP/SSE transports |
 
 ## Environment variables (common)
 
@@ -83,6 +86,9 @@ Without `--tickers`, `gatherdata` / `forecast` keep **full-universe / train-styl
 | `YFINANCE_USE_CACHE` | `False` | Avoid multi‑GB yfinance SQLite cache hang |
 | `MCP_ALLOW_RUNS` / `CANSWIM_ALLOW_RUNS` | unset | Enable MCP gather/forecast tools only |
 | `MCP_INIT_DB` | unset | If set, MCP may build DuckDB from parquet on start |
+| `CANSWIM_MCP_TRANSPORT` / `MCP_TRANSPORT` | `stdio` | MCP transport when flags omitted |
+| `CANSWIM_MCP_HOST` / `MCP_HOST` | `127.0.0.1` | HTTP/SSE bind host |
+| `CANSWIM_MCP_PORT` / `MCP_PORT` | `8000` | HTTP/SSE bind port |
 | `data_dir` | `data` | Data root |
 | `db_file` | (dashboard/MCP defaults) | DuckDB filename under `data_dir` |
 | `stock_tickers_list` | list CSV name | Universe for full gather/forecast when not using `--tickers` |

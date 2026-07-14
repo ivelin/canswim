@@ -35,6 +35,9 @@ def test_cli_help_lists_tickers_and_resolve(tmp_path):
     assert "--tickers" in out
     assert "resolve_start" in out
     assert "dry_run" in out or "--dry_run" in out
+    assert "--http" in out
+    assert "--transport" in out
+    assert "streamable-http" in out
 
 
 def test_run_gather_tickers_force_allow(monkeypatch, capsys):

@@ -31,6 +31,36 @@ def election_year_offset(idx):
     return idx.year % 4
 
 
+def align_covariate_series_to_components(
+    series: TimeSeries,
+    expected: Sequence[str],
+    *,
+    fill_value: float = 0.0,
+) -> TimeSeries:
+    """Reorder/pad/drop columns so a covariate series matches the checkpoint schema.
+
+    The trained TiDE model stores ``past_covariate_series`` /
+    ``future_covariate_series`` with the exact column set used at train time.
+    Local gather can miss thin funds (e.g. ``^R2ESC``) or ``Adj Close`` for
+    some indexes; zero-fill and reorder so ``predict`` does not fail with a
+    dimensionality mismatch.
+    """
+    if series is None:
+        raise ValueError("series is required")
+    expected = [str(c) for c in expected]
+    if not expected:
+        return series
+    df = series.pd_dataframe(copy=True)
+    df.columns = [str(c) for c in df.columns]
+    for col in expected:
+        if col not in df.columns:
+            df[col] = fill_value
+    # Drop extras, reorder to training schema
+    df = df.reindex(columns=expected)
+    df = df.fillna(fill_value)
+    return TimeSeries.from_dataframe(df)
+
+
 def optuna_print_callback(study, trial):
     logger.info(f"Current value: {trial.value}, Current params: {trial.params}")
     logger.info(
@@ -406,13 +436,25 @@ class CanswimModel:
         self.targets_list = []
         self.past_cov_list = []
         self.future_cov_list = []
+        past_expected = self._checkpoint_cov_components(past=True)
+        future_expected = self._checkpoint_cov_components(past=False)
         for t in sorted(self.targets.target_series.keys()):
             n_target_samples = len(self.targets.target_series[t])
             if n_target_samples >= self.min_samples:
                 self.targets_ticker_list.append(t)
                 self.targets_list.append(self.targets.target_series[t])
-                self.past_cov_list.append(self.covariates.past_covariates[t])
-                self.future_cov_list.append(self.covariates.future_covariates[t])
+                past_ts = self.covariates.past_covariates[t]
+                future_ts = self.covariates.future_covariates[t]
+                if past_expected:
+                    past_ts = align_covariate_series_to_components(
+                        past_ts, past_expected
+                    )
+                if future_expected:
+                    future_ts = align_covariate_series_to_components(
+                        future_ts, future_expected
+                    )
+                self.past_cov_list.append(past_ts)
+                self.future_cov_list.append(future_ts)
             else:
                 logger.info(
                     f"Skipping {t} due to lack of data. Only {n_target_samples} available"
@@ -791,6 +833,25 @@ class CanswimModel:
             ##past_cov_list.append(past_covs_sliced)
             past_cov_list.append(past_cov)
         return past_cov_list
+
+    def _checkpoint_cov_components(self, *, past: bool) -> Optional[List[str]]:
+        """Column names from the loaded checkpoint covariate series (no darts_enc_*)."""
+        tm = getattr(self, "torch_model", None)
+        if tm is None:
+            return None
+        series = (
+            getattr(tm, "past_covariate_series", None)
+            if past
+            else getattr(tm, "future_covariate_series", None)
+        )
+        if series is None or not hasattr(series, "components"):
+            return None
+        cols = [
+            str(c)
+            for c in list(series.components)
+            if not str(c).startswith("darts_enc")
+        ]
+        return cols or None
 
     def predict(
         self,

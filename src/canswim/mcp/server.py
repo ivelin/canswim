@@ -8,6 +8,7 @@ registered for discoverability but require ``MCP_ALLOW_RUNS=1`` to execute.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -278,8 +279,74 @@ async def refresh_tickers(
     )
 
 
-def main() -> None:
-    mcp.run(transport="stdio")
+def _resolve_transport(
+    transport: str | None = None,
+    *,
+    http: bool = False,
+) -> str:
+    """Resolve MCP transport: CLI/env override, else stdio.
+
+    Accepted values: ``stdio`` (default), ``streamable-http`` (alias ``http``), ``sse``.
+    Env: ``CANSWIM_MCP_TRANSPORT`` or ``MCP_TRANSPORT``.
+    """
+    if http and not transport:
+        return "streamable-http"
+    raw = (transport or os.getenv("CANSWIM_MCP_TRANSPORT") or os.getenv("MCP_TRANSPORT") or "stdio")
+    raw = str(raw).strip().lower()
+    if raw in ("http", "streamable_http", "streamable-http"):
+        return "streamable-http"
+    if raw in ("stdio", "sse", "streamable-http"):
+        return raw
+    raise ValueError(
+        f"Unknown MCP transport {raw!r}; use stdio, streamable-http (or http), or sse"
+    )
+
+
+def apply_http_settings(
+    host: str | None = None,
+    port: int | None = None,
+) -> tuple[str, int]:
+    """Apply host/port onto the module FastMCP instance (for streamable-http / sse).
+
+    Precedence: explicit args → ``CANSWIM_MCP_HOST`` / ``CANSWIM_MCP_PORT``
+    (or ``MCP_HOST`` / ``MCP_PORT``) → FastMCP defaults (127.0.0.1:8000).
+    Returns the effective (host, port).
+    """
+    h = host or os.getenv("CANSWIM_MCP_HOST") or os.getenv("MCP_HOST") or mcp.settings.host
+    p_raw = port if port is not None else (
+        os.getenv("CANSWIM_MCP_PORT") or os.getenv("MCP_PORT") or mcp.settings.port
+    )
+    p = int(p_raw)
+    mcp.settings.host = str(h)
+    mcp.settings.port = p
+    return str(h), p
+
+
+def main(
+    transport: str | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    *,
+    http: bool = False,
+) -> None:
+    """Run the MCP server (stdio by default; streamable-http for gateway/public).
+
+    For production behind mcp-gateway, prefer::
+
+        python -m canswim mcp --http --host 127.0.0.1 --port 3472
+    """
+    resolved = _resolve_transport(transport, http=http)
+    if resolved in ("streamable-http", "sse"):
+        eff_host, eff_port = apply_http_settings(host=host, port=port)
+        logger.info(
+            "canswim-mcp transport={} host={} port={}",
+            resolved,
+            eff_host,
+            eff_port,
+        )
+    else:
+        logger.info("canswim-mcp transport=stdio")
+    mcp.run(transport=resolved)  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

@@ -35,6 +35,26 @@ python -m canswim mcp
 MCP_ALLOW_RUNS=1 python -m canswim mcp
 ```
 
+### Streamable HTTP (production / mcp-gateway)
+
+Default transport is **stdio** (desktop clients). For a reverse-proxy gateway (Tailscale Funnel + Caddy apikey), run Streamable HTTP bound to localhost:
+
+```bash
+python -m canswim mcp --http --host 127.0.0.1 --port 3472
+# equivalent:
+python -m canswim mcp --transport streamable-http --host 127.0.0.1 --port 3472
+```
+
+| Flag / env | Meaning |
+|------------|---------|
+| `--http` | Shorthand for Streamable HTTP transport |
+| `--transport stdio\|streamable-http\|http\|sse` | Explicit transport (`http` ≡ `streamable-http`) |
+| `--host` / `CANSWIM_MCP_HOST` / `MCP_HOST` | Bind address (default `127.0.0.1`) |
+| `--port` / `CANSWIM_MCP_PORT` / `MCP_PORT` | Bind port (default `8000`) |
+| `CANSWIM_MCP_TRANSPORT` / `MCP_TRANSPORT` | Env override for transport |
+
+FastMCP serves the MCP endpoint at **`/mcp`** on that host:port. Public clients use the gateway path with `?apikey=` (never expose the bind port directly on the public internet).
+
 ## Example client config (stdio)
 
 ```json

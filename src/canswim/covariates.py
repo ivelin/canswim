@@ -663,8 +663,8 @@ class Covariates:
         self.load_institutional_symbol_ownership()
 
     def load_institutional_symbol_ownership(self):
-        inst_ownership_file = (
-            "data/data-3rd-party/institutional_symbol_ownership.parquet"
+        inst_ownership_file = self._parquet_path(
+            "institutional_symbol_ownership.parquet"
         )
         logger.info(f"Loading data from: {inst_ownership_file}")
         # df = pd.read_csv(inst_ownership_file, low_memory=False)
@@ -679,16 +679,16 @@ class Covariates:
         self.inst_symbol_ownership_df = df
 
     def load_broad_market(self):
-        file = "data/data-3rd-party/broad_market.parquet"
+        file = self._parquet_path("broad_market.parquet")
         # self.broad_market_df = pd.read_csv(csv_file, header=[0, 1], index_col=0)
         self.broad_market_df = pd.read_parquet(file)
 
     def load_sectors(self):
-        file = "data/data-3rd-party/sectors.parquet"
+        file = self._parquet_path("sectors.parquet")
         self.sectors_df = pd.read_parquet(file)
 
     def load_industry_funds(self):
-        file = "data/data-3rd-party/industry_funds.parquet"
+        file = self._parquet_path("industry_funds.parquet")
         self.industry_funds_df = pd.read_parquet(file)
 
     def load_future_covariates(self):
@@ -721,7 +721,7 @@ class Covariates:
         )
 
     def load_earnings(self):
-        earnings_file = "data/data-3rd-party/earnings_calendar.parquet"
+        earnings_file = self._parquet_path("earnings_calendar.parquet")
         logger.info(f"Loading data from: {earnings_file}")
         # earnings_loaded_df = pd.read_csv(earnings_csv_file)
         logger.info(f"pyarrow_filters: {self.pyarrow_filters}")
@@ -745,7 +745,7 @@ class Covariates:
         self.earnings_loaded_df = earnings_unique
 
     def load_key_metrics(self):
-        kms_file = "data/data-3rd-party/keymetrics_history.parquet"
+        kms_file = self._parquet_path("keymetrics_history.parquet")
         logger.info(f"Loading data from: {kms_file}")
         # kms_loaded_df = pd.read_csv(kms_file)
         kms_loaded_df = pd.read_parquet(kms_file, filters=self.pyarrow_filters)
@@ -755,7 +755,7 @@ class Covariates:
         self.est_loaded_df = {}
         for period in fiscal_periods:
             assert period in fiscal_periods
-            est_file = f"data/data-3rd-party/analyst_estimates_{period}.parquet"
+            est_file = self._parquet_path(f"analyst_estimates_{period}.parquet")
             logger.info(f"Loading data from: {est_file}")
             # est_loaded_df = pd.read_csv(est_file)
             est_loaded_df = pd.read_parquet(est_file, filters=self.pyarrow_filters)
