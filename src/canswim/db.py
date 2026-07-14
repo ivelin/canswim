@@ -395,18 +395,32 @@ def init_search_db(
         db_con.sql(
             f"""--sql
             CREATE OR REPLACE TABLE forecast
-            AS SELECT
-                CAST(f.time AS DATE) AS date,
-                f.symbol,
-                make_date(
-                    f.forecast_start_year,
-                    f.forecast_start_month,
-                    f.forecast_start_day
-                ) AS start_date,
-                COLUMNS("close_quantile_\\d+\\.\\d+")
-            FROM read_parquet('{forecast_path}/**/*.parquet', hive_partitioning = 1) AS f
-            SEMI JOIN stock_tickers
-            ON f.symbol = stock_tickers.symbol
+            AS SELECT * EXCLUDE (rn)
+            FROM (
+                SELECT
+                    CAST(f.date AS DATE) AS date,
+                    f.symbol,
+                    make_date(
+                        f.forecast_start_year,
+                        f.forecast_start_month,
+                        f.forecast_start_day
+                    ) AS start_date,
+                    COLUMNS('close_quantile_.*'),
+                    row_number() OVER (
+                        PARTITION BY f.symbol,
+                            make_date(
+                                f.forecast_start_year,
+                                f.forecast_start_month,
+                                f.forecast_start_day
+                            ),
+                            CAST(f.date AS DATE)
+                        ORDER BY f.symbol
+                    ) AS rn
+                FROM read_parquet('{forecast_path}/**/*.parquet', hive_partitioning = 1) AS f
+                SEMI JOIN stock_tickers
+                ON f.symbol = stock_tickers.symbol
+            )
+            WHERE rn = 1
             """
         )
         db_con.table("forecast").show()
