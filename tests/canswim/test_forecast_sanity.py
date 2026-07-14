@@ -31,6 +31,10 @@ def test_validate_accepts_coherent_forecast():
     assert cleaned is not None and not cleaned.empty
     assert len(cleaned) == 42
     assert "symbol" in cleaned.columns
+    # MC sample columns must not be written to hive parquet
+    assert not any(str(c).startswith("Close_s") for c in cleaned.columns)
+    # index/date column normalized to date for production sync
+    assert cleaned.index.name == "date" or "date" in cleaned.columns
     # no hard errors for a clean frame
     assert not any("all symbols failed" in e for e in errors)
 
@@ -88,3 +92,13 @@ def test_all_bad_symbols_yield_empty_and_error():
     cleaned, errors = validate_forecast_dataframe(df, expected_horizon=None)
     assert cleaned.empty
     assert any("all symbols failed" in e or "median" in e for e in errors)
+
+def test_align_covariate_series_to_components_pads_and_orders():
+    from darts import TimeSeries
+    from canswim.model import align_covariate_series_to_components
+
+    idx = pd.bdate_range("2024-01-01", periods=4)
+    ts = TimeSeries.from_dataframe(pd.DataFrame({"a": 1.0, "b": 2.0}, index=idx))
+    out = align_covariate_series_to_components(ts, ["b", "c", "a"])
+    assert list(out.components) == ["b", "c", "a"]
+    assert float(out.pd_dataframe()["c"].iloc[0]) == 0.0

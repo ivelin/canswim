@@ -138,10 +138,22 @@ def validate_forecast_dataframe(
     if df.empty and not forecast_df.empty:
         errors.append("all symbols failed forecast sanity checks")
 
-    # Restore original column layout for parquet write: time as index if it was
-    if time_col in df.columns:
-        df = df.set_index(time_col)
-        df.index.name = time_col if time_col != "index" else None
+    # Keep only partition + quantile columns (+ date) for hive parquet compatibility
+    keep = (
+        required
+        + qcols
+        + [c for c in ("date", "time", time_col) if c in df.columns]
+    )
+    keep = list(dict.fromkeys(keep))  # stable unique
+    df = df[[c for c in keep if c in df.columns]]
+
+    # Prefer column name "date" (production search-DB / sync path)
+    if time_col in df.columns and time_col != "date":
+        df = df.rename(columns={time_col: "date"})
+        time_col = "date"
+    if "date" in df.columns:
+        df = df.set_index("date")
+        df.index.name = "date"
 
     return df, errors
 
@@ -409,17 +421,18 @@ class CanswimForecaster:
                     )
                 # convert probabilistic forecast into a dataframe with quantile samples as columns Close_01, Close_02...
                 df = ts.pd_dataframe()
-                # save commonly used quantiles
+                # save commonly used quantiles only (drop raw MC sample columns)
+                out = pd.DataFrame(index=df.index)
                 for q in constants.quantiles:
                     qseries = df.quantile(q=q, axis=1)
                     qname = f"close_quantile_{q}"
-                    df[qname] = qseries
-                df["symbol"] = t
-                df["forecast_start_year"] = partition_start.year
-                df["forecast_start_month"] = partition_start.month
-                df["forecast_start_day"] = partition_start.day
-                # logger.debug(f"Next forecast sample: {df}")
-                forecast_df = pd.concat([forecast_df, df])
+                    out[qname] = qseries
+                out["symbol"] = t
+                out["forecast_start_year"] = partition_start.year
+                out["forecast_start_month"] = partition_start.month
+                out["forecast_start_day"] = partition_start.day
+                # logger.debug(f"Next forecast sample: {out}")
+                forecast_df = pd.concat([forecast_df, out])
             return forecast_df
 
         assert forecasts is not None and len(forecasts) > 0

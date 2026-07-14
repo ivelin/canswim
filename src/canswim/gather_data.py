@@ -106,10 +106,14 @@ class MarketDataGatherer:
         self.last_price_fetch_plans = []
 
     def _yfinance_session(self):
-        """Rate-limited session. Avoids SQLite cache hang by default.
+        """Optional custom session for yfinance.
 
-        Uses ``requests_ratelimiter.LimiterSession`` when available (stable
-        across pyrate-limiter v2/v3 API breaks). Falls back to a plain Session.
+        Default is ``None`` so yfinance uses its own curl_cffi session (required
+        by Yahoo). A custom ``LimiterSession`` / plain requests Session raises:
+        "Yahoo API requires curl_cffi session …".
+
+        Only when ``YFINANCE_USE_CACHE=1`` do we return a cached limiter session
+        (legacy; can be large/slow and may still break on current Yahoo).
         """
         if self.use_yfinance_cache:
             try:
@@ -129,13 +133,7 @@ class MarketDataGatherer:
                 )
             except Exception as e:
                 logger.warning(f"Could not enable yfinance cache ({e}); uncached session")
-        try:
-            from requests_ratelimiter import LimiterSession
-
-            return LimiterSession(per_second=5)
-        except Exception as e:
-            logger.warning(f"requests_ratelimiter unavailable ({e}); plain Session")
-            return Session()
+        return None
 
     def _data_file(self, name: str) -> str:
         d = data_3rd_party_dir()
@@ -259,27 +257,26 @@ class MarketDataGatherer:
         except Exception as e:
             logger.warning(f"Could not load data from file: {data_file}. Error: {e}")
         session = self._yfinance_session()
+        yf_kwargs = dict(
+            start=start_date,
+            group_by="tickers",
+            auto_adjust=False,
+            threads=True,
+            progress=True,
+        )
+        if session is not None:
+            yf_kwargs["session"] = session
         try:
             new_df = yf.download(
                 list(tickers),
-                start=start_date,
-                group_by="tickers",
-                auto_adjust=False,
-                threads=True,
-                progress=True,
                 timeout=30,
-                session=session,
+                **yf_kwargs,
             )
         except TypeError:
             # older yfinance without timeout kwarg
             new_df = yf.download(
                 list(tickers),
-                start=start_date,
-                group_by="tickers",
-                auto_adjust=False,
-                threads=True,
-                progress=True,
-                session=session,
+                **yf_kwargs,
             )
         except Exception as e:
             logger.error(f"yfinance download failed for {data_file}: {e}")
@@ -361,6 +358,7 @@ class MarketDataGatherer:
             "^NDX",
             "^NDXE",
             "^RUT",
+            "^R2ESC",  # equal-weight R2K; thin history ok (zero-filled if sparse)
             "^VIX",
             "DX-Y.NYB",
             "^IRX",
@@ -398,29 +396,21 @@ class MarketDataGatherer:
         """Primary path: yfinance multi-ticker download → (Symbol, Date) frame."""
         session = self._yfinance_session()
         tickers = list(self.stocks_ticker_set)
+        yf_kwargs = dict(
+            start=start_date,
+            group_by="tickers",
+            auto_adjust=False,
+            threads=False,
+            progress=True,
+        )
+        if session is not None:
+            yf_kwargs["session"] = session
         try:
             # threads=False is more reliable under rate limits; fail fast → FMP
-            raw = yf.download(
-                tickers,
-                start=start_date,
-                group_by="tickers",
-                auto_adjust=False,
-                threads=False,
-                progress=True,
-                timeout=15,
-                session=session,
-            )
+            raw = yf.download(tickers, timeout=15, **yf_kwargs)
         except TypeError:
             try:
-                raw = yf.download(
-                    tickers,
-                    start=start_date,
-                    group_by="tickers",
-                    auto_adjust=False,
-                    threads=False,
-                    progress=True,
-                    session=session,
-                )
+                raw = yf.download(tickers, **yf_kwargs)
             except Exception as e:
                 logger.error(f"yfinance stock price download failed: {e}")
                 return pd.DataFrame()
