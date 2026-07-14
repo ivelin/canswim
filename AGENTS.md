@@ -34,7 +34,7 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 | `docs/cli.md` | CLI recipes / env / workflows |
 | `docs/run_triggers.md` | Gather/forecast policy (CLI · GUI · MCP) |
 | `docs/mcp.md` | MCP tools + opt-in writes |
-| `docs/data_store.md` | Parquet vs DuckDB |
+| `docs/data_store.md` | Parquet vs DuckDB **and schema migrations** |
 | `README.md` | Landing links + short tables |
 | `docs/images/{charts,scans,run}.png` | Dashboard screenshots |
 
@@ -47,6 +47,28 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 | MCP tools add/rename/remove | `docs/mcp.md` tool table (+ README link only if needed) |
 | Charts / Scans / Run layout or primary copy | Replace affected `docs/images/*.png` in the same PR |
 | Data paths / DuckDB vs parquet semantics | `docs/data_store.md` |
+| **Search DB / DuckDB schema** | See **Schema migrations** below |
+
+## Schema migrations (required between app versions)
+
+**Every change that affects the DuckDB search schema must ship with documented, coded, and tested migration steps.** Do not rely on “just rebuild” alone without a versioned path for operators who reuse local DBs.
+
+| Requirement | Where |
+|-------------|--------|
+| Schema version constant + migration functions | `src/canswim/db_migrations.py` (`CURRENT_SCHEMA_VERSION`, `MIGRATIONS`) |
+| Apply on reuse; stamp on full rebuild | `init_search_db` in `src/canswim/db.py` |
+| Operator upgrade steps + migration log | `docs/data_store.md` |
+| Automated tests for upgrade path | `tests/canswim/test_db_migrations.py` |
+
+**Checklist for a schema-changing PR:**
+
+1. Bump `CURRENT_SCHEMA_VERSION` and add a `Migration` (name + description + `upgrade`).
+2. Append a row to the **Migration log** in `docs/data_store.md`.
+3. Add/extend tests: old version (or legacy pre-meta DB) → new version.
+4. Prefer **additive** migrations; if a full rebuild is required, document that explicitly as the operator step.
+5. Run `./scripts/ci-local.sh` before push/merge.
+
+Parquet under `data/` remains the system of record; migrations evolve the **search cache**. Full rebuild (`--same_data False` / Rebuild Charts database) remains the escape hatch and must stamp the current schema version.
 
 Do **not** maintain a separate design-doc tree that diverges from `docs/run_triggers.md`. Prefer tests that lock consumer strings (`tests/canswim/test_ux_split_labels.py`) and MCP tool registration checks (`tests/canswim/test_docs_sync.py`) over stale prose.
 
