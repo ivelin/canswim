@@ -62,6 +62,7 @@ parser.add_argument(
         `train` — continuous model training (full history).
         `forecast` — run forecasts (all symbols, or --tickers for a short list).
         `mcp` — MCP server (read-only by default; write tools need MCP_ALLOW_RUNS=1).
+          Use --http / --transport streamable-http --host/--port for gateway HTTP.
         `resolve_start` — show which forecast start date would be used.
         """,
     choices=[
@@ -127,6 +128,51 @@ parser.add_argument(
     required=False,
     default=False,
     help="""Optional argument for the `dashboard` task. Whether to reuse previously created search database (faster start time) or update with new forecast data (slower start time).""",
+)
+
+parser.add_argument(
+    "--http",
+    action="store_true",
+    default=False,
+    help=(
+        "With `mcp`: run Streamable HTTP transport (for mcp-gateway / remote "
+        "connectors) instead of stdio. Shorthand for --transport streamable-http."
+    ),
+)
+
+parser.add_argument(
+    "--transport",
+    type=str,
+    required=False,
+    default=None,
+    choices=["stdio", "streamable-http", "http", "sse"],
+    help=(
+        "With `mcp`: transport protocol (default stdio). "
+        "Use streamable-http or http for production behind a reverse proxy. "
+        "Also: CANSWIM_MCP_TRANSPORT / MCP_TRANSPORT."
+    ),
+)
+
+parser.add_argument(
+    "--host",
+    type=str,
+    required=False,
+    default=None,
+    help=(
+        "With `mcp --http` / streamable-http / sse: bind address "
+        "(default 127.0.0.1). Also: CANSWIM_MCP_HOST / MCP_HOST."
+    ),
+)
+
+parser.add_argument(
+    "--port",
+    type=int,
+    required=False,
+    default=None,
+    help=(
+        "With `mcp --http` / streamable-http / sse: bind port "
+        "(default 8000). Also: CANSWIM_MCP_PORT / MCP_PORT."
+    ),
 )
 
 log_level = os.getenv("LOG_LEVEL", os.getenv("LOGURU_LEVEL", "INFO")).upper()
@@ -222,6 +268,11 @@ match args.task:
     case "mcp":
         from canswim.mcp.server import main as mcp_main
 
-        mcp_main()
+        mcp_main(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            http=bool(args.http),
+        )
     case _:
         logger.error("Unrecognized task argument {m} ", m=args.task)
