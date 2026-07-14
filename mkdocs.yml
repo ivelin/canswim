@@ -41,6 +41,7 @@ nav:
   - CLI: cli.md
   - Gather & forecast: run_triggers.md
   - MCP: mcp.md
+  - Deploy as service: deploy_service.md
   - Data store: data_store.md
 
 extra:

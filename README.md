@@ -16,7 +16,8 @@ For a brief introduction read [this blog post](https://medium.com/@ivelin.atanas
 |-----|----------|
 | **[docs/cli.md](docs/cli.md)** | CLI tasks, recipes, env vars |
 | **[docs/run_triggers.md](docs/run_triggers.md)** | Get market data / run forecast (CLI · GUI · MCP); stocks · IPOs · ETFs |
-| **[docs/mcp.md](docs/mcp.md)** | MCP server (tools, opt-in writes) |
+| **[docs/mcp.md](docs/mcp.md)** | MCP server (tools, opt-in writes, Streamable HTTP) |
+| **[docs/deploy_service.md](docs/deploy_service.md)** | **Prod user systemd**: private Tailscale GUI + public apikey MCP |
 | **[docs/data_store.md](docs/data_store.md)** | Parquet (SoT) vs DuckDB (search/UI) |
 | **[AGENTS.md](AGENTS.md)** | CI, merge rules, docs DoD for agents |
 
@@ -85,6 +86,17 @@ python -m canswim dashboard --same_data True
 ```
 
 Full recipes: **[docs/cli.md](docs/cli.md)**.
+
+## Production host (systemd sketch)
+
+For a **user-level** long-running install:
+
+| Surface | Exposure | How |
+|---------|----------|-----|
+| **Dashboard** | Private (e.g. Tailscale only) | `canswim-dashboard.service` → Gradio `:7860` — **not** on public Funnel |
+| **MCP** | Public via reverse proxy | `canswim-mcp.service` → `python -m canswim mcp --http --host 127.0.0.1 --port 3472`; edge gateway requires `CANSWIM_MCP_KEY` (`?apikey=`) |
+
+Basics above; full unit templates, env, Funnel/Caddy apikey matrix, and data population: **[docs/deploy_service.md](docs/deploy_service.md)**. MCP flags: **[docs/mcp.md](docs/mcp.md)**.
 
 ## Dashboard (GUI)
 
