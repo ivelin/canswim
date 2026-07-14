@@ -64,7 +64,29 @@ def test_docs_index_links_exist():
         "docs/mcp.md",
         "docs/run_triggers.md",
         "docs/data_store.md",
+        "docs/deploy_service.md",
         "mkdocs.yml",
         ".github/workflows/docs.yml",
     ):
         assert (ROOT / rel).is_file(), rel
+
+
+def test_deploy_service_doc_covers_gui_and_mcp_split():
+    """Prod deploy doc must describe private GUI + public apikey MCP."""
+    text = _read("docs/deploy_service.md")
+    for needle in (
+        "systemd",
+        "Tailscale",
+        "CANSWIM_MCP_KEY",
+        "apikey",
+        "streamable-http",
+        "--http",
+        "dashboard",
+        "127.0.0.1",
+    ):
+        assert needle in text, f"docs/deploy_service.md missing {needle!r}"
+    readme = _read("README.md")
+    assert "deploy_service.md" in readme
+    assert "CANSWIM_MCP_KEY" in readme or "apikey" in readme
+    mkdocs = _read("mkdocs.yml")
+    assert "deploy_service.md" in mkdocs

@@ -55,6 +55,8 @@ python -m canswim mcp --transport streamable-http --host 127.0.0.1 --port 3472
 
 FastMCP serves the MCP endpoint at **`/mcp`** on that host:port. Public clients use the gateway path with `?apikey=` (never expose the bind port directly on the public internet).
 
+Full production layout (user systemd, Tailscale-only Gradio UI, Funnel + Caddy apikey): **[deploy_service.md](deploy_service.md)**.
+
 ## Example client config (stdio)
 
 ```json

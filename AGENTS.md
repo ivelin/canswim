@@ -33,7 +33,8 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 | `python -m canswim -h` (`src/canswim/__main__.py`) | CLI task names and flags |
 | `docs/cli.md` | CLI recipes / env / workflows |
 | `docs/run_triggers.md` | Gather/forecast policy (CLI · GUI · MCP) |
-| `docs/mcp.md` | MCP tools + opt-in writes |
+| `docs/mcp.md` | MCP tools + opt-in writes + Streamable HTTP flags |
+| `docs/deploy_service.md` | User systemd: private GUI + public apikey MCP |
 | `docs/data_store.md` | Parquet vs DuckDB **and schema migrations** |
 | `README.md` | Landing links + short tables |
 | `docs/images/{charts,scans,run}.png` | Dashboard screenshots |
@@ -45,6 +46,7 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 | CLI task/flag or help text | `__main__.py` help; `docs/cli.md` and README if top-level |
 | Gather/forecast policy or Run tab labels | `docs/run_triggers.md`; UX string tests; README table if labels change |
 | MCP tools add/rename/remove | `docs/mcp.md` tool table (+ README link only if needed) |
+| Prod deploy / systemd / Tailscale-Funnel MCP path | `docs/deploy_service.md` + README sketch |
 | Charts / Scans / Run layout or primary copy | Replace affected `docs/images/*.png` in the same PR |
 | Data paths / DuckDB vs parquet semantics | `docs/data_store.md` |
 | **Search DB / DuckDB schema** | See **Schema migrations** below |

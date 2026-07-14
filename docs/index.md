@@ -14,7 +14,8 @@ Intro: [blog post](https://medium.com/@ivelin.atanasoff.ivanov/canswim-a-deep-le
 |------|----------|
 | [CLI](cli.md) | Tasks, recipes, env vars (`python -m canswim -h` is flag SoT) |
 | [Gather & forecast](run_triggers.md) | CLI · GUI · MCP shared contract; stocks vs IPOs vs ETFs |
-| [MCP](mcp.md) | Tools, read-only default, `MCP_ALLOW_RUNS` |
+| [MCP](mcp.md) | Tools, read-only default, `MCP_ALLOW_RUNS`, Streamable HTTP |
+| [Deploy as service](deploy_service.md) | User systemd: Tailscale-only GUI + public apikey MCP |
 | [Data store](data_store.md) | Parquet (system of record) vs DuckDB (search/UI) |
 
 This site is built from the `main` branch `docs/` folder. Edit docs on `main`; Pages redeploys automatically.
