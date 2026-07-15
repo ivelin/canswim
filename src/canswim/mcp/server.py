@@ -20,6 +20,7 @@ from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
 
 from canswim.mcp import __version__ as SERVER_VERSION  # noqa: E402
 from canswim.mcp.tools import forecasts, meta, prices, query, tickers  # noqa: E402
+from canswim.mcp.tools import jobs as job_tools  # noqa: E402
 from canswim.mcp.tools import runs as run_tools  # noqa: E402
 from canswim.mcp.tools._common import bind_mcp_progress  # noqa: E402
 from canswim.run_triggers import runs_allowed  # noqa: E402
@@ -176,8 +177,8 @@ def get_db_schema(
         "(same as Advanced Queries). Allowed: one SELECT or WITH…SELECT. "
         "DDL/DML/multi-statement/PRAGMA/ATTACH are rejected. Connection is always "
         "read-only. Writes only via gather_tickers / forecast_tickers / refresh_tickers "
-        "when MCP_ALLOW_RUNS=1. Call get_db_schema first for table/index layout. "
-        "Results capped by row_limit (default 5000)."
+        "/ refresh_job_start when MCP_ALLOW_RUNS=1. Call get_db_schema first for "
+        "table/index layout. Results capped by row_limit (default 5000)."
     ),
 )
 def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:
@@ -259,8 +260,9 @@ async def forecast_tickers(
         "Same as dashboard “Refresh data & forecasts”. Streams live progress "
         "(notifications/progress + info logs) when the client sends a "
         "progressToken — same stages as the Run-tab progress bar. "
-        "Requires MCP_ALLOW_RUNS=1. May take many minutes for large lists. "
-        "dry_run=true plans only."
+        "Requires MCP_ALLOW_RUNS=1. May take many minutes for large lists — "
+        "prefer refresh_job_start + refresh_job_status if the client times out "
+        "on long tools. dry_run=true plans only."
     ),
 )
 async def refresh_tickers(
@@ -277,6 +279,45 @@ async def refresh_tickers(
         dry_run,
         progress_cb,
     )
+
+
+@mcp.tool(
+    name="refresh_job_start",
+    description=(
+        "Start a background refresh job and return immediately with a job_id. "
+        "Same work as refresh_tickers (market data + ~12 monthly catch-up forecasts "
+        "+ live), but does not block the tool call for many minutes. "
+        "After start, call refresh_job_status with the job_id every "
+        "poll_after_seconds until status is succeeded or failed. "
+        "Only one refresh job may run at a time. Requires MCP_ALLOW_RUNS=1. "
+        "Preferred path for SuperGrok and other clients with short tool timeouts. "
+        "dry_run=true plans only."
+    ),
+)
+def refresh_job_start(
+    tickers: str,
+    include_covariates: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    return job_tools.refresh_job_start_impl(
+        tickers=tickers,
+        include_covariates=include_covariates,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool(
+    name="refresh_job_status",
+    description=(
+        "Poll status of a job started by refresh_job_start. "
+        "Returns status (queued|running|succeeded|failed), progress_pct, message, "
+        "poll_after_seconds, client_hint, and result when done. "
+        "Always available (no MCP_ALLOW_RUNS gate). "
+        "Do not claim the refresh finished until status is succeeded or failed."
+    ),
+)
+def refresh_job_status(job_id: str) -> dict[str, Any]:
+    return job_tools.refresh_job_status_impl(job_id=job_id)
 
 
 def _resolve_transport(

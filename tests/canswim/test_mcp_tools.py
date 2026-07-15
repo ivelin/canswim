@@ -78,14 +78,18 @@ def test_tool_names_cover_surface():
         "gather_tickers",
         "forecast_tickers",
         "refresh_tickers",
+        "refresh_job_start",
+        "refresh_job_status",
     }
     assert set(TOOL_NAMES) == expected
     assert set(WRITE_TOOL_NAMES) == {
         "gather_tickers",
         "forecast_tickers",
         "refresh_tickers",
+        "refresh_job_start",
     }
     assert "resolve_forecast_start" in READ_TOOL_NAMES
+    assert "refresh_job_status" in READ_TOOL_NAMES
     assert "get_db_schema" in READ_TOOL_NAMES
 
 
@@ -270,6 +274,8 @@ def test_server_registers_tools(mcp_env):
         assert "run_select" in names
         assert "get_db_schema" in names
         assert "refresh_tickers" in names
+        assert "refresh_job_start" in names
+        assert "refresh_job_status" in names
     else:
         # Fallback: tools list API if present
         tools = getattr(mcp_server.mcp, "list_tools", None)

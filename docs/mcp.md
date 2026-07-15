@@ -9,7 +9,7 @@ Expose precomputed TiDE forecasts and local market data to MCP clients (Claude D
 | Mode | How | Tools |
 |------|-----|--------|
 | **Read-only (default)** | `python -m canswim mcp` | health, list, forecast/scan/price queries, `get_db_schema`, `run_select` (SELECT / WITH…SELECT only) |
-| **Runs allowed** | `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`) | also `gather_tickers`, `forecast_tickers`, `refresh_tickers` |
+| **Runs allowed** | `MCP_ALLOW_RUNS=1` (or `CANSWIM_ALLOW_RUNS=1`) | also `gather_tickers`, `forecast_tickers`, `refresh_tickers`, `refresh_job_start` |
 
 CLI `--tickers` and the dashboard **Run** tab do **not** need `MCP_ALLOW_RUNS`. Write tools share the same backend as CLI/GUI: [run_triggers.md](run_triggers.md).
 
@@ -96,11 +96,24 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `resolve_forecast_start` | Preview week-aligned start (≡ CLI `resolve_start`) | — |
 | `gather_tickers` | Scoped gather (≡ `gatherdata --tickers`) | `MCP_ALLOW_RUNS=1` |
 | `forecast_tickers` | Scoped forecast; blank start = monthly catch-up + live | `MCP_ALLOW_RUNS=1` |
-| `refresh_tickers` | Gather + catch-up forecast (≡ dashboard **Refresh data & forecasts**) | `MCP_ALLOW_RUNS=1` |
+| `refresh_tickers` | Gather + catch-up forecast (blocking; ≡ dashboard **Refresh data & forecasts**) | `MCP_ALLOW_RUNS=1` |
+| `refresh_job_start` | **Async** refresh: same pipeline as `refresh_tickers`, returns `job_id` immediately | `MCP_ALLOW_RUNS=1` |
+| `refresh_job_status` | Poll a job from `refresh_job_start` (`progress_pct`, `message`, `result`) | — |
 
-### Progress streaming (long runs)
+### Async refresh (preferred for SuperGrok / short tool timeouts)
 
-`refresh_tickers`, `forecast_tickers`, and `gather_tickers` stream **live progress** while they run:
+Long refreshes can run for many minutes. Clients that **time out** mid-call should use the job pair instead of blocking `refresh_tickers`:
+
+1. **`refresh_job_start`** with the ticker list → immediate `{ok, data: {job_id, status, poll_after_seconds, client_hint, …}}`.
+2. Sleep about `poll_after_seconds` (typically 5–15s).
+3. **`refresh_job_status`** with that `job_id` until `status` is `succeeded` or `failed` (`done=true`).
+4. On success, use `data.result` and/or read tools (`get_forecast`, `list_tickers`) to verify. **Do not claim completion while status is `queued` or `running`.**
+
+Job state is file-backed under `{data_dir}/mcp_jobs/` so status survives **client** disconnects. Only **one** refresh job runs at a time; a second start returns an error pointing at the active `job_id`. If the MCP process restarts mid-job, status is marked failed and the client should start again.
+
+### Progress streaming (blocking long runs)
+
+`refresh_tickers`, `forecast_tickers`, and `gather_tickers` stream **live progress** while they run (and while the tool call stays open):
 
 | Channel | When the client sees it |
 |---------|-------------------------|
@@ -109,7 +122,7 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 
 Progress is the **same pipeline** as the dashboard Run-tab bar (`run_triggers` → `progress_cb`). Work runs off the MCP event loop so notifications can flush mid-run. Final tool result is still the usual `{ok, data|error}` payload when the job finishes.
 
-Clients that omit `progressToken` get only the final result (no error).
+Clients that omit `progressToken` get only the final result (no error). Async jobs use **file status** instead of mid-call progress notifications.
 
 **Host diagnostics:** with `MCP_PROGRESS_DEBUG=1` (default when unset), the MCP process
 logs to the journal whether each long tool saw a `progressToken` and each
@@ -129,7 +142,7 @@ journalctl --user -u canswim-mcp -f | rg 'MCP progress'
    - DDL/DML keywords, multi-statement `;`, `PRAGMA`, `ATTACH`, `COPY`, etc. are **rejected**.
    - DuckDB is opened **read-only** (`connect_readonly`).
    - Results are wrapped with `LIMIT` (default 5000).
-4. **Writes are never free-form SQL** — only gated tools (`gather_tickers`, `forecast_tickers`, `refresh_tickers`) when `MCP_ALLOW_RUNS=1`.
+4. **Writes are never free-form SQL** — only gated tools (`gather_tickers`, `forecast_tickers`, `refresh_tickers`, `refresh_job_start`) when `MCP_ALLOW_RUNS=1`.
 
 ## Related docs
 

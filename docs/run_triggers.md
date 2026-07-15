@@ -9,7 +9,7 @@ User-facing actions for a **short list of symbols**. Implementation: `canswim.ru
 
 | Step | What it does | CLI | GUI | MCP |
 |------|----------------|-----|-----|-----|
-| **Refresh data & forecasts** | Gather + catch-up forecasts (**default** GUI path) | MCP `refresh_tickers` | **Refresh data & forecasts** | `refresh_tickers` |
+| **Refresh data & forecasts** | Gather + catch-up forecasts (**default** GUI path) | MCP `refresh_tickers` or **async** `refresh_job_start` + `refresh_job_status` | **Refresh data & forecasts** | `refresh_tickers` / `refresh_job_*` |
 | **Get market data** | Update local prices **and** model fundamentals for listed symbols | `gatherdata --tickers "AAPL,MSFT"` | **Update market data** | `gather_tickers` |
 | **Run a forecast** | Forecast those symbols (blank start = monthly catch-up + live) | `forecast --tickers "AAPL" …` | **Run forecast** | `forecast_tickers` |
 | **Check start date** | Show which forecast start date will be used | `resolve_start` | **Check start date** | `resolve_forecast_start` |
@@ -74,7 +74,7 @@ All-in-one for a short list (portfolio / new names). GUI label: **Refresh data &
 
 **Skipped:** work already on file; short-history / IPO names (reported in status).
 
-MCP tool name remains `refresh_tickers` (same pipeline).
+MCP: blocking tool `refresh_tickers` (same pipeline), or **async** `refresh_job_start` + `refresh_job_status` for clients that time out on long tool calls (see [mcp.md](mcp.md)).
 
 ## Run a forecast
 

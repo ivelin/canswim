@@ -12,7 +12,7 @@ Operator UX and data-refresh wave on top of 0.0.20260713 (Run tab, catch-up fore
 - **Run tab** — one primary path; short help + “What this does” accordion; single progress bar; Charts replot after refresh
 - **Charts universe** — dropdown from CSV ∪ price parquet ∪ forecast hive (not `few_stocks` only); symbols added after refresh
 - **Search DB handshake** — rebuild Charts/Scans DuckDB from parquet when needed
-- **MCP** — `get_db_schema` + hardened read-only `run_select`; **live progress streaming** (`notifications/progress` + info logs) on `refresh_tickers` / `forecast_tickers` / `gather_tickers`
+- **MCP** — `get_db_schema` + hardened read-only `run_select`; **live progress streaming** (`notifications/progress` + info logs) on `refresh_tickers` / `forecast_tickers` / `gather_tickers`; **async refresh jobs** (`refresh_job_start` + `refresh_job_status`) for short-timeout clients
 - **Cross-tab Gradio fix** — Run handlers no longer depend on Charts-tab inputs (fixes hard Error toast on refresh)
 - **Gather status UX** — multi-bucket ready / short-history / IPO messaging
 - **Torch ≥2.6 checkpoint load** — `darts_torch_load_compat()` around trusted Darts full-model pickles (`weights_only=False`); CPU and any CUDA GPU; no host/arch hardcoding
