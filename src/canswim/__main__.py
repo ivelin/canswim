@@ -192,7 +192,10 @@ logger.info(
     ret=ret,
 )
 
-version = metadata.version("canswim")
+try:
+    from canswim.version import __version__ as version
+except Exception:
+    version = metadata.version("canswim")
 logger.info(f"canswim version: {version}")
 
 args = parser.parse_args()

@@ -13,6 +13,10 @@ Expose precomputed TiDE forecasts and local market data to MCP clients (Claude D
 
 CLI `--tickers` and the dashboard **Run** tab do **not** need `MCP_ALLOW_RUNS`. Write tools share the same backend as CLI/GUI: [run_triggers.md](run_triggers.md).
 
+### Server version (client rediscovery)
+
+MCP initialize and **`get_server_info`** expose package version from `setup.cfg` (via `canswim.version`). **Any** MCP tool add/rename/remove or behavior change must bump that version in the same PR so remote clients refresh tool discovery instead of caching a stale list.
+
 ## Prerequisites
 
 1. Local parquet under `data/data-3rd-party/` and forecasts under `data/forecast/` (or your `data_dir`).
@@ -102,14 +106,17 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 
 ### Async refresh (preferred for SuperGrok / short tool timeouts)
 
-Long refreshes can run for many minutes. Clients that **time out** mid-call should use the job pair instead of blocking `refresh_tickers`:
+Long refreshes can run for many minutes. **Portfolio / Schwab “refresh all positions”** must use the job pair — not blocking `refresh_tickers`:
 
-1. **`refresh_job_start`** with the ticker list → immediate `{ok, data: {job_id, status, poll_after_seconds, client_hint, …}}`.
-2. Sleep about `poll_after_seconds` (typically 5–15s).
-3. **`refresh_job_status`** with that `job_id` until `status` is `succeeded` or `failed` (`done=true`).
-4. On success, use `data.result` and/or read tools (`get_forecast`, `list_tickers`) to verify. **Do not claim completion while status is `queued` or `running`.**
+1. Call **`get_server_info`** once (note `version` + `refresh_guidance`).
+2. **`refresh_job_start`** with the full symbol list (≤ **~200** async max; blocking tool max is **~50**). Oversized lists **error** (no silent truncate).
+3. Sleep about `poll_after_seconds` (typically 5–15s).
+4. **`refresh_job_status`** until `status` is `succeeded` or `failed` (`done=true`).
+5. Report **`coverage`** (`requested_count`, `batches_ok` / `batches_failed`). **Only claim success for symbols in that job’s `ticker_list`.** If the account has more names, start another job for the remainder.
 
-Job state is file-backed under `{data_dir}/mcp_jobs/` so status survives **client** disconnects. Only **one** refresh job runs at a time; a second start returns an error pointing at the active `job_id`. If the MCP process restarts mid-job, status is marked failed and the client should start again.
+Workers process symbols in internal batches (~20) with progress on the job file. Job state is under `{data_dir}/mcp_jobs/` so status survives **client** disconnects. Only **one** refresh job runs at a time. If MCP restarts mid-job, status becomes failed — start again.
+
+**Do not** claim portfolio-wide success after a tool timeout, a `dry_run`, a subset list, or while status is still `queued`/`running`.
 
 ### Progress streaming (blocking long runs)
 

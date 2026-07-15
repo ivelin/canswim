@@ -2,6 +2,28 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260715
+
+MCP surface bump so clients rediscover tools after async refresh jobs + portfolio-safe limits.
+
+### Highlights
+
+- **MCP async refresh** — `refresh_job_start` + `refresh_job_status` (file-backed jobs under `{data_dir}/mcp_jobs/`); preferred for SuperGrok / short tool timeouts
+- **Portfolio jobs** — async max **~200** symbols, internal batches of ~20, `coverage` + strict `client_hint` (no full-account overclaim)
+- **No silent truncate** — over-max ticker lists return `ok=false` with `omitted_tickers` / `recommended_tool` (blocking max remains ~50)
+- **`get_server_info.refresh_guidance`** — preferred workflow for Schwab/large lists
+- **MCP progress diagnostics** — journal `progressToken` PRESENT/MISSING + emit lines (`MCP_PROGRESS_DEBUG`)
+- **Version discovery** — MCP `get_server_info` / protocol version read **checkout** `setup.cfg` when running via `PYTHONPATH`
+- **Rule** — bump package version on every MCP tool/behavior change so clients refresh discovery
+
+### Install
+
+```bash
+pip install canswim==0.0.20260715
+python -m canswim -h
+python -m canswim mcp
+```
+
 ## 0.0.20260714
 
 Operator UX and data-refresh wave on top of 0.0.20260713 (Run tab, catch-up forecasts, MCP schema/SQL, progress).
@@ -12,7 +34,7 @@ Operator UX and data-refresh wave on top of 0.0.20260713 (Run tab, catch-up fore
 - **Run tab** — one primary path; short help + “What this does” accordion; single progress bar; Charts replot after refresh
 - **Charts universe** — dropdown from CSV ∪ price parquet ∪ forecast hive (not `few_stocks` only); symbols added after refresh
 - **Search DB handshake** — rebuild Charts/Scans DuckDB from parquet when needed
-- **MCP** — `get_db_schema` + hardened read-only `run_select`; **live progress streaming** (`notifications/progress` + info logs) on `refresh_tickers` / `forecast_tickers` / `gather_tickers`; **async refresh jobs** (`refresh_job_start` + `refresh_job_status`) for short-timeout clients
+- **MCP** — `get_db_schema` + hardened read-only `run_select`; **live progress streaming** (`notifications/progress` + info logs) on `refresh_tickers` / `forecast_tickers` / `gather_tickers`
 - **Cross-tab Gradio fix** — Run handlers no longer depend on Charts-tab inputs (fixes hard Error toast on refresh)
 - **Gather status UX** — multi-bucket ready / short-history / IPO messaging
 - **Torch ≥2.6 checkpoint load** — `darts_torch_load_compat()` around trusted Darts full-model pickles (`weights_only=False`); CPU and any CUDA GPU; no host/arch hardcoding

@@ -271,14 +271,24 @@ def parse_ticker_list(
     text: Union[str, Sequence[str], None],
     *,
     max_tickers: int = DEFAULT_MAX_TICKERS,
+    overflow: str = "error",
 ) -> dict[str, Any]:
     """Parse comma- and/or newline-separated ticker text.
+
+    Parameters
+    ----------
+    overflow:
+      ``"error"`` (default) — if more than ``max_tickers`` unique symbols,
+      return ``ok=False`` with the full counts (do **not** silently drop).
+      ``"truncate"`` — keep the first ``max_tickers`` and set ``truncated=True``
+      (legacy CLI; prefer ``error`` for MCP so clients cannot over-claim coverage).
 
     Returns
     -------
     dict with keys:
       ok, tickers (accepted unique upper), rejected (list of {token, reason}),
-      truncated (bool), messages (list[str])
+      truncated (bool), messages (list[str]); on overflow error also
+      requested_count, max_tickers, omitted_tickers, client_hint
     """
     if text is None:
         return {
@@ -313,11 +323,6 @@ def parse_ticker_list(
         seen.add(t)
         accepted.append(t)
 
-    truncated = False
-    if len(accepted) > max_tickers:
-        truncated = True
-        accepted = accepted[:max_tickers]
-
     messages: list[str] = []
     if not accepted:
         messages.append("No valid tickers after parsing.")
@@ -325,14 +330,52 @@ def parse_ticker_list(
             "ok": False,
             "tickers": [],
             "rejected": rejected,
-            "truncated": truncated,
+            "truncated": False,
             "messages": messages,
             "error": "No valid tickers after parsing.",
         }
+
+    truncated = False
+    omitted: list[str] = []
+    mode = (overflow or "error").strip().lower()
+    if len(accepted) > max_tickers:
+        truncated = True
+        omitted = accepted[max_tickers:]
+        if mode == "truncate":
+            accepted = accepted[:max_tickers]
+            messages.append(f"Truncated to first {max_tickers} tickers.")
+        else:
+            sample = ", ".join(omitted[:8])
+            more = f" (+{len(omitted) - 8} more)" if len(omitted) > 8 else ""
+            err = (
+                f"Got {len(accepted)} tickers; max is {max_tickers} per call. "
+                f"Do not claim a full-list refresh. Prefer refresh_job_start "
+                f"(up to job max) or split into batches of ≤{max_tickers}. "
+                f"Omitted examples: {sample}{more}."
+            )
+            if rejected:
+                messages.append(f"{len(rejected)} token(s) rejected.")
+            return {
+                "ok": False,
+                "tickers": accepted[:max_tickers],
+                "omitted_tickers": omitted,
+                "rejected": rejected,
+                "truncated": True,
+                "requested_count": len(accepted),
+                "max_tickers": max_tickers,
+                "messages": messages + [err],
+                "error": err,
+                "client_hint": (
+                    "Too many symbols for one call. Start refresh_job_start with "
+                    f"≤{max_tickers} symbols per job (or the higher async job limit), "
+                    "poll refresh_job_status until done, then start the next batch. "
+                    "Never report portfolio-wide success after a truncated or failed call."
+                ),
+                "recommended_tool": "refresh_job_start",
+            }
+
     if rejected:
         messages.append(f"{len(rejected)} token(s) rejected.")
-    if truncated:
-        messages.append(f"Truncated to first {max_tickers} tickers.")
 
     return {
         "ok": True,
@@ -340,6 +383,8 @@ def parse_ticker_list(
         "rejected": rejected,
         "truncated": truncated,
         "messages": messages,
+        "requested_count": len(accepted) + len(omitted),
+        "max_tickers": max_tickers,
     }
 
 

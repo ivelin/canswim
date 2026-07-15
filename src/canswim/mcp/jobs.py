@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 from loguru import logger
 
 from canswim.run_triggers import (
+    DEFAULT_MAX_TICKERS,
     parse_ticker_list,
     refresh_symbols,
     require_runs_allowed,
@@ -34,6 +35,11 @@ STATUS_RUNNING = "running"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 TERMINAL = frozenset({STATUS_SUCCEEDED, STATUS_FAILED})
+
+# Portfolio-scale async refresh (blocking refresh_tickers stays at DEFAULT_MAX_TICKERS)
+JOB_MAX_TICKERS = 200
+# Internal worker chunks (GPU/memory + finer progress). Not exposed as separate jobs.
+WORKER_BATCH_SIZE = 20
 
 # Poll guidance for clients that sleep between status checks
 _POLL_QUEUED_S = 5
@@ -164,13 +170,19 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
     else:
         poll = _POLL_DONE_S
 
+    ticker_list = job.get("ticker_list") or []
+    requested_count = job.get("requested_count")
+    if requested_count is None and isinstance(ticker_list, list):
+        requested_count = len(ticker_list)
+    result = job.get("result") if done else None
     view: dict[str, Any] = {
         "job_id": job.get("job_id"),
         "kind": job.get("kind"),
         "status": status,
         "done": done,
         "tickers": job.get("tickers"),
-        "ticker_list": job.get("ticker_list"),
+        "ticker_list": ticker_list,
+        "requested_count": requested_count,
         "progress_pct": float(job.get("progress_pct") or 0),
         "message": job.get("message") or "",
         "created_at": job.get("created_at"),
@@ -179,24 +191,59 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
         "dry_run": job.get("dry_run"),
         "poll_after_seconds": poll,
         "next_tool": None if done else "refresh_job_status",
-        "client_hint": _client_hint(status, job.get("job_id"), poll),
+        "client_hint": _client_hint(
+            status,
+            job.get("job_id"),
+            poll,
+            requested_count=requested_count
+            if isinstance(requested_count, int)
+            else None,
+            result=result if isinstance(result, dict) else None,
+        ),
     }
     if job.get("error"):
         view["error"] = job["error"]
-    if done and job.get("result") is not None:
-        view["result"] = job["result"]
+    if done and result is not None:
+        view["result"] = result
+        if isinstance(result, dict) and result.get("coverage"):
+            view["coverage"] = result["coverage"]
     return view
 
 
-def _client_hint(status: str, job_id: Any, poll: int) -> str:
+def _client_hint(
+    status: str,
+    job_id: Any,
+    poll: int,
+    *,
+    requested_count: int | None = None,
+    result: dict[str, Any] | None = None,
+) -> str:
     if status == STATUS_SUCCEEDED:
+        cov = (result or {}).get("coverage") or {}
+        n_req = cov.get("requested_count", requested_count)
+        n_ok = cov.get("processed_count", n_req)
+        partial = cov.get("batches_failed", 0) not in (0, None)
+        base = (
+            f"Job finished. Coverage: processed {n_ok} of {n_req} requested symbols "
+            if n_req is not None
+            else "Job finished successfully. "
+        )
+        if partial:
+            return (
+                base
+                + "Some batches failed — report partial coverage; do not claim full portfolio success. "
+                "Inspect result.batch_results / result.coverage."
+            )
         return (
-            "Job finished successfully. Use result fields and/or get_forecast / "
-            "list_tickers to verify. Do not re-start unless the user asks."
+            base
+            + "Only claim success for symbols in this job’s ticker_list. "
+            "If the user has more positions, start another refresh_job_start for the remainder. "
+            "Verify with get_forecast / list_tickers as needed."
         )
     if status == STATUS_FAILED:
         return (
-            "Job failed. Report the error to the user. "
+            "Job failed. Report the error and coverage to the user. "
+            "Do not claim the portfolio is refreshed. "
             "They may retry with refresh_job_start after fixing the cause."
         )
     return (
@@ -238,12 +285,26 @@ def start_refresh_job(
             "runs_allowed": False,
         }
 
-    parsed = parse_ticker_list(tickers)
+    parsed = parse_ticker_list(
+        tickers,
+        max_tickers=JOB_MAX_TICKERS,
+        overflow="error",
+    )
     if not parsed.get("ok"):
+        err = parsed.get("error") or "bad tickers"
+        # Point portfolio-sized lists at the job max clearly
+        if parsed.get("truncated") and parsed.get("requested_count"):
+            err = (
+                f"{err} Async job max is {JOB_MAX_TICKERS} symbols "
+                f"(blocking refresh_tickers max is {DEFAULT_MAX_TICKERS}). "
+                "Start sequential jobs for remaining batches after each succeeds."
+            )
         return {
             "ok": False,
-            "error": parsed.get("error") or "bad tickers",
+            "error": err,
             "data": parsed,
+            "client_hint": parsed.get("client_hint"),
+            "recommended_tool": parsed.get("recommended_tool") or "refresh_job_start",
         }
 
     with _start_lock:
@@ -262,18 +323,24 @@ def start_refresh_job(
             }
 
         job_id = _new_job_id()
-        ticker_csv = ",".join(parsed["tickers"])
+        tlist = list(parsed["tickers"])
+        ticker_csv = ",".join(tlist)
+        n = len(tlist)
         job: dict[str, Any] = {
             "job_id": job_id,
             "kind": JOB_KIND_REFRESH,
             "status": STATUS_QUEUED,
             "done": False,
             "tickers": ticker_csv,
-            "ticker_list": list(parsed["tickers"]),
+            "ticker_list": tlist,
+            "requested_count": n,
             "include_covariates": bool(include_covariates),
             "dry_run": bool(dry_run),
             "progress_pct": 0.0,
-            "message": "Queued — waiting for worker…",
+            "message": (
+                f"Queued — {n} symbol(s), "
+                f"{(n + WORKER_BATCH_SIZE - 1) // WORKER_BATCH_SIZE} batch(es)…"
+            ),
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
             "owner_pid": os.getpid(),
@@ -287,7 +354,7 @@ def start_refresh_job(
             name=f"canswim-refresh-job-{job_id[:8]}",
             args=(job_id,),
             kwargs={
-                "tickers": ticker_csv,
+                "ticker_list": tlist,
                 "include_covariates": bool(include_covariates),
                 "dry_run": bool(dry_run),
             },
@@ -298,9 +365,9 @@ def start_refresh_job(
         thr.start()
 
     logger.info(
-        "MCP refresh job started job_id={} tickers={} dry_run={}",
+        "MCP refresh job started job_id={} n_tickers={} dry_run={}",
         job_id,
-        ticker_csv,
+        n,
         dry_run,
     )
     # Re-read in case worker already advanced
@@ -311,10 +378,24 @@ def start_refresh_job(
     }
 
 
+def _merge_symbol_lists(*lists: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for lst in lists:
+        if not lst:
+            continue
+        for x in lst:
+            s = str(x).strip().upper()
+            if s and s not in seen:
+                seen.add(s)
+                out.append(s)
+    return out
+
+
 def _run_refresh_worker(
     job_id: str,
     *,
-    tickers: str,
+    ticker_list: list[str],
     include_covariates: bool,
     dry_run: bool,
 ) -> None:
@@ -336,43 +417,147 @@ def _run_refresh_worker(
             logger.warning("job progress write failed {}: {}", job_id, e)
 
     try:
+        symbols = [str(s).strip().upper() for s in ticker_list if str(s).strip()]
+        n = len(symbols)
+        batches = [
+            symbols[i : i + WORKER_BATCH_SIZE]
+            for i in range(0, n, WORKER_BATCH_SIZE)
+        ] or [[]]
+        n_batches = len(batches)
+
         job = read_job(job_id)
         if job is None:
             return
         job["status"] = STATUS_RUNNING
-        job["message"] = "Starting refresh (market data + catch-up forecasts)…"
+        job["message"] = (
+            f"Starting refresh: {n} symbol(s) in {n_batches} batch(es)…"
+        )
         job["progress_pct"] = 0.0
+        job["requested_count"] = n
         _write_job(job)
 
-        result = refresh_symbols(
-            tickers,
-            include_covariates=include_covariates,
-            dry_run=dry_run,
-            force_allow=False,
-            progress_cb=_progress,
-        )
+        batch_results: list[dict[str, Any]] = []
+        ready: list[str] = []
+        incomplete: list[str] = []
+        forecasted: list[str] = []
+        messages: list[str] = []
+        batches_ok = 0
+        batches_failed = 0
+        last_error: str | None = None
+
+        for bi, batch in enumerate(batches):
+            if not batch:
+                continue
+            batch_csv = ",".join(batch)
+            base = bi / n_batches
+            span = 1.0 / n_batches
+
+            def _batch_cb(
+                frac: float,
+                desc: str = "",
+                *,
+                _base=base,
+                _span=span,
+                _bi=bi,
+                _batch=batch,
+            ) -> None:
+                try:
+                    f = max(0.0, min(1.0, float(frac)))
+                except (TypeError, ValueError):
+                    f = 0.0
+                msg = (
+                    f"Batch {_bi + 1}/{n_batches} "
+                    f"({len(_batch)} symbols): {desc or 'working…'}"
+                )
+                _progress(_base + _span * f, msg)
+
+            _progress(base, f"Batch {bi + 1}/{n_batches}: starting {batch_csv[:80]}…")
+            result = refresh_symbols(
+                batch_csv,
+                include_covariates=include_covariates,
+                dry_run=dry_run,
+                force_allow=False,
+                progress_cb=_batch_cb,
+                max_tickers=max(len(batch), DEFAULT_MAX_TICKERS),
+            )
+            batch_results.append(
+                {
+                    "batch_index": bi,
+                    "tickers": batch,
+                    "ok": bool(result.get("ok")),
+                    "error": result.get("error"),
+                    "ready": result.get("ready"),
+                    "incomplete": result.get("incomplete"),
+                    "forecast": (result.get("forecast") or {}).get("forecasted")
+                    if isinstance(result.get("forecast"), dict)
+                    else None,
+                }
+            )
+            if result.get("ok"):
+                batches_ok += 1
+            else:
+                batches_failed += 1
+                last_error = result.get("error") or last_error or "batch failed"
+            ready = _merge_symbol_lists(ready, result.get("ready"))
+            incomplete = _merge_symbol_lists(incomplete, result.get("incomplete"))
+            fc = result.get("forecast") if isinstance(result.get("forecast"), dict) else {}
+            forecasted = _merge_symbol_lists(forecasted, fc.get("forecasted"))
+            for m in result.get("messages") or []:
+                messages.append(str(m))
+            _progress((bi + 1) / n_batches, f"Finished batch {bi + 1}/{n_batches}.")
+
+        coverage = {
+            "requested_count": n,
+            "processed_count": n,
+            "batch_count": n_batches,
+            "batches_ok": batches_ok,
+            "batches_failed": batches_failed,
+            "ready_count": len(ready),
+            "incomplete_count": len(incomplete),
+            "forecasted_count": len(forecasted),
+            "full_list_complete": batches_failed == 0 and n > 0,
+        }
+        merged: dict[str, Any] = {
+            "ok": batches_failed == 0 and n > 0,
+            "ready": ready,
+            "incomplete": incomplete,
+            "forecasted": forecasted,
+            "messages": messages,
+            "coverage": coverage,
+            "batch_results": batch_results,
+            "dry_run": dry_run,
+        }
+        if last_error and batches_failed:
+            merged["error"] = last_error
 
         job = read_job(job_id) or {}
         job["job_id"] = job_id
-        if result.get("ok"):
+        job["requested_count"] = n
+        if merged["ok"]:
             job["status"] = STATUS_SUCCEEDED
             job["done"] = True
             job["progress_pct"] = 100.0
-            job["message"] = "Refresh complete."
+            job["message"] = (
+                f"Refresh complete for {n} symbol(s) "
+                f"({batches_ok}/{n_batches} batches ok)."
+            )
             job["error"] = None
-            job["result"] = result
+            job["result"] = merged
         else:
             job["status"] = STATUS_FAILED
             job["done"] = True
-            job["error"] = result.get("error") or "refresh failed"
-            job["message"] = job["error"]
-            job["result"] = result
-            # keep structured remote_api on result for clients
+            job["error"] = last_error or "refresh failed"
+            job["message"] = (
+                f"Refresh finished with errors: {batches_failed}/{n_batches} "
+                f"batch(es) failed; {len(ready)} ready, {len(forecasted)} forecasted."
+            )
+            job["result"] = merged
         _write_job(job)
         logger.info(
-            "MCP refresh job finished job_id={} status={}",
+            "MCP refresh job finished job_id={} status={} coverage={}",
             job_id,
             job.get("status"),
+            coverage,
         )
     except Exception as e:
         logger.exception("MCP refresh job crashed job_id={}: {}", job_id, e)

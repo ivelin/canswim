@@ -52,7 +52,10 @@ def health_check() -> dict[str, Any]:
 
 @mcp.tool(
     name="get_server_info",
-    description="Server metadata: version, read-only flag, tool list, db path.",
+    description=(
+        "Server metadata: version (bump ⇒ re-discover tools), read-only flag, "
+        "tool list, db path, and refresh_guidance for portfolio async jobs."
+    ),
 )
 def get_server_info() -> dict[str, Any]:
     return meta.get_server_info_impl()
@@ -254,15 +257,12 @@ async def forecast_tickers(
 @mcp.tool(
     name="refresh_tickers",
     description=(
-        "All-in-one refresh for listed symbols: update market data, then catch-up "
-        "forecasts (monthly origins for ~12 months + live). Best default when a "
-        "user or agent says “gather and forecast” or “refresh these names”. "
-        "Same as dashboard “Refresh data & forecasts”. Streams live progress "
-        "(notifications/progress + info logs) when the client sends a "
-        "progressToken — same stages as the Run-tab progress bar. "
-        "Requires MCP_ALLOW_RUNS=1. May take many minutes for large lists — "
-        "prefer refresh_job_start + refresh_job_status if the client times out "
-        "on long tools. dry_run=true plans only."
+        "BLOCKING all-in-one refresh (market data + ~12 monthly catch-up forecasts "
+        "+ live). Max ~50 symbols; larger lists return an error (not silent truncate). "
+        "May take many minutes and times out on SuperGrok — for portfolios / "
+        "Schwab positions prefer refresh_job_start + refresh_job_status. "
+        "Only claim success for symbols in THIS call. Requires MCP_ALLOW_RUNS=1. "
+        "dry_run=true plans only. Streams progressToken notifications while open."
     ),
 )
 async def refresh_tickers(
@@ -284,13 +284,12 @@ async def refresh_tickers(
 @mcp.tool(
     name="refresh_job_start",
     description=(
-        "Start a background refresh job and return immediately with a job_id. "
-        "Same work as refresh_tickers (market data + ~12 monthly catch-up forecasts "
-        "+ live), but does not block the tool call for many minutes. "
-        "After start, call refresh_job_status with the job_id every "
-        "poll_after_seconds until status is succeeded or failed. "
-        "Only one refresh job may run at a time. Requires MCP_ALLOW_RUNS=1. "
-        "Preferred path for SuperGrok and other clients with short tool timeouts. "
+        "PREFERRED for portfolio refresh: start background gather+catch-up forecast "
+        "and return immediately with job_id. Accepts up to ~200 symbols (batched "
+        "internally). After start, poll refresh_job_status until succeeded/failed; "
+        "report coverage (requested_count, batches) — never claim full-account success "
+        "for symbols not in this job. Only one job at a time. Requires MCP_ALLOW_RUNS=1. "
+        "Use this instead of blocking refresh_tickers for Schwab/large lists. "
         "dry_run=true plans only."
     ),
 )

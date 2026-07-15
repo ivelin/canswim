@@ -217,3 +217,63 @@ def test_server_registers_job_tools():
         names = set(tool_manager._tools.keys())
         assert "refresh_job_start" in names
         assert "refresh_job_status" in names
+
+
+def test_job_rejects_over_job_max(jobs_env):
+    from canswim.mcp.jobs import JOB_MAX_TICKERS
+
+    syms = [f"B{i:03d}" for i in range(JOB_MAX_TICKERS + 5)]
+    out = job_tools.refresh_job_start_impl(",".join(syms))
+    assert out["ok"] is False
+    assert str(JOB_MAX_TICKERS) in out["error"]
+    assert out.get("client_hint") or (out.get("data") or {}).get("client_hint")
+
+
+def test_job_batches_large_list(jobs_env):
+    """Worker should call refresh_symbols per batch and report coverage."""
+    calls: list[str] = []
+
+    def fake_refresh(tickers, **kwargs):
+        calls.append(tickers)
+        ts = [t for t in tickers.replace(" ", ",").split(",") if t]
+        return {
+            "ok": True,
+            "ready": ts,
+            "incomplete": [],
+            "forecast": {"ok": True, "forecasted": ts},
+            "messages": [],
+        }
+
+    # 45 symbols → 3 batches of 20
+    syms = [f"C{i:03d}" for i in range(45)]
+    with patch("canswim.mcp.jobs.refresh_symbols", side_effect=fake_refresh):
+        start = job_tools.refresh_job_start_impl(",".join(syms))
+        assert start["ok"] is True
+        jid = start["data"]["job_id"]
+        assert start["data"]["requested_count"] == 45
+        deadline = time.time() + 8.0
+        status = None
+        while time.time() < deadline:
+            status = job_tools.refresh_job_status_impl(jid)
+            if status["data"]["done"]:
+                break
+            time.sleep(0.05)
+
+    assert status["data"]["status"] == "succeeded"
+    assert status["data"]["coverage"]["requested_count"] == 45
+    assert status["data"]["coverage"]["full_list_complete"] is True
+    assert len(calls) == 3  # 20+20+5
+    assert "only claim success" in status["data"]["client_hint"].lower() or (
+        "ticker_list" in status["data"]["client_hint"].lower()
+    )
+
+
+def test_get_server_info_refresh_guidance(jobs_env, monkeypatch):
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    from canswim.mcp.tools import meta
+
+    info = meta.get_server_info_impl()
+    assert info["ok"] is True
+    g = info["data"]["refresh_guidance"]
+    assert g["preferred_tools"][0] == "refresh_job_start"
+    assert g["async_job_max_tickers"] >= g["blocking_max_tickers"]

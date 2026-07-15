@@ -32,6 +32,8 @@ def refresh_job_start_impl(
         data=out.get("data"),
         active_job_id=out.get("active_job_id"),
         runs_allowed=out.get("runs_allowed"),
+        client_hint=out.get("client_hint"),
+        recommended_tool=out.get("recommended_tool"),
     )
 
 

@@ -46,11 +46,22 @@ User-facing docs live under `docs/` and the root `README.md`. **Update them in t
 |--------|-------------|
 | CLI task/flag or help text | `__main__.py` help; `docs/cli.md` and README if top-level |
 | Gather/forecast policy or Run tab labels | `docs/run_triggers.md`; UX string tests; README table if labels change |
-| MCP tools add/rename/remove | `docs/mcp.md` tool table (+ README link only if needed) |
+| MCP tools add/rename/remove **or behavior change** | `docs/mcp.md` tool table; **bump `setup.cfg` `version`** (date-style `0.0.YYYYMMDD`) + `CHANGELOG.md` so clients see a new version via MCP initialize / `get_server_info` and refresh tool discovery |
 | Prod deploy / systemd / Tailscale-Funnel MCP path | `docs/deploy_service.md` + README sketch |
 | Charts / Scans / Run layout or primary copy | Replace affected `docs/images/*.png` in the same PR |
 | Data paths / DuckDB vs parquet semantics | `docs/data_store.md` |
 | **Search DB / DuckDB schema** | See **Schema migrations** below |
+
+### MCP version (required on every MCP surface change)
+
+Clients (SuperGrok, connectors) cache tool lists. They re-discover when the **server version** changes.
+
+1. Bump `version` in `setup.cfg` (prefer next calendar day `0.0.YYYYMMDD`, or same day with a clear CHANGELOG entry if multiple bumps).
+2. Add a CHANGELOG section for that version.
+3. Version is resolved by `canswim.version` (checkout `setup.cfg` first, then installed metadata) → MCP protocol `server.version` and `get_server_info`.
+4. After deploy, restart `canswim-mcp` so remote clients see the new version.
+
+Do **not** ship MCP tool/behavior changes without a version bump.
 
 ## Schema migrations (required between app versions)
 
