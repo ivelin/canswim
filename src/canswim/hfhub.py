@@ -13,6 +13,7 @@ import os.path
 from pathlib import Path
 
 from canswim.paths import symbol_lists_dir
+from canswim.torch_compat import darts_torch_load_compat
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -91,9 +92,12 @@ class HFHub:
                 repo_id=repo_id, local_dir=tmpdirname, token=self.HF_TOKEN
             )
             logger.info(f"dir file list:\n {os.listdir(tmpdirname)}")
-            model = model_class.load(
-                path=f"{tmpdirname}/{model_name}", map_location=map_location, **kwargs
-            )
+            with darts_torch_load_compat():
+                model = model_class.load(
+                    path=f"{tmpdirname}/{model_name}",
+                    map_location=map_location,
+                    **kwargs,
+                )
             logger.info("Downloaded model from:", repo_id)
             logger.info("Model name:", model.model_name)
             logger.info("Model params:", model.model_params)

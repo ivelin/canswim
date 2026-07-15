@@ -21,6 +21,91 @@ def test_list_symbols_with_saved_forecast_empty_tree(tmp_path, monkeypatch):
     assert got == set()
 
 
+def test_list_symbols_with_saved_forecast_reads_hive(tmp_path, monkeypatch):
+    """Ephemeral DuckDB scan finds complete partitions under hive layout."""
+    import pandas as pd
+
+    monkeypatch.setenv("data_dir", str(tmp_path))
+    monkeypatch.setenv("forecast_subdir", "forecast/")
+    part = (
+        tmp_path
+        / "forecast"
+        / "symbol=AAPL"
+        / "forecast_start_year=2026"
+        / "forecast_start_month=3"
+        / "forecast_start_day=2"
+    )
+    part.mkdir(parents=True)
+    # 42 rows = DEFAULT_MIN_FORECAST_ROWS
+    rows = pd.DataFrame(
+        {
+            "Close_s0": range(42),
+            "date": pd.date_range("2026-03-02", periods=42, freq="B"),
+        }
+    )
+    rows.to_parquet(part / "part-0.parquet", index=False)
+
+    have = list_symbols_with_saved_forecast(
+        ["AAPL", "MSFT"], "2026-03-02", min_horizon_rows=42
+    )
+    assert have == {"AAPL"}
+
+
+def test_list_symbols_with_saved_forecast_survives_duckdb_error(monkeypatch):
+    """Scan failure returns empty set (do not raise) so callers can still forecast."""
+    monkeypatch.setenv("data_dir", "/tmp/does-not-need-to-exist-canswim")
+    monkeypatch.setenv("forecast_subdir", "forecast/")
+    with patch("canswim.run_triggers.glob.glob", return_value=["fake.parquet"]):
+        with patch("duckdb.connect", side_effect=RuntimeError("closed pending")):
+            got = list_symbols_with_saved_forecast(["TSLA"], "2026-07-13")
+    assert got == set()
+
+
+def test_get_stocks_without_forecast_treats_scan_fail_as_all_candidates():
+    """Hive skip-scan errors must not abort prep_next_stock_group."""
+    import pandas as pd
+
+    from canswim.forecast import CanswimForecaster
+
+    cf = CanswimForecaster.__new__(CanswimForecaster)
+    cf.data_dir = "/tmp/x"
+    cf.forecast_subdir = "forecast/"
+    cf.canswim_model = MagicMock(pred_horizon=42)
+    stocks = pd.DataFrame({"Symbol": ["TSLA", "AMD"]})
+
+    with patch("canswim.forecast.glob.glob", return_value=["something.parquet"]):
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            side_effect=RuntimeError("closed pending query result"),
+        ):
+            out = cf._get_stocks_without_forecast(
+                stocks_df=stocks, forecast_start_date="2026-07-13"
+            )
+    assert out == ["AMD", "TSLA"]
+
+
+def test_get_stocks_without_forecast_subtracts_already_saved():
+    import pandas as pd
+
+    from canswim.forecast import CanswimForecaster
+
+    cf = CanswimForecaster.__new__(CanswimForecaster)
+    cf.data_dir = "/tmp/x"
+    cf.forecast_subdir = "forecast/"
+    cf.canswim_model = MagicMock(pred_horizon=42)
+    stocks = pd.DataFrame({"Symbol": ["TSLA", "AMD", "META"]})
+
+    with patch("canswim.forecast.glob.glob", return_value=["something.parquet"]):
+        with patch(
+            "canswim.run_triggers.list_symbols_with_saved_forecast",
+            return_value={"TSLA", "META"},
+        ):
+            out = cf._get_stocks_without_forecast(
+                stocks_df=stocks, forecast_start_date="2026-07-13"
+            )
+    assert out == ["AMD"]
+
+
 def test_forecast_skips_model_when_all_already_saved(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     with patch(

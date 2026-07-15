@@ -83,10 +83,18 @@ def test_deploy_service_doc_covers_gui_and_mcp_split():
         "--http",
         "dashboard",
         "127.0.0.1",
+        # Canonical per-user home (not a second ~/.canswim-dashboard tree)
+        "CANSWIM_HOME",
+        "~/.canswim/service",
+        "~/.canswim/data",
     ):
         assert needle in text, f"docs/deploy_service.md missing {needle!r}"
+    # Legacy deploy path must not reappear as the documented primary layout
+    assert "~/.canswim-dashboard/run" not in text
+    assert "ExecStart=%h/.canswim-dashboard/" not in text
     readme = _read("README.md")
     assert "deploy_service.md" in readme
     assert "CANSWIM_MCP_KEY" in readme or "apikey" in readme
+    assert "~/.canswim/" in readme
     mkdocs = _read("mkdocs.yml")
     assert "deploy_service.md" in mkdocs

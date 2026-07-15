@@ -211,6 +211,11 @@ def list_symbols_with_saved_forecast(
 
     Lightweight (duckdb + parquet only) — no torch / model load. Used to skip
     expensive re-forecasts for the same origin.
+
+    Uses an **ephemeral** DuckDB connection and a single-statement query so a
+    failed/closed default connection (or multi-statement ``duckdb.sql``) cannot
+    abort the caller with ``InvalidInputException: unsuccessful or closed
+    pending query result``.
     """
     import duckdb
 
@@ -220,27 +225,42 @@ def list_symbols_with_saved_forecast(
     data_dir = data_dir or os.getenv("data_dir", "data")
     forecast_subdir = forecast_subdir or os.getenv("forecast_subdir", "forecast/")
     fsd = pd.Timestamp(start_date).tz_localize(None).normalize()
-    y, m, d = int(fsd.year), int(fsd.month), int(fsd.day)
+    # Align to business day the same way the forecaster does (0 * BDay)
+    from pandas.tseries.offsets import BDay
+
+    bd = fsd + 0 * BDay()
+    y, m, d = int(bd.year), int(bd.month), int(bd.day)
     forecast_glob = f"{data_dir}/{forecast_subdir}**/*.parquet"
     if not glob.glob(forecast_glob, recursive=True):
         return set()
     in_list = ", ".join("'" + s.replace("'", "''") + "'" for s in syms)
+    con = None
     try:
-        df = duckdb.sql(
-            f"""--sql
+        # Isolated connection: never share the process default (avoids "closed
+        # pending query result" after a prior failed duckdb.sql in-process).
+        con = duckdb.connect(database=":memory:")
+        df = con.execute(
+            f"""
             SELECT upper(cast(symbol AS VARCHAR)) AS symbol, count(*) AS n
-            FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+            FROM read_parquet(?, hive_partitioning = 1, union_by_name = true) AS f
             WHERE upper(cast(f.symbol AS VARCHAR)) IN ({in_list})
-              AND forecast_start_year = {y}
-              AND forecast_start_month = {m}
-              AND forecast_start_day = {d}
+              AND forecast_start_year = ?
+              AND forecast_start_month = ?
+              AND forecast_start_day = ?
             GROUP BY 1
-            HAVING count(*) >= {int(min_horizon_rows)}
-            """
+            HAVING count(*) >= ?
+            """,
+            [forecast_glob, y, m, d, int(min_horizon_rows)],
         ).df()
     except Exception as e:
         logger.warning(f"Could not scan existing forecasts ({e}); will not skip")
         return set()
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
     if df is None or df.empty:
         return set()
     col = "symbol" if "symbol" in df.columns else df.columns[0]

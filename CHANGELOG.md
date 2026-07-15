@@ -15,13 +15,17 @@ Operator UX and data-refresh wave on top of 0.0.20260713 (Run tab, catch-up fore
 - **MCP** — `get_db_schema` + hardened read-only `run_select`; **live progress streaming** (`notifications/progress` + info logs) on `refresh_tickers` / `forecast_tickers` / `gather_tickers`
 - **Cross-tab Gradio fix** — Run handlers no longer depend on Charts-tab inputs (fixes hard Error toast on refresh)
 - **Gather status UX** — multi-bucket ready / short-history / IPO messaging
+- **Torch ≥2.6 checkpoint load** — `darts_torch_load_compat()` around trusted Darts full-model pickles (`weights_only=False`); CPU and any CUDA GPU; no host/arch hardcoding
+- **Portable GPU use** — still `torch.cuda.is_available()` / Lightning `accelerator="auto"`; install a torch wheel that matches the machine (see pytorch.org)
+- **Deploy home layout** — canonical per-user state is **`~/.canswim/`** (`data/`, optional `service/` for user-systemd wrappers); not a separate `~/.canswim-dashboard` tree
 
 ### Requirements for end users
 
 - Python ≥ 3.10
 - Optional but typical: **FMP API key** for fundamentals, ownership, estimates, and company profiles
 - Default model checkpoint on **Hugging Face** (public; swappable)
-- Local disk for parquet + DuckDB under `data/`
+- Local disk for parquet + DuckDB under `data/` (or `~/.canswim/data` when using the prod home layout)
+- Optional CUDA: any GPU supported by your installed PyTorch build
 
 **NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
 

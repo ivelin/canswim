@@ -31,9 +31,18 @@ Do **not** put the Gradio UI on the public Funnel. Do **not** expose the MCP bin
 ## Prerequisites
 
 - Linux user account with **systemd --user** (and preferably `loginctl enable-linger $USER` so services survive logout).
-- Checkout of canswim (or `pip install canswim`) and a Python env with dependencies (torch/darts for forecast, Gradio for UI, `mcp` for FastMCP).
-- Shared data directory (example: `~/.canswim/data`) with `data-3rd-party/` parquet + `forecast/` partitions.
-- Model checkpoint available for forecast (`canswim_model.pt` in the process cwd, or HF download when `hfhub_sync=True`).
+- Checkout of canswim (or `pip install canswim`) and a Python env with dependencies (torch/darts for forecast, Gradio for UI, `mcp` for FastMCP). **CPU works.** When CUDA is available, canswim uses it automatically (`torch.cuda.is_available()` / Lightning `accelerator="auto"`). No host-specific paths are required in application code.
+- **PyTorch must match the machine** (same as any torch app): install a wheel that supports your GPU (or CPU-only). Common cases — Ampere/Ada (e.g. RTX 3090/4090) with current CUDA 12.x wheels; very new archs may need a newer torch/CUDA build from [pytorch.org](https://pytorch.org). If `cuda.is_available()` is true but `predict` fails with *no kernel image is available for execution on the device*, the installed torch was built without kernels for that GPU — fix the **env’s torch**, not canswim flags. Point wrappers at the interpreter you verified: `Environment=PYTHON=/path/to/venv/bin/python`.
+- Shared **CANSWIM_HOME** (canonical: `~/.canswim/`) for local config and data — not a second `~/.canswim-dashboard` tree:
+
+  | Path | Role |
+  |------|------|
+  | `~/.canswim/data/` | Parquet (`data-3rd-party/`), `forecast/`, DuckDB |
+  | `~/.canswim/backups/` | Optional snapshots |
+  | `~/.canswim/service/` | User-systemd wrappers + unit templates + operator notes |
+
+  Secrets stay in `~/.env`. Application code (`CANSWIM_DIR` checkout or site-packages) is separate from home state.
+- Model checkpoint available for forecast (`canswim_model.pt` in the process cwd, or HF download when `hfhub_sync=True`). Under torch ≥2.6, Darts full-model pickles need `weights_only=False`; canswim applies that only around trusted checkpoint loads.
 - Secrets in **`~/.env`** (not committed): e.g. `FMP_API_KEY`, `CANSWIM_MCP_KEY`, optional `HF_TOKEN` / dashboard password.
 - Optional public MCP: reverse proxy (Caddy recommended) and a single Tailscale Funnel (or TLS terminator) to the proxy port.
 
@@ -41,13 +50,14 @@ Do **not** put the Gradio UI on the public Funnel. Do **not** expose the MCP bin
 
 ```bash
 # Example paths — adjust to your host
-export CANSWIM_DIR=~/canswim          # git checkout
-export CANSWIM_HOME=~/.canswim
+export CANSWIM_DIR=~/canswim          # git checkout (or wherever you install from source)
+export CANSWIM_HOME=~/.canswim        # canonical local config + data
 export data_dir=$CANSWIM_HOME/data
 export db_file=canswim_local.duckdb
 export hfhub_sync=False
 
-mkdir -p "$data_dir/data-3rd-party" "$data_dir/forecast"
+mkdir -p "$data_dir/data-3rd-party" "$data_dir/forecast" \
+  "$CANSWIM_HOME/service" "$CANSWIM_HOME/backups"
 # optional: symlink checkout data/ → shared data so relative paths resolve
 # ln -sfn "$data_dir" "$CANSWIM_DIR/data"
 ```
@@ -69,7 +79,7 @@ export FMP_API_KEY="${FMP_API_KEY:-${FMP_API_Key:-}}"
 
 ## 2. Dashboard unit (private GUI)
 
-**Wrapper** `~/.canswim-dashboard/run.sh` (illustrative):
+**Wrapper** `~/.canswim/service/run.sh` (illustrative):
 
 ```bash
 #!/usr/bin/env bash
@@ -80,6 +90,7 @@ export FMP_API_KEY="${FMP_API_KEY:-${FMP_API_Key:-}}"
 : "${CANSWIM_HOME:=$HOME/.canswim}"
 : "${CANSWIM_DASHBOARD_HOST:=0.0.0.0}"
 : "${CANSWIM_DASHBOARD_PORT:=7860}"
+: "${PYTHON:=${CANSWIM_PYTHON:-$(command -v python3)}}"
 cd "$CANSWIM_DIR"
 export PYTHONPATH="${CANSWIM_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 export GRADIO_SERVER_NAME="$CANSWIM_DASHBOARD_HOST"
@@ -87,12 +98,11 @@ export GRADIO_SERVER_PORT="$CANSWIM_DASHBOARD_PORT"
 export data_dir="${CANSWIM_HOME}/data"
 export db_file=canswim_local.duckdb
 export hfhub_sync=False
-# Conservative threads on shared hosts
 export OMP_NUM_THREADS=2 TORCH_NUM_THREADS=2
-exec env data-3rd-party=data-3rd-party python -m canswim dashboard --same_data True
+exec env data-3rd-party=data-3rd-party "$PYTHON" -m canswim dashboard --same_data True
 ```
 
-**Unit** `~/.config/systemd/user/canswim-dashboard.service`:
+**Unit** `~/.config/systemd/user/canswim-dashboard.service` (template also kept under `~/.canswim/service/`):
 
 ```ini
 [Unit]
@@ -103,9 +113,10 @@ After=network-online.target
 Type=simple
 WorkingDirectory=%h/canswim
 EnvironmentFile=-%h/.env
+Environment=CANSWIM_HOME=%h/.canswim
 Environment=CANSWIM_DASHBOARD_HOST=0.0.0.0
 Environment=CANSWIM_DASHBOARD_PORT=7860
-ExecStart=%h/.canswim-dashboard/run.sh
+ExecStart=%h/.canswim/service/run.sh
 Restart=always
 RestartSec=10
 MemoryMax=4G
@@ -117,7 +128,8 @@ WantedBy=default.target
 ```
 
 ```bash
-chmod +x ~/.canswim-dashboard/run.sh
+chmod +x ~/.canswim/service/run.sh
+cp ~/.canswim/service/canswim-dashboard.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now canswim-dashboard
 systemctl --user status canswim-dashboard --no-pager
@@ -138,7 +150,7 @@ Confirm the UI is **not** listed on public Funnel routes. Prefer binding only th
 python -m canswim mcp --http --host 127.0.0.1 --port 3472
 ```
 
-**Wrapper** `~/.canswim-dashboard/run-mcp.sh` (illustrative):
+**Wrapper** `~/.canswim/service/run-mcp.sh` (illustrative):
 
 ```bash
 #!/usr/bin/env bash
@@ -149,13 +161,14 @@ export FMP_API_KEY="${FMP_API_KEY:-${FMP_API_Key:-}}"
 : "${CANSWIM_HOME:=$HOME/.canswim}"
 : "${CANSWIM_MCP_HOST:=127.0.0.1}"
 : "${CANSWIM_MCP_PORT:=3472}"
+: "${PYTHON:=${CANSWIM_PYTHON:-$(command -v python3)}}"
 cd "$CANSWIM_DIR"
 export PYTHONPATH="${CANSWIM_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 export data_dir="${CANSWIM_HOME}/data"
 export db_file=canswim_local.duckdb
 export hfhub_sync=False
 # Leave MCP_ALLOW_RUNS unset for read-only public tools
-exec env data-3rd-party=data-3rd-party python -m canswim mcp \
+exec env data-3rd-party=data-3rd-party "$PYTHON" -m canswim mcp \
   --http --host "$CANSWIM_MCP_HOST" --port "$CANSWIM_MCP_PORT"
 ```
 
@@ -172,7 +185,7 @@ WorkingDirectory=%h/canswim
 EnvironmentFile=-%h/.env
 Environment=CANSWIM_MCP_HOST=127.0.0.1
 Environment=CANSWIM_MCP_PORT=3472
-ExecStart=%h/.canswim-dashboard/run-mcp.sh
+ExecStart=%h/.canswim/service/run-mcp.sh
 Restart=always
 RestartSec=5
 MemoryMax=2G
