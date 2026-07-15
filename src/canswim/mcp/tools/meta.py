@@ -63,6 +63,10 @@ def health_check_impl() -> dict[str, Any]:
 
 def get_server_info_impl() -> dict[str, Any]:
     allow_runs = runs_allowed()
+    # Import limits here so tool metadata stays in sync with jobs/run_triggers
+    from canswim.mcp.jobs import JOB_MAX_TICKERS
+    from canswim.run_triggers import DEFAULT_MAX_TICKERS
+
     return ok_result(
         {
             "name": "canswim-mcp",
@@ -78,6 +82,23 @@ def get_server_info_impl() -> dict[str, Any]:
                 "Prefer refresh_job_start + refresh_job_status for long refreshes "
                 "(clients that time out on multi-minute tools)."
             ),
+            "refresh_guidance": {
+                "preferred_tools": ["refresh_job_start", "refresh_job_status"],
+                "blocking_tool": "refresh_tickers",
+                "blocking_max_tickers": DEFAULT_MAX_TICKERS,
+                "async_job_max_tickers": JOB_MAX_TICKERS,
+                "workflow": (
+                    "1) refresh_job_start with the full symbol list (≤ async max). "
+                    "2) poll refresh_job_status every poll_after_seconds until done. "
+                    "3) report coverage from result (requested_count / batches). "
+                    "Never claim portfolio-wide success after a timeout, truncated list, "
+                    "or a subset dry_run. If more symbols remain, start another job."
+                ),
+                "client_hint": (
+                    "Do not use blocking refresh_tickers for large Schwab portfolios. "
+                    "Use async jobs and only claim success for symbols in that job."
+                ),
+            },
             "db_path": get_db_path(),
             "tools": TOOL_NAMES,
             "read_tools": READ_TOOL_NAMES,

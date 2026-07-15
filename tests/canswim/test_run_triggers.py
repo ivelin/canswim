@@ -44,13 +44,22 @@ def test_parse_invalid_and_duplicate():
     assert "duplicate" in reasons
 
 
-def test_parse_max_truncation():
-    text = ",".join(f"T{i:03d}" for i in range(60))
-    # T000 style may fail ticker regex (digit after letter ok) — use AAA, AAB...
-    syms = []
-    for i in range(60):
-        syms.append(f"A{i:03d}")  # A000 invalid? letter then digits ok up to 10
+def test_parse_max_overflow_errors_by_default():
+    """MCP-safe: over max must not silently truncate with ok=True."""
+    syms = [f"A{i:03d}" for i in range(60)]
     r = parse_ticker_list(",".join(syms), max_tickers=10)
+    assert r["ok"] is False
+    assert r["truncated"] is True
+    assert r["requested_count"] == 60
+    assert r["max_tickers"] == 10
+    assert len(r["omitted_tickers"]) == 50
+    assert "refresh_job_start" in (r.get("recommended_tool") or "")
+    assert r.get("client_hint")
+
+
+def test_parse_max_truncation_legacy_mode():
+    syms = [f"A{i:03d}" for i in range(60)]
+    r = parse_ticker_list(",".join(syms), max_tickers=10, overflow="truncate")
     assert r["ok"] is True
     assert len(r["tickers"]) == 10
     assert r["truncated"] is True

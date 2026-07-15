@@ -125,9 +125,14 @@ def refresh_tickers_impl(
     if blocked is not None:
         return err_result(blocked["error"], runs_allowed=False)
 
-    parsed = parse_ticker_list(tickers)
+    parsed = parse_ticker_list(tickers, overflow="error")
     if not parsed["ok"]:
-        return err_result(parsed.get("error") or "bad tickers", data=parsed)
+        return err_result(
+            parsed.get("error") or "bad tickers",
+            data=parsed,
+            client_hint=parsed.get("client_hint"),
+            recommended_tool=parsed.get("recommended_tool") or "refresh_job_start",
+        )
 
     result = refresh_symbols(
         tickers,
@@ -137,6 +142,17 @@ def refresh_tickers_impl(
         progress_cb=progress_cb,
     )
     if result.get("ok"):
+        n = len(parsed.get("tickers") or [])
+        result = dict(result)
+        result.setdefault(
+            "client_hint",
+            (
+                f"Blocking refresh finished for {n} symbol(s) only "
+                f"(this call). Do not claim a larger portfolio is refreshed. "
+                "For full portfolios use refresh_job_start + refresh_job_status."
+            ),
+        )
+        result.setdefault("requested_count", n)
         return ok_result(result)
     # Propagate gather remote_api if present under nested gather
     remote = result.get("remote_api") or (result.get("gather") or {}).get(
@@ -148,6 +164,10 @@ def refresh_tickers_impl(
         remote_api=remote,
         fail_reason=result.get("fail_reason")
         or (result.get("gather") or {}).get("fail_reason"),
+        client_hint=(
+            "Refresh failed. Do not claim success. "
+            "Prefer refresh_job_start for long runs; poll refresh_job_status."
+        ),
     )
 
 

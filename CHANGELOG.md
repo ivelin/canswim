@@ -4,13 +4,16 @@ All notable releases are documented here. Versioning follows date-style `0.0.YYY
 
 ## 0.0.20260715
 
-MCP surface bump so clients rediscover tools after async refresh jobs.
+MCP surface bump so clients rediscover tools after async refresh jobs + portfolio-safe limits.
 
 ### Highlights
 
 - **MCP async refresh** — `refresh_job_start` + `refresh_job_status` (file-backed jobs under `{data_dir}/mcp_jobs/`); preferred for SuperGrok / short tool timeouts
+- **Portfolio jobs** — async max **~200** symbols, internal batches of ~20, `coverage` + strict `client_hint` (no full-account overclaim)
+- **No silent truncate** — over-max ticker lists return `ok=false` with `omitted_tickers` / `recommended_tool` (blocking max remains ~50)
+- **`get_server_info.refresh_guidance`** — preferred workflow for Schwab/large lists
 - **MCP progress diagnostics** — journal `progressToken` PRESENT/MISSING + emit lines (`MCP_PROGRESS_DEBUG`)
-- **Version discovery** — MCP `get_server_info` / protocol version read **checkout** `setup.cfg` when running via `PYTHONPATH` (not only a stale installed wheel)
+- **Version discovery** — MCP `get_server_info` / protocol version read **checkout** `setup.cfg` when running via `PYTHONPATH`
 - **Rule** — bump package version on every MCP tool/behavior change so clients refresh discovery
 
 ### Install
