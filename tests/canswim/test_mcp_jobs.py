@@ -275,5 +275,39 @@ def test_get_server_info_refresh_guidance(jobs_env, monkeypatch):
     info = meta.get_server_info_impl()
     assert info["ok"] is True
     g = info["data"]["refresh_guidance"]
-    assert g["preferred_tools"][0] == "refresh_job_start"
+    assert "refresh_tickers" in g["preferred_tools"]
+    assert g["status_tool"] == "refresh_job_status"
     assert g["async_job_max_tickers"] >= g["blocking_max_tickers"]
+
+
+def test_refresh_tickers_tool_defaults_to_async_job(jobs_env, monkeypatch):
+    """Server refresh_tickers(wait=false) must start a job, not block."""
+    monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
+    import asyncio
+    from unittest.mock import patch
+
+    from canswim.mcp import server as srv
+
+    with patch(
+        "canswim.mcp.jobs.refresh_symbols",
+        return_value={
+            "ok": True,
+            "ready": ["AAA"],
+            "incomplete": [],
+            "forecast": {"ok": True, "forecasted": ["AAA"]},
+        },
+    ):
+        out = asyncio.run(srv.refresh_tickers(tickers="AAA", wait=False))
+    assert out["ok"] is True
+    assert out["data"]["job_id"]
+    assert out["data"]["via"] == "refresh_tickers→async_job"
+    assert out["data"]["next_tool"] == "refresh_job_status"
+    assert "BACKGROUND" in out["data"]["client_hint"]
+    # Wait for worker so we don't leave a dangling thread mid-assert noise
+    jid = out["data"]["job_id"]
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        st = job_tools.refresh_job_status_impl(jid)
+        if st["data"]["done"]:
+            break
+        time.sleep(0.05)
