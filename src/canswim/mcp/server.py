@@ -212,7 +212,7 @@ async def gather_tickers(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     # Run in a worker so MCP progress/log notifications can flush during the call
-    progress_cb = bind_mcp_progress(ctx)
+    progress_cb = bind_mcp_progress(ctx, tool="gather_tickers")
     return await asyncio.to_thread(
         run_tools.gather_tickers_impl,
         tickers,
@@ -240,7 +240,7 @@ async def forecast_tickers(
     dry_run: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    progress_cb = bind_mcp_progress(ctx)
+    progress_cb = bind_mcp_progress(ctx, tool="forecast_tickers")
     return await asyncio.to_thread(
         run_tools.forecast_tickers_impl,
         tickers,
@@ -269,7 +269,7 @@ async def refresh_tickers(
     dry_run: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    progress_cb = bind_mcp_progress(ctx)
+    progress_cb = bind_mcp_progress(ctx, tool="refresh_tickers")
     return await asyncio.to_thread(
         run_tools.refresh_tickers_impl,
         tickers,

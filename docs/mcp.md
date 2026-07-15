@@ -111,6 +111,15 @@ Progress is the **same pipeline** as the dashboard Run-tab bar (`run_triggers` �
 
 Clients that omit `progressToken` get only the final result (no error).
 
+**Host diagnostics:** with `MCP_PROGRESS_DEBUG=1` (default when unset), the MCP process
+logs to the journal whether each long tool saw a `progressToken` and each
+progress emit (`MCP progress: …` / `MCP progress emit: …`). Set
+`MCP_PROGRESS_DEBUG=0` to silence. Example:
+
+```bash
+journalctl --user -u canswim-mcp -f | rg 'MCP progress'
+```
+
 ### Custom SQL (read-only)
 
 1. Call **`get_db_schema`** so the client AI sees tables, types, and indexes.

@@ -18,7 +18,34 @@ from canswim.db import (
 ProgressCb = Optional[Callable[[float, str], None]]
 
 
-def bind_mcp_progress(ctx: Any) -> ProgressCb:
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def extract_progress_token(ctx: Any) -> Any:
+    """Best-effort read of MCP progressToken from a FastMCP Context.
+
+    Returns None when missing or unreadable. Used for diagnostics and to mirror
+    FastMCP's silent no-op when the client omits progressToken.
+    """
+    if ctx is None:
+        return None
+    try:
+        rc = getattr(ctx, "request_context", None)
+        if rc is None:
+            return None
+        meta = getattr(rc, "meta", None)
+        if meta is None:
+            return None
+        return getattr(meta, "progressToken", None)
+    except Exception:
+        return None
+
+
+def bind_mcp_progress(ctx: Any, *, tool: str | None = None) -> ProgressCb:
     """Bridge run_triggers ``progress_cb`` → MCP ``notifications/progress`` + info logs.
 
     Designed for use with ``asyncio.to_thread``: the callback is sync and may run
@@ -27,14 +54,50 @@ def bind_mcp_progress(ctx: Any) -> ProgressCb:
     Clients only receive ``notifications/progress`` when they pass a
     ``progressToken`` in the tool request meta (MCP progress protocol). Info logs
     are still sent when the client supports logging.
+
+    Diagnostics (journal-visible): set ``MCP_PROGRESS_DEBUG=1`` (default **on**
+    when unset) to log token presence and each emit / failure. Set to ``0`` to
+    silence. FastMCP itself silently no-ops ``report_progress`` without a token.
     """
     if ctx is None:
+        logger.info(
+            "MCP progress: tool={} ctx=None (no progress bridge; CLI/internal call)",
+            tool or "?",
+        )
         return None
+
+    debug = _env_bool("MCP_PROGRESS_DEBUG", default=True)
+    token = extract_progress_token(ctx)
+    req_id = None
+    try:
+        req_id = getattr(ctx, "request_id", None)
+    except Exception:
+        req_id = None
+
+    if debug:
+        if token is None:
+            logger.warning(
+                "MCP progress: tool={} request_id={} progressToken=MISSING — "
+                "client will only see the final tool result (no mid-run "
+                "notifications/progress). Pass progressToken in tool call meta.",
+                tool or "?",
+                req_id,
+            )
+        else:
+            # Do not log raw token if it looks secret-like; just presence + type
+            logger.info(
+                "MCP progress: tool={} request_id={} progressToken=PRESENT type={}",
+                tool or "?",
+                req_id,
+                type(token).__name__,
+            )
 
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
+
+    emit_count = {"n": 0}
 
     def progress_cb(frac: float, desc: str = "") -> None:
         try:
@@ -45,33 +108,75 @@ def bind_mcp_progress(ctx: Any) -> ProgressCb:
         # 0..100 with total=100 → clear percent for clients
         progress_val = f * 100.0
         total = 100.0
+        emit_count["n"] += 1
+        n = emit_count["n"]
+
+        # Re-read token each emit (meta is fixed per request, but safe)
+        tok_now = extract_progress_token(ctx)
+        if debug:
+            logger.info(
+                "MCP progress emit: tool={} #{} pct={:.1f} token={} msg={!r}",
+                tool or "?",
+                n,
+                progress_val,
+                "yes" if tok_now is not None else "no",
+                (msg or "")[:120],
+            )
 
         async def _emit() -> None:
             try:
                 await ctx.report_progress(
                     progress=progress_val, total=total, message=msg
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                if debug:
+                    logger.warning(
+                        "MCP progress: report_progress failed tool={} #{}: {}: {}",
+                        tool or "?",
+                        n,
+                        type(e).__name__,
+                        e,
+                    )
             if msg:
                 try:
                     await ctx.info(msg)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if debug:
+                        logger.warning(
+                            "MCP progress: ctx.info failed tool={} #{}: {}: {}",
+                            tool or "?",
+                            n,
+                            type(e).__name__,
+                            e,
+                        )
 
         if loop is None or not loop.is_running():
             try:
                 asyncio.run(_emit())
-            except Exception:
-                pass
+            except Exception as e:
+                if debug:
+                    logger.warning(
+                        "MCP progress: asyncio.run emit failed tool={} #{}: {}: {}",
+                        tool or "?",
+                        n,
+                        type(e).__name__,
+                        e,
+                    )
             return
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_emit(), loop)
             fut.result(timeout=5.0)
-        except Exception:
+        except Exception as e:
             # Best-effort: never fail the run because progress notify failed
-            pass
+            if debug:
+                logger.warning(
+                    "MCP progress: threadsafe emit failed tool={} #{}: {}: {}",
+                    tool or "?",
+                    n,
+                    type(e).__name__,
+                    e,
+                )
 
     return progress_cb
 
