@@ -100,21 +100,23 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `resolve_forecast_start` | Preview week-aligned start (≡ CLI `resolve_start`) | — |
 | `gather_tickers` | Scoped gather (≡ `gatherdata --tickers`) | `MCP_ALLOW_RUNS=1` |
 | `forecast_tickers` | Scoped forecast; blank start = monthly catch-up + live | `MCP_ALLOW_RUNS=1` |
-| `refresh_tickers` | Gather + catch-up forecast (blocking; ≡ dashboard **Refresh data & forecasts**) | `MCP_ALLOW_RUNS=1` |
-| `refresh_job_start` | **Async** refresh: same pipeline as `refresh_tickers`, returns `job_id` immediately | `MCP_ALLOW_RUNS=1` |
-| `refresh_job_status` | Poll a job from `refresh_job_start` (`progress_pct`, `message`, `result`) | — |
+| `refresh_tickers` | Gather + catch-up forecast — **async by default** (returns `job_id`; ≡ dashboard refresh). `wait=true` = old blocking path | `MCP_ALLOW_RUNS=1` |
+| `refresh_job_start` | Explicit async start (same as `refresh_tickers` with `wait=false`) | `MCP_ALLOW_RUNS=1` |
+| `refresh_job_status` | Poll a job from `refresh_tickers` / `refresh_job_start` | — |
 
-### Async refresh (preferred for SuperGrok / short tool timeouts)
+### Async refresh (default — SuperGrok / short tool timeouts)
 
-Long refreshes can run for many minutes. **Portfolio / Schwab “refresh all positions”** must use the job pair — not blocking `refresh_tickers`:
+Long refreshes take many minutes. **`refresh_tickers` starts a background job and returns immediately** (do not treat the start response as completion):
 
 1. Call **`get_server_info`** once (note `version` + `refresh_guidance`).
-2. **`refresh_job_start`** with the full symbol list (≤ **~200** async max; blocking tool max is **~50**). Oversized lists **error** (no silent truncate).
+2. **`refresh_tickers`** with the symbol list (≤ **~200** async max). Response includes `job_id`, `poll_after_seconds`, `client_hint`. Oversized lists **error** (no silent truncate).
 3. Sleep about `poll_after_seconds` (typically 5–15s).
 4. **`refresh_job_status`** until `status` is `succeeded` or `failed` (`done=true`).
-5. Report **`coverage`** (`requested_count`, `batches_ok` / `batches_failed`). **Only claim success for symbols in that job’s `ticker_list`.** If the account has more names, start another job for the remainder.
+5. Report **`coverage`**. **Only claim success for symbols in that job’s `ticker_list`.**
 
-Workers process symbols in internal batches (~20) with progress on the job file. Job state is under `{data_dir}/mcp_jobs/` so status survives **client** disconnects. Only **one** refresh job runs at a time. If MCP restarts mid-job, status becomes failed — start again.
+Optional: `wait=true` on `refresh_tickers` forces the old blocking path (max ~50; SuperGrok will disconnect — avoid).
+
+Workers batch symbols (~20). Job state is under `{data_dir}/mcp_jobs/`. Only **one** refresh job at a time.
 
 **Do not** claim portfolio-wide success after a tool timeout, a `dry_run`, a subset list, or while status is still `queued`/`running`.
 

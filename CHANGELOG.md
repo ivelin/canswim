@@ -2,6 +2,22 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260716
+
+SuperGrok still called blocking `refresh_tickers` and disconnected mid-run. **Default path is now async.**
+
+### Highlights
+
+- **`refresh_tickers` defaults to background job** (`wait=false`) — returns `job_id` immediately; poll `refresh_job_status`
+- **`wait=true`** keeps the old blocking path (opt-in only)
+- Stronger `client_hint` / `refresh_guidance` so start response is never treated as completion
+
+### Install
+
+```bash
+pip install canswim==0.0.20260716
+```
+
 ## 0.0.20260715
 
 MCP surface bump so clients rediscover tools after async refresh jobs + portfolio-safe limits.

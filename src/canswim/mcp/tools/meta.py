@@ -83,20 +83,27 @@ def get_server_info_impl() -> dict[str, Any]:
                 "(clients that time out on multi-minute tools)."
             ),
             "refresh_guidance": {
-                "preferred_tools": ["refresh_job_start", "refresh_job_status"],
-                "blocking_tool": "refresh_tickers",
+                "preferred_tools": [
+                    "refresh_tickers",
+                    "refresh_job_status",
+                ],
+                "alias_start": "refresh_job_start",
+                "status_tool": "refresh_job_status",
+                "default_refresh_tickers": "async_job (wait=false)",
+                "blocking_opt_in": "refresh_tickers wait=true (max ~50; may timeout)",
                 "blocking_max_tickers": DEFAULT_MAX_TICKERS,
                 "async_job_max_tickers": JOB_MAX_TICKERS,
                 "workflow": (
-                    "1) refresh_job_start with the full symbol list (≤ async max). "
+                    "1) refresh_tickers with the full symbol list (≤ async max) — "
+                    "returns job_id immediately (does NOT wait for forecasts). "
                     "2) poll refresh_job_status every poll_after_seconds until done. "
-                    "3) report coverage from result (requested_count / batches). "
-                    "Never claim portfolio-wide success after a timeout, truncated list, "
-                    "or a subset dry_run. If more symbols remain, start another job."
+                    "3) report coverage (requested_count / batches). "
+                    "Never claim portfolio-wide success after a timeout, while "
+                    "status is queued/running, or for symbols not in ticker_list."
                 ),
                 "client_hint": (
-                    "Do not use blocking refresh_tickers for large Schwab portfolios. "
-                    "Use async jobs and only claim success for symbols in that job."
+                    "refresh_tickers is async by default. Always poll "
+                    "refresh_job_status. Never claim success from the start response alone."
                 ),
             },
             "db_path": get_db_path(),

@@ -27,7 +27,7 @@ Flags: `python -m canswim -h` is the source of truth. Local site preview: `pip i
 
 ```bash
 pip install canswim
-# pin a release: pip install canswim==0.0.20260715
+# pin a release: pip install canswim==0.0.20260716
 
 # dev checkout
 pip install -e ".[dev]"

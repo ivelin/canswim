@@ -257,20 +257,47 @@ async def forecast_tickers(
 @mcp.tool(
     name="refresh_tickers",
     description=(
-        "BLOCKING all-in-one refresh (market data + ~12 monthly catch-up forecasts "
-        "+ live). Max ~50 symbols; larger lists return an error (not silent truncate). "
-        "May take many minutes and times out on SuperGrok — for portfolios / "
-        "Schwab positions prefer refresh_job_start + refresh_job_status. "
-        "Only claim success for symbols in THIS call. Requires MCP_ALLOW_RUNS=1. "
-        "dry_run=true plans only. Streams progressToken notifications while open."
+        "Refresh market data + catch-up forecasts for listed symbols. "
+        "DEFAULT (wait=false): starts a BACKGROUND job and returns immediately with "
+        "job_id — then call refresh_job_status until done. This is required for "
+        "SuperGrok / Schwab portfolios (blocking calls disconnect mid-run). "
+        "Accepts up to ~200 symbols when async. "
+        "wait=true: old blocking path (max ~50; may take many minutes; times out). "
+        "Only claim success for symbols in the job’s ticker_list after status=succeeded. "
+        "Requires MCP_ALLOW_RUNS=1. dry_run=true plans only."
     ),
 )
 async def refresh_tickers(
     tickers: str,
     include_covariates: bool = True,
     dry_run: bool = False,
+    wait: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
+    # Default async: SuperGrok always called blocking refresh_tickers and disconnected
+    # before the final result (ClosedResourceError). Job path returns in milliseconds.
+    if not wait:
+        out = job_tools.refresh_job_start_impl(
+            tickers=tickers,
+            include_covariates=include_covariates,
+            dry_run=dry_run,
+        )
+        if out.get("ok") and isinstance(out.get("data"), dict):
+            data = dict(out["data"])
+            data["via"] = "refresh_tickers→async_job"
+            data["next_tool"] = data.get("next_tool") or "refresh_job_status"
+            hint = data.get("client_hint") or ""
+            data["client_hint"] = (
+                "refresh_tickers started a BACKGROUND job (not finished yet). "
+                f"Call refresh_job_status with job_id={data.get('job_id')} after "
+                f"~{data.get('poll_after_seconds', 15)}s. "
+                "Do NOT claim the portfolio is refreshed until status is succeeded "
+                "or failed. "
+                + (hint if hint else "")
+            )
+            out = {**out, "data": data}
+        return out
+
     progress_cb = bind_mcp_progress(ctx, tool="refresh_tickers")
     return await asyncio.to_thread(
         run_tools.refresh_tickers_impl,
@@ -284,13 +311,10 @@ async def refresh_tickers(
 @mcp.tool(
     name="refresh_job_start",
     description=(
-        "PREFERRED for portfolio refresh: start background gather+catch-up forecast "
-        "and return immediately with job_id. Accepts up to ~200 symbols (batched "
-        "internally). After start, poll refresh_job_status until succeeded/failed; "
-        "report coverage (requested_count, batches) — never claim full-account success "
-        "for symbols not in this job. Only one job at a time. Requires MCP_ALLOW_RUNS=1. "
-        "Use this instead of blocking refresh_tickers for Schwab/large lists. "
-        "dry_run=true plans only."
+        "Start background gather+catch-up forecast; return job_id immediately "
+        "(same as refresh_tickers with wait=false). Up to ~200 symbols, batched. "
+        "Poll refresh_job_status until done. Only one job at a time. "
+        "Requires MCP_ALLOW_RUNS=1. dry_run=true plans only."
     ),
 )
 def refresh_job_start(
@@ -308,9 +332,9 @@ def refresh_job_start(
 @mcp.tool(
     name="refresh_job_status",
     description=(
-        "Poll status of a job started by refresh_job_start. "
+        "Poll status of a job started by refresh_tickers (default) or refresh_job_start. "
         "Returns status (queued|running|succeeded|failed), progress_pct, message, "
-        "poll_after_seconds, client_hint, and result when done. "
+        "poll_after_seconds, client_hint, coverage, and result when done. "
         "Always available (no MCP_ALLOW_RUNS gate). "
         "Do not claim the refresh finished until status is succeeded or failed."
     ),
