@@ -24,6 +24,7 @@ import gc
 from loguru import logger
 from canswim import constants
 import yaml
+from canswim.torch_compat import darts_torch_load_compat
 
 
 def election_year_offset(idx):
@@ -89,12 +90,22 @@ class CanswimModel:
         self.target_column = "Close"
         self.covariates = Covariates()
         self.hfhub = HFHub()
-        # use GPU if available
+        # Use GPU when the *installed* torch can run on this device; else CPU.
+        # Portable: no host/arch hardcoding — RTX 3090, newer GPUs, or CPU-only.
         if torch.cuda.is_available():
-            logger.info("Configuring CUDA GPU")
+            try:
+                name = torch.cuda.get_device_name(0)
+                major, minor = torch.cuda.get_device_capability(0)
+                logger.info(
+                    f"Configuring CUDA GPU: {name} (compute capability {major}.{minor})"
+                )
+            except Exception:
+                logger.info("Configuring CUDA GPU")
             # utilize CUDA tensor cores with bfloat16
             # https://pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html#torch.set_float32_matmul_precision
             torch.set_float32_matmul_precision("high")  #  | 'medium'
+        else:
+            logger.info("CUDA not available; using CPU")
 
         self.__load_config()
 
@@ -487,9 +498,10 @@ class CanswimModel:
             map_location = "cpu"
         try:
             logger.info(f"Loading saved model name: {self.model_name}")
-            self.torch_model = TiDEModel.load(
-                path=self.model_name, map_location=map_location
-            )
+            with darts_torch_load_compat():
+                self.torch_model = TiDEModel.load(
+                    path=self.model_name, map_location=map_location
+                )
             logger.info(
                 f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
             )
@@ -507,9 +519,10 @@ class CanswimModel:
             map_location = "cpu"
         try:
             logger.info(f"Loading saved model name: {self.model_name}")
-            self.torch_model = self.torch_model.load_weights(
-                path=self.model_name, map_location=map_location
-            )
+            with darts_torch_load_compat():
+                self.torch_model = self.torch_model.load_weights(
+                    path=self.model_name, map_location=map_location
+                )
             logger.info(
                 f"Loaded saved model name: {self.model_name}, \nmodel parameters: \n{self.torch_model}"
             )
