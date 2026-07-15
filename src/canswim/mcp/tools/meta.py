@@ -12,7 +12,7 @@ from canswim.mcp.tools._common import err_result, ok_result, resolve_db_path
 from canswim.run_triggers import runs_allowed
 
 
-# Always-registered tools (read path + start-date preview)
+# Always-registered tools (read path + start-date preview + job status)
 READ_TOOL_NAMES = [
     "health_check",
     "get_server_info",
@@ -25,6 +25,7 @@ READ_TOOL_NAMES = [
     "get_db_schema",
     "run_select",
     "resolve_forecast_start",
+    "refresh_job_status",
 ]
 
 # Mutation tools (registered always for discoverability; gated at invoke time)
@@ -32,6 +33,7 @@ WRITE_TOOL_NAMES = [
     "gather_tickers",
     "forecast_tickers",
     "refresh_tickers",
+    "refresh_job_start",
 ]
 
 TOOL_NAMES = READ_TOOL_NAMES + WRITE_TOOL_NAMES
@@ -71,8 +73,10 @@ def get_server_info_impl() -> dict[str, Any]:
                 "TiDE precomputed forecasts (read tools). "
                 "Custom SQL: run_select is SELECT/WITH only on a read-only DuckDB "
                 "connection; get_db_schema exports tables/indexes for query authoring. "
-                "Write tools gather_tickers/forecast_tickers/refresh_tickers require "
-                "MCP_ALLOW_RUNS=1 and may load torch for forecast."
+                "Write tools gather_tickers/forecast_tickers/refresh_tickers/"
+                "refresh_job_start require MCP_ALLOW_RUNS=1 and may load torch. "
+                "Prefer refresh_job_start + refresh_job_status for long refreshes "
+                "(clients that time out on multi-minute tools)."
             ),
             "db_path": get_db_path(),
             "tools": TOOL_NAMES,

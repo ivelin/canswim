@@ -1805,7 +1805,7 @@ def run_select(
         raise SelectOnlyError(
             "Only single read-only SELECT (or WITH … SELECT) statements are allowed. "
             "No DDL/DML/multi-statement. Writes must use dedicated tools "
-            "(gather_tickers / forecast_tickers / refresh_tickers)."
+            "(gather_tickers / forecast_tickers / refresh_tickers / refresh_job_start)."
         )
     wrapped = f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _q LIMIT {int(row_limit)}"
     with connect_readonly(db_path) as db_con:
@@ -1846,7 +1846,7 @@ def describe_search_schema(
         "sql_policy": (
             "Custom SQL via run_select: single SELECT or WITH…SELECT only; "
             "enforced + DuckDB read-only connection. "
-            "Mutations only via gather_tickers / forecast_tickers / refresh_tickers "
+            "Mutations only via gather_tickers / forecast_tickers / refresh_tickers / refresh_job_start "
             "when MCP_ALLOW_RUNS=1."
         ),
         "tables": [],

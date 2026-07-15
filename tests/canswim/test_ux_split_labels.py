@@ -227,6 +227,8 @@ def test_mcp_tool_descriptions_are_plain():
     # Tool description block for forecast should be plain language
     assert "Run a forecast for listed stock symbols" in src
     assert 'name="refresh_tickers"' in src
+    assert 'name="refresh_job_start"' in src
+    assert 'name="refresh_job_status"' in src
     assert "progressToken" in src or "progress" in src.lower()
     assert "bind_mcp_progress" in src
 
