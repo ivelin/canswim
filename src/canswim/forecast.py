@@ -7,7 +7,6 @@ import os
 from datetime import datetime, timedelta
 from typing import List
 
-import duckdb
 import numpy as np
 import pandas as pd
 import pandas_market_calendars as mcal
@@ -300,59 +299,68 @@ class CanswimForecaster:
             return None
 
     def _get_stocks_without_forecast(self, stocks_df=None, forecast_start_date=None):
+        """Symbols still needing a forecast for ``forecast_start_date``.
+
+        Delegates skip detection to
+        :func:`canswim.run_triggers.list_symbols_with_saved_forecast` (ephemeral
+        DuckDB connection). On any scan failure, treats **all** listed symbols
+        as candidates so refresh/forecast can still run — never abort the whole
+        job solely because the hive skip-scan failed.
+        """
+        if stocks_df is None or len(stocks_df) == 0:
+            return []
+        # Symbol may be a column or the index depending on caller
+        if "Symbol" in getattr(stocks_df, "columns", []):
+            all_syms = [str(s).strip().upper() for s in stocks_df["Symbol"].tolist()]
+        elif "symbol" in getattr(stocks_df, "columns", []):
+            all_syms = [str(s).strip().upper() for s in stocks_df["symbol"].tolist()]
+        else:
+            all_syms = [str(s).strip().upper() for s in stocks_df.index.tolist()]
+        all_syms = sorted({s for s in all_syms if s and s.lower() != "nan"})
+        if not all_syms:
+            return []
+
         if forecast_start_date is not None:
             dt = pd.Timestamp(forecast_start_date)
         else:
             dt = pd.Timestamp.now()
-        # align date to closest business day
-        # leave as is if dt is a business day,
-        # otherwise move forward to next business day
         bd = dt + 0 * BDay()
-        y = bd.year
-        m = bd.month
-        d = bd.day
-        # logger.debug(f"Forecast start date, year, month, day: {bd}, {y}, {m}, {d}")
-        # logger.debug(f"len(stocks_df): {len(stocks_df)}")
-        # logger.debug(f"stocks_df: {stocks_df}")
+        start_s = bd.strftime("%Y-%m-%d")
+
         forecast_glob = f"{self.data_dir}/{self.forecast_subdir}**/*.parquet"
-        # Empty/missing forecast tree: all symbols need a forecast (do not crash DuckDB)
         if not glob.glob(forecast_glob, recursive=True):
             logger.info(
                 f"No existing forecast parquet under {self.data_dir}/{self.forecast_subdir}; "
                 "all listed symbols are candidates."
             )
-            stocks_without_forecast = sorted(list(set(stocks_df["Symbol"])))
-            return stocks_without_forecast
+            return all_syms
+
         try:
-            df = duckdb.sql(
-                f"""--sql
-                CREATE OR REPLACE TABLE stock_group AS SELECT Symbol from stocks_df;
-                SELECT symbol, count(*), forecast_start_year, forecast_start_month, forecast_start_day
-                FROM read_parquet('{forecast_glob}', hive_partitioning = 1) as f
-                SEMI JOIN stock_group
-                ON f.symbol = stock_group.symbol
-                GROUP BY f.symbol, forecast_start_year, forecast_start_month, forecast_start_day
-                HAVING 
-                    forecast_start_year={y} AND
-                    forecast_start_month={m} AND
-                    forecast_start_day={d} AND
-                    count(*) >= {self.canswim_model.pred_horizon}
-                """
-            ).df()
-        except duckdb.IOException as e:
+            # Lazy import: run_triggers imports CanswimForecaster only inside
+            # functions, so this is safe and keeps one DuckDB scan path (DRY).
+            from canswim.run_triggers import list_symbols_with_saved_forecast
+
+            min_rows = int(getattr(self.canswim_model, "pred_horizon", 42) or 42)
+            have = list_symbols_with_saved_forecast(
+                all_syms,
+                start_s,
+                data_dir=self.data_dir,
+                forecast_subdir=self.forecast_subdir,
+                min_horizon_rows=min_rows,
+            )
+        except Exception as e:
             logger.warning(
                 f"Could not read existing forecasts ({e}); treating all as candidates."
             )
-            return sorted(list(set(stocks_df["Symbol"])))
-        # logger.debug(f"sql result: {df}")
-        stocks_with_saved_forecast = set(df["symbol"])
+            return all_syms
+
+        stocks_with_saved_forecast = {str(s).upper() for s in (have or set())}
         logger.debug(
-            f"""These stocks already have a saved forecast: {stocks_with_saved_forecast}"""
+            f"These stocks already have a saved forecast: {stocks_with_saved_forecast}"
         )
-        stocks_without_forecast = set(stocks_df["Symbol"]) - stocks_with_saved_forecast
-        stocks_without_forecast = sorted(list(stocks_without_forecast))
+        stocks_without_forecast = sorted(set(all_syms) - stocks_with_saved_forecast)
         logger.debug(
-            f"""These stocks do not have a saved forecast yet: {stocks_without_forecast}"""
+            f"These stocks do not have a saved forecast yet: {stocks_without_forecast}"
         )
         return stocks_without_forecast
 
