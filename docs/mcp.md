@@ -13,6 +13,10 @@ Expose precomputed TiDE forecasts and local market data to MCP clients (Claude D
 
 CLI `--tickers` and the dashboard **Run** tab do **not** need `MCP_ALLOW_RUNS`. Write tools share the same backend as CLI/GUI: [run_triggers.md](run_triggers.md).
 
+### Server version (client rediscovery)
+
+MCP initialize and **`get_server_info`** expose package version from `setup.cfg` (via `canswim.version`). **Any** MCP tool add/rename/remove or behavior change must bump that version in the same PR so remote clients refresh tool discovery instead of caching a stale list.
+
 ## Prerequisites
 
 1. Local parquet under `data/data-3rd-party/` and forecasts under `data/forecast/` (or your `data_dir`).

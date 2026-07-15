@@ -45,6 +45,16 @@ def test_mcp_tool_names_documented():
     assert not missing, f"docs/mcp.md missing tools: {missing}"
 
 
+def test_setup_cfg_version_in_changelog():
+    """Current setup.cfg version must have a CHANGELOG section (MCP rediscovery)."""
+    cfg = _read("setup.cfg")
+    m = re.search(r"(?m)^version\s*=\s*(\S+)", cfg)
+    assert m, "setup.cfg missing version"
+    ver = m.group(1)
+    cl = _read("CHANGELOG.md")
+    assert f"## {ver}" in cl, f"CHANGELOG.md missing section for {ver}"
+
+
 def test_cli_tasks_mentioned_in_cli_doc():
     main_src = _read("src/canswim/__main__.py")
     # choices list in argparse
