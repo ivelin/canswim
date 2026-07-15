@@ -36,7 +36,16 @@ if [[ ${#PY[@]} -eq 0 ]]; then
   echo "    using: $(command -v python) ($("${PY[@]}" -V 2>&1))"
 fi
 
-mkdir -p data/data-3rd-party data/forecast
+# Tests use per-test temp data dirs (tests/conftest.py). Never mkdir/write under
+# repo data/ when it is a symlink to production ~/.canswim/data.
+if [[ -L data ]]; then
+  echo "    note: data/ is a symlink — not creating dirs there (prod isolation)"
+elif [[ -d data ]]; then
+  # Real directory (CI / fresh checkout): empty scaffolding only, no prod home.
+  mkdir -p data/data-3rd-party data/forecast
+else
+  mkdir -p data/data-3rd-party data/forecast
+fi
 
 # Ensure editable install has test deps (pytest moved to extras_require[dev])
 if ! "${PY[@]}" -c "import pytest" 2>/dev/null; then
@@ -46,6 +55,7 @@ fi
 
 echo "==> pytest tests/canswim/"
 # Recurse package (includes tests/canswim/dashboard/, etc.)
+# Isolation is enforced by tests/conftest.py (autouse temp data_dir + write guards).
 "${PY[@]}" -m pytest tests/canswim/ -q --tb=short
 
 echo "==> local CI OK"

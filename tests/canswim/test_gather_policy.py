@@ -167,7 +167,7 @@ def test_incomplete_symbols_helper():
     assert "MSFT" in bad  # missing
 
 
-def test_gather_stock_price_skips_remote_when_all_skip():
+def test_gather_stock_price_skips_remote_when_all_skip(tmp_path):
     from canswim.gather_data import MarketDataGatherer
     from canswim.gather_policy import SymbolFetchPlan
 
@@ -184,10 +184,9 @@ def test_gather_stock_price_skips_remote_when_all_skip():
             reason="local_complete_and_fresh",
         )
     ]
-    # Post-eval uses real plan on full df — ensure coverage ok
-    last = df.index.get_level_values("Date").max()
+    fake_prices = tmp_path / "fake_prices.parquet"
 
-    with patch.object(g, "_data_file", return_value="/tmp/fake_prices.parquet"):
+    with patch.object(g, "_data_file", return_value=str(fake_prices)):
         with patch("pandas.read_parquet", return_value=df):
             with patch.object(g, "_fetch_stock_prices_fmp") as fmp:
                 with patch.object(g, "_fetch_stock_prices_yfinance") as yf:
@@ -210,7 +209,7 @@ def test_gather_stock_price_skips_remote_when_all_skip():
                     yf.assert_not_called()
 
 
-def test_gather_raises_when_remote_empty_for_missing_symbol():
+def test_gather_raises_when_remote_empty_for_missing_symbol(tmp_path):
     """Shipped gather_stock_price_data must not succeed with empty remote for missing sym."""
     from canswim.gather_data import MarketDataGatherer
 
@@ -220,8 +219,9 @@ def test_gather_raises_when_remote_empty_for_missing_symbol():
     g.gather_mode = "forecast"
     g.stocks_ticker_set = ["MSFT"]
     g.FMP_API_KEY = "fake"
+    fake_prices = tmp_path / "fake_prices2.parquet"
 
-    with patch.object(g, "_data_file", return_value="/tmp/fake_prices2.parquet"):
+    with patch.object(g, "_data_file", return_value=str(fake_prices)):
         with patch("pandas.read_parquet", return_value=df):
             with patch.object(
                 g, "_fetch_stock_prices_fmp", return_value=pd.DataFrame()

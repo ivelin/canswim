@@ -242,8 +242,7 @@ def test_refresh_symbols_progress_callback(monkeypatch):
 
 def test_forecast_passes_resolved_start_to_forecaster(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
-    monkeypatch.setenv("data_dir", "/tmp/canswim_test_data_unused")
-    monkeypatch.setenv("data-3rd-party", "data-3rd-party")
+    # data_dir set by autouse isolation — do not point at /tmp or prod
 
     cf = MagicMock()
     cf.all_already_saved = False

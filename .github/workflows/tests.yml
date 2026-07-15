@@ -26,6 +26,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
     
+    # Empty scaffolding for optional relative reads only. Tests never write here:
+    # tests/conftest.py forces a per-test temp data_dir and blocks prod writes.
     - name: Create data directories
       run: |
         mkdir -p data/data-3rd-party

@@ -23,6 +23,7 @@
 - Prefer the `canswim` conda env for CLI and pytest (also used by `ci-local.sh` when present).
 - Keep `hfhub_sync=False` for local gather/forecast unless explicitly testing HF sync.
 - Do not commit local slimmed `symbol_lists/all_stocks.csv` or gitignored `data/` artifacts from few-symbol runs.
+- **Tests must not write production data.** Reading optional local parquet (e.g. under `data/` even if it symlinks to `~/.canswim/data`) is allowed; all writes go to the per-test temp tree. Enforced by `tests/conftest.py` + `tests/isolation_policy.py` (autouse `data_dir`, block writes under `~/.canswim`). Do not weaken those guards.
 
 ## Documentation (keep in sync with code)
 
