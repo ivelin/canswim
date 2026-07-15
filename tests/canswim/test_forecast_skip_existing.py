@@ -56,8 +56,7 @@ def test_forecast_skips_model_when_all_already_saved(monkeypatch):
 
 def test_forecast_only_runs_missing_symbols(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
-    monkeypatch.setenv("data_dir", "/tmp/canswim_fc_skip_test")
-    monkeypatch.setenv("data-3rd-party", "data-3rd-party")
+    # data_dir / data-3rd-party set by autouse isolation (tmp only)
 
     cf = MagicMock()
     cf.all_already_saved = False
