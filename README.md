@@ -36,6 +36,8 @@ pip install -e ".[dev]"
 conda activate canswim
 ```
 
+**CPU and GPU:** forecasts run on CPU by default. If the active environment has a working CUDA build of PyTorch, GPU is used automatically — no canswim-specific device flag. Install torch from [pytorch.org](https://pytorch.org) for your OS/GPU when you want acceleration (RTX 30/40-class, data-center GPUs, etc.). The same source tree and PyPI package are meant to work on contributor laptops and production hosts without host-specific code paths.
+
 See [CHANGELOG.md](CHANGELOG.md) for release notes. Docs: [https://ivelin.github.io/canswim/](https://ivelin.github.io/canswim/).
 
 ## Local-first market data
@@ -95,6 +97,7 @@ For a **user-level** long-running install:
 |---------|----------|-----|
 | **Dashboard** | Private (e.g. Tailscale only) | `canswim-dashboard.service` → Gradio `:7860` — **not** on public Funnel |
 | **MCP** | Public via reverse proxy | `canswim-mcp.service` → `python -m canswim mcp --http --host 127.0.0.1 --port 3472`; edge gateway requires `CANSWIM_MCP_KEY` (`?apikey=`) |
+| **Local state** | Per-user | Canonical **`~/.canswim/`** (`data/`, optional `service/` for unit wrappers) — not a separate `~/.canswim-dashboard` tree |
 
 Basics above; full unit templates, env, Funnel/Caddy apikey matrix, and data population: **[docs/deploy_service.md](docs/deploy_service.md)**. MCP flags: **[docs/mcp.md](docs/mcp.md)**.
 
