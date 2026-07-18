@@ -2,6 +2,22 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260717
+
+Catch-up forecasts were failing with a misleading “covariate misalignment” error.
+
+### Highlights
+
+- **Root cause:** scoped gather kept only ~**2 years** of prices; monthly catch-up origins need **≥336** pre-start bars, so origins like 2025-07/09/11 only had ~261–330 bars
+- **Fix:** forecast-scoped lookback **~3 years** (`FORECAST_LOOKBACK_YEARS=3`); refresh re-downloads longer history when local window starts too late
+- **Honest errors:** short pre-start history reports `fail_reason=short_history` (not covariates)
+
+### Install
+
+```bash
+pip install canswim==0.0.20260717
+```
+
 ## 0.0.20260716
 
 SuperGrok still called blocking `refresh_tickers` and disconnected mid-run. **Default path is now async.**

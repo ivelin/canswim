@@ -1,4 +1,4 @@
-"""Missing-only / 2y gather decisions (pure; no network)."""
+"""Missing-only / 3y gather decisions (pure; no network)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import pytest
 from canswim.gather_policy import (
     DEFAULT_FORECAST_MIN_BARS,
     DEFAULT_TRAIN_MIN_BARS,
+    FORECAST_LOOKBACK_YEARS,
     SymbolFetchPlan,
     classify_incomplete_reason,
     evaluate_symbol_coverage,
@@ -38,15 +39,16 @@ def _ohlcv_frame(symbol: str, start: str, n_bars: int) -> pd.DataFrame:
     return df
 
 
-def test_forecast_window_is_about_two_years():
+def test_forecast_window_is_about_three_years():
+    assert FORECAST_LOOKBACK_YEARS == 3
     asof = pd.Timestamp("2026-07-10")
     start = forecast_window_start(asof=asof)
-    assert start == pd.Timestamp("2024-07-10")
+    assert start == pd.Timestamp("2023-07-10")
 
 
 def test_skip_when_local_complete_and_fresh():
-    # Full ~2y+ window ending at asof
-    df = _ohlcv_frame("AAPL", "2024-01-02", 650)
+    # Full ~3y+ window ending at asof
+    df = _ohlcv_frame("AAPL", "2023-01-02", 900)
     last = df.index.get_level_values("Date").max()
     asof = pd.Timestamp(last).strftime("%Y-%m-%d")
     plan = plan_symbol_price_fetch(
@@ -54,7 +56,7 @@ def test_skip_when_local_complete_and_fresh():
         df,
         mode="forecast",
         asof=asof,
-        min_bars=350,
+        min_bars=DEFAULT_FORECAST_MIN_BARS,
         freshness_days=5,
     )
     assert plan.action == "skip", plan
@@ -63,16 +65,16 @@ def test_skip_when_local_complete_and_fresh():
 
 
 def test_partial_window_tail_must_fetch():
-    """350+ bars starting mid-window must NOT skip — missing early window coverage."""
+    """Many bars starting mid-window must NOT skip — missing early window coverage."""
     asof = "2026-07-10"
-    # Window start ≈ 2024-07-10; start history much later
+    # Window start ≈ 2023-07-10; start history much later
     df = _ohlcv_frame("AAPL", "2025-01-02", 400)
     plan = plan_symbol_price_fetch(
         "AAPL",
         df,
         mode="forecast",
         asof=asof,
-        min_bars=350,
+        min_bars=DEFAULT_FORECAST_MIN_BARS,
         freshness_days=400,  # freshness alone would pass
     )
     assert plan.action == "fetch", plan
@@ -81,19 +83,23 @@ def test_partial_window_tail_must_fetch():
 
 
 def test_fetch_when_missing_symbol():
-    df = _ohlcv_frame("MSFT", "2024-01-02", 600)
+    df = _ohlcv_frame("MSFT", "2023-01-02", 800)
     plan = plan_symbol_price_fetch(
-        "AAPL", df, mode="forecast", asof="2026-07-10", min_bars=350
+        "AAPL",
+        df,
+        mode="forecast",
+        asof="2026-07-10",
+        min_bars=DEFAULT_FORECAST_MIN_BARS,
     )
     assert plan.action == "fetch"
     assert plan.fetch_start is not None
-    assert plan.fetch_start.startswith("2024-")
+    assert plan.fetch_start.startswith("2023-")
     assert plan.reason == "missing_local_symbol"
     assert plan.is_incomplete is True
 
 
 def test_fetch_stale_uses_tail_start():
-    df = _ohlcv_frame("AAPL", "2024-01-02", 550)
+    df = _ohlcv_frame("AAPL", "2023-01-02", 800)
     last = pd.Timestamp(df.index.get_level_values("Date").max())
     asof = last + pd.Timedelta(days=30)
     plan = plan_symbol_price_fetch(
@@ -101,7 +107,7 @@ def test_fetch_stale_uses_tail_start():
         df,
         mode="forecast",
         asof=asof,
-        min_bars=350,
+        min_bars=DEFAULT_FORECAST_MIN_BARS,
         freshness_days=5,
     )
     assert plan.action == "fetch", plan
@@ -115,7 +121,11 @@ def test_short_history_fetches_from_window():
     asof = "2026-07-10"
     df = _ohlcv_frame("AAPL", "2026-01-02", 20)
     plan = plan_symbol_price_fetch(
-        "AAPL", df, mode="forecast", asof=asof, min_bars=350
+        "AAPL",
+        df,
+        mode="forecast",
+        asof=asof,
+        min_bars=DEFAULT_FORECAST_MIN_BARS,
     )
     assert plan.action == "fetch"
     assert plan.fetch_start == forecast_window_start(asof=asof).strftime("%Y-%m-%d")
@@ -123,9 +133,9 @@ def test_short_history_fetches_from_window():
 
 
 def test_train_mode_partial_history_must_fetch():
-    """~2y of data is not enough to skip under train mode (long window)."""
+    """~3y of data is not enough to skip under train mode (long window)."""
     # Plenty of bars for forecast, but first bar far after train_min_start
-    df = _ohlcv_frame("AAPL", "2024-01-02", 600)
+    df = _ohlcv_frame("AAPL", "2023-01-02", 800)
     last = df.index.get_level_values("Date").max()
     plan = plan_symbol_price_fetch(
         "AAPL",

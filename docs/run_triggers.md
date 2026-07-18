@@ -23,7 +23,7 @@ Without `--tickers`, CLI `gatherdata` / `forecast` keep **full-universe / train-
 
 For scoped runs (`--tickers` / dashboard / MCP):
 
-- Target about the **last 2 years** of prices (enough to forecast)—not multi-decade history.
+- Target about the **last 3 years** of prices (model lookback + ~12 monthly catch-up origins)—not multi-decade history.
 - **Skip remote download** when local history is already complete and recent.
 - If history is short or gappy, download only the **missing window**.
 - If history is complete but stale, download only a **short tail** refresh.
@@ -68,7 +68,7 @@ After a successful gather, symbols are **synced into the DuckDB search DB** so C
 
 All-in-one for a short list (portfolio / new names). GUI label: **Refresh data & forecasts**.
 
-1. **Market data** — prices + fundamentals (missing-only, ~2y).  
+1. **Market data** — prices + fundamentals (missing-only, ~3y).  
 2. **Catch-up forecasts** — ~12 monthly origins + live for symbols that are ready.  
 3. **Charts list + DuckDB** — symbols appear in Charts; forecasts and backtest errors sync for Scans.
 
@@ -109,7 +109,7 @@ Operator detail only—primary UI uses plain language.
 ## Examples
 
 ```bash
-# Update market data for two symbols (missing-only, ~2y + fundamentals)
+# Update market data for two symbols (missing-only, ~3y + fundamentals)
 hfhub_sync=False python -m canswim gatherdata --tickers "AAPL, MSFT"
 
 # See start date
@@ -160,7 +160,7 @@ Same rules on both paths unless noted.
 
 | Requirement | Covered stocks (A) | IPOs / thin (B) | ETFs / funds (C) |
 |-------------|--------------------|-----------------|------------------|
-| **OHLCV history** | Full train window or ~2y scoped | Must eventually reach ~**2 years of sessions** for forecast-scoped readiness | Same price floor as stocks (~2y scoped) |
+| **OHLCV history** | Full train window or ~3y scoped | Must eventually reach ~**3 years of sessions** for forecast-scoped readiness | Same price floor as stocks (~3y scoped) |
 | **Own OHLC+volume as past covs** | Real | Real when listed | Real (ETF prints) |
 | **Earnings / key metrics / ownership** | Real when present | **Zero-fill** missing (#33) | **Zero-fill** missing (same mechanism; expected permanent) |
 | **Analyst estimates (future)** | Real when present | **Zero-fill** missing | **Zero-fill** missing |
@@ -197,7 +197,7 @@ extends the same idea).
 | You want to… | Expectation |
 |--------------|-------------|
 | Refresh **LLY / AAPL** | Market data + real fundamentals when APIs have them; catch-up forecasts as usual |
-| Refresh a **new IPO** | May **stop** until ~2y of sessions; fundamentals imputed once prices are ready |
+| Refresh a **new IPO** | May **stop** until enough sessions (~3y floor for catch-up); fundamentals imputed once prices are ready |
 | Refresh **XLF** or a sector ETF | Prices + market funds load; **no corporate fund rows** — imputed automatically; forecast should not fail on dimensionality alone |
 | Mix ETF + stocks in one list | Peers can supply templates; still fine if only ETFs (empty-batch path) |
 

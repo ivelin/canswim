@@ -204,7 +204,7 @@ def resolve_forecast_start(start_date: Optional[str] = None) -> dict[str, Any]:
     name="gather_tickers",
     description=(
         "Get / update market data for listed stock symbols (comma or newline separated). "
-        "Only downloads what is missing or out of date (~last 2 years for forecast use). "
+        "Only downloads what is missing or out of date (~last 3 years for forecast use). "
         "Same as CLI `gatherdata --tickers` and dashboard “Update market data”. "
         "Streams progress notifications when the client sends a progressToken. "
         "Requires MCP_ALLOW_RUNS=1."
