@@ -509,7 +509,7 @@ def gather_for_tickers(
 
         g = MarketDataGatherer()
         g.stocks_ticker_set = list(tickers)
-        # Scoped user runs: ~2y missing-only (not multi-decade train history)
+        # Scoped user runs: ~3y missing-only (not multi-decade train history)
         g.gather_mode = "forecast"
 
         if not getattr(g, "FMP_API_KEY", None):
