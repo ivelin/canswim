@@ -1,12 +1,14 @@
 """Pure decisions for lean, missing-only market data gathers (no network).
 
-Forecast-scoped gathers (GUI / MCP / CLI ``--tickers``) only need about the last
-**two years** of history—enough for model lookback + horizon—not multi-decade
-training archives. Train-mode gathers still use the long ``train_date_start``.
+Forecast-scoped gathers (GUI / MCP / CLI ``--tickers``) keep about the last
+**three years** of history—enough for model lookback (``input_chunk`` ≈ 252) plus
+~12 monthly catch-up origins (each needs full lookback **before** that origin)—
+not multi-decade training archives. Train-mode gathers still use the long
+``train_date_start``.
 
 Skip is allowed only when local history **covers the full required window**
 (first bar near window start, enough eligible bars, and recent enough).
-Partial tails (e.g. 350 bars starting mid-window) must still fetch.
+Partial tails (e.g. bars starting mid-window) must still fetch.
 """
 
 from __future__ import annotations
@@ -21,12 +23,14 @@ from canswim.eligibility import PRICE_OHLCV_COLS, price_history_is_eligible
 
 DateLike = Union[str, date, datetime, pd.Timestamp]
 
-# ~2 calendar years of sessions; enough for input_chunk(252)+horizons with margin
-FORECAST_LOOKBACK_YEARS = 2
+# ~3 calendar years: catch-up (~12 months) + min_samples (~336 sessions) + pad.
+# With only 2y, oldest catch-up starts had ~261–330 pre-start bars (need 336) and
+# every origin failed while the user-facing error incorrectly said "covariates".
+FORECAST_LOOKBACK_YEARS = 3
 # Treat local prices as fresh if last bar is within this many calendar days of asof
 DEFAULT_FRESHNESS_DAYS = 5
-# Minimum complete OHLCV bars for forecast-only path (252+42+42) with small pad
-DEFAULT_FORECAST_MIN_BARS = 350
+# Min complete OHLCV bars for forecast-only path (~3y sessions with margin)
+DEFAULT_FORECAST_MIN_BARS = 550
 # Train needs long history before we skip remote (not the same as forecast)
 DEFAULT_TRAIN_MIN_BARS = 1500
 # First bar may lag window_start by weekends/holidays only

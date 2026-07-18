@@ -101,7 +101,7 @@ INCOMPLETE_DATA_MSG = (
     "Market history is incomplete or not ready for: {symbols}. "
     "Use Update market data for these symbols, then run the forecast again. "
     "Forecasts never invent missing prices. "
-    "Recent IPOs often lack enough history (~2 years of sessions)."
+    "Recent IPOs often lack enough history (~3 years of sessions for catch-up)."
 )
 
 COVARIATE_FAIL_MSG = (
@@ -111,6 +111,16 @@ COVARIATE_FAIL_MSG = (
     "Try Update market data again (includes fundamentals), then re-run the forecast. "
     "ETFs and other fund-thin names use zero-filled fund covariates (like IPOs); "
     "if this still fails, see Technical log for a feature-dimension mismatch."
+)
+
+# Catch-up as-of origins need full model lookback *before* the origin date.
+# Do not call this "covariate misalignment" — that misleads operators.
+SHORT_HISTORY_ASOF_MSG = (
+    "Could not build catch-up forecasts for: {symbols}. "
+    "Local daily price history is too short before those start dates "
+    "(model needs ~{need} trading days of lookback before each origin). "
+    "Run Update market data / refresh again to download a longer window "
+    "(~3 years), then retry. This is not a fundamentals alignment failure."
 )
 
 DIMENSIONALITY_FAIL_MSG = (
@@ -499,7 +509,7 @@ def gather_for_tickers(
 
         g = MarketDataGatherer()
         g.stocks_ticker_set = list(tickers)
-        # Scoped user runs: ~2y missing-only (not multi-decade train history)
+        # Scoped user runs: ~3y missing-only (not multi-decade train history)
         g.gather_mode = "forecast"
 
         if not getattr(g, "FMP_API_KEY", None):
@@ -945,14 +955,23 @@ def forecast_for_tickers(
     skipped_all: list[str] = []
     model_loaded = False
     last_fail_reason: Optional[str] = None
+    all_skip_details: list[dict] = []
+    last_need_bars: Optional[int] = None
 
     def _incomplete_result(
         *,
         forecasted_syms: list[str],
         incomplete_syms: list[str],
         reason: str = "prices",
+        need_bars: Optional[int] = None,
+        skip_details: Optional[list] = None,
     ) -> dict[str, Any]:
-        if reason == "covariates":
+        if reason == "short_history":
+            err = SHORT_HISTORY_ASOF_MSG.format(
+                symbols=", ".join(incomplete_syms) or "requested symbols",
+                need=need_bars or 336,
+            )
+        elif reason == "covariates":
             err = COVARIATE_FAIL_MSG.format(
                 symbols=", ".join(incomplete_syms) or "requested symbols"
             )
@@ -973,10 +992,11 @@ def forecast_for_tickers(
             "skipped": incomplete_syms,
             "already_have_forecast": sorted(all_already),
             "messages": messages,
-            "need_gather": reason == "prices",
+            "need_gather": reason in ("prices", "short_history"),
             "need_covariates": reason == "covariates",
             "model_loaded": model_loaded,
             "fail_reason": reason,
+            "skip_details": list(skip_details or []),
             "catchup_months": months if mode == "catchup" else None,
         }
 
@@ -1044,14 +1064,36 @@ def forecast_for_tickers(
                         any_saved = True
             plan["forecasted"] = forecasted_o
             forecasted_all.extend(forecasted_o)
+            skips = list(getattr(cf, "last_skip_details", None) or [])
+            if skips:
+                all_skip_details.extend(skips)
+                for d in skips:
+                    if d.get("need") is not None:
+                        last_need_bars = int(d["need"])
+            short_only = bool(skips) and all(
+                d.get("reason") == "short_history" for d in skips
+            )
             if not any_group and not getattr(cf, "all_already_saved", False):
-                last_fail_reason = "covariates"
-                messages.append(
-                    f"Start {o}: no eligible symbols in model batch "
-                    f"(tried {', '.join(to_run)})."
+                last_fail_reason = (
+                    "short_history" if short_only else "covariates"
                 )
+                if short_only:
+                    sample = skips[0]
+                    messages.append(
+                        f"Start {o}: insufficient pre-start history "
+                        f"(e.g. {sample.get('symbol')} had {sample.get('n_hist')} "
+                        f"bars, need {sample.get('need')}). "
+                        "Longer price download required — not a covariate mismatch."
+                    )
+                else:
+                    messages.append(
+                        f"Start {o}: no eligible symbols in model batch "
+                        f"(tried {', '.join(to_run)})."
+                    )
             elif not any_saved and not getattr(cf, "all_already_saved", False):
-                last_fail_reason = "covariates"
+                last_fail_reason = (
+                    "short_history" if short_only else "covariates"
+                )
                 messages.append(f"Start {o}: no forecasts saved.")
             else:
                 messages.append(
@@ -1077,10 +1119,17 @@ def forecast_for_tickers(
                     incomplete.append(f"{t}@{o}")
 
         if incomplete and not forecasted_all:
+            reason = last_fail_reason or "covariates"
+            if all_skip_details and all(
+                d.get("reason") == "short_history" for d in all_skip_details
+            ):
+                reason = "short_history"
             return _incomplete_result(
                 forecasted_syms=[],
                 incomplete_syms=incomplete,
-                reason=last_fail_reason or "covariates",
+                reason=reason,
+                need_bars=last_need_bars,
+                skip_details=all_skip_details,
             )
 
         # Push parquet → DuckDB (+ backtest_error refresh) and Charts symbol list

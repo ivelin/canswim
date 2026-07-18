@@ -44,7 +44,7 @@ python -m canswim -h
 Same backend as the dashboard **Run** tab and MCP write tools. Policy detail: [run_triggers.md](run_triggers.md). Storage: [data_store.md](data_store.md).
 
 ```bash
-# 1) Get market data (~2y, missing-only; includes fundamentals unless --no_covariates)
+# 1) Get market data (~3y, missing-only; includes fundamentals unless --no_covariates)
 hfhub_sync=False python -m canswim gatherdata --tickers "AAPL, MSFT"
 
 # 2) Check start date (optional)

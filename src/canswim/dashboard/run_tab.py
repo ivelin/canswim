@@ -156,7 +156,7 @@ def _gather_summary(result: dict) -> str:
             lines.append("")
             lines.append("**What this means**")
             lines.append(
-                "Forecasts need about **two years** of trading sessions. "
+                "Forecasts need about **three years** of trading sessions. "
                 "Recent IPOs and new listings usually cannot be forecasted yet—"
                 "even if some prices were saved."
             )
@@ -222,7 +222,7 @@ def _gather_summary(result: dict) -> str:
         lines.append(
             f"**Not ready for forecasts yet ({len(incomplete)}):** "
             f"{_fmt_syms(incomplete)}  \n"
-            f"_Why: {why}. Prices may still be on file; forecasts need ~2 years of sessions._"
+            f"_Why: {why}. Prices may still be on file; forecasts need ~3 years of sessions._"
         )
 
     # Download activity as counts (avoid repeating every ticker twice)

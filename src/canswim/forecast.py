@@ -216,6 +216,8 @@ class CanswimForecaster:
         past_cov_list = []
         future_cov_list = []
         tickers_list = self.canswim_model.targets_ticker_list
+        # Structured skips for MCP/GUI (do not mislabel short history as covariates)
+        self.last_skip_details: list[dict] = []
         # trim end of targets (and past covs) for historical / as-of forecast starts
         if forecast_start_date is not None:
             fsd = pd.Timestamp(forecast_start_date).tz_localize(None).normalize()
@@ -261,10 +263,20 @@ class CanswimForecaster:
                             )
 
                     n_hist = len(target_sliced)
-                    if n_hist < self.canswim_model.min_samples:
+                    need = self.canswim_model.min_samples
+                    if n_hist < need:
+                        detail = {
+                            "symbol": tickers_list[i],
+                            "reason": "short_history",
+                            "n_hist": int(n_hist),
+                            "need": int(need),
+                            "asof": str(fsd.date()),
+                            "hist_end": str(target_sliced.end_time().date()),
+                        }
+                        self.last_skip_details.append(detail)
                         logger.info(
                             f"Skipping {tickers_list[i]}: only {n_hist} pre-start samples "
-                            f"(need >= {self.canswim_model.min_samples}); "
+                            f"(need >= {need}); "
                             f"as-of {fsd.date()}, hist ends {target_sliced.end_time().date()}."
                         )
                         continue
@@ -279,6 +291,18 @@ class CanswimForecaster:
                         f"n={n_hist}, forecast_start={fsd.date()}"
                     )
                 except (ValueError, KeyError, AssertionError) as e:
+                    self.last_skip_details.append(
+                        {
+                            "symbol": tickers_list[i],
+                            "reason": "align_error",
+                            "error": f"{type(e).__name__}: {e}",
+                            "asof": str(
+                                pd.Timestamp(forecast_start_date).date()
+                                if forecast_start_date is not None
+                                else ""
+                            ),
+                        }
+                    )
                     logger.warning(
                         f"Skipping {tickers_list[i]} for forecast start date "
                         f"{forecast_start_date} due to error: {type(e)}: {e}"
