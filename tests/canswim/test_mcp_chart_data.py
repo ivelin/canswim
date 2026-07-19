@@ -249,6 +249,40 @@ def test_plot_chart_alias_same_payload(chart_env):
     assert len(a["data"]["forecasts"]) == len(b["data"]["forecasts"])
 
 
+def test_connector_prefixed_tool_name_resolves(chart_env):
+    """SuperGrok sends canswim___get_chart_data; server must not Unknown tool."""
+    import asyncio
+
+    from canswim.mcp import server as srv
+
+    async def _call(name: str):
+        return await srv.mcp._tool_manager.call_tool(
+            name, {"symbol": "TSM"}, convert_result=False
+        )
+
+    bare = asyncio.run(_call("get_chart_data"))
+    pref = asyncio.run(_call("canswim___get_chart_data"))
+    slash = asyncio.run(_call("canswim/get_chart_data"))
+    # Tool.run returns the function result (dict envelope)
+    for out in (bare, pref, slash):
+        assert isinstance(out, dict)
+        assert out.get("ok") is True
+        assert out["data"]["coverage"]["forecast_start_count"] == 3
+
+
+def test_get_forecast_as_chart_and_get_close_as_chart(chart_env):
+    from canswim.mcp.tools import forecasts, prices
+
+    fc = forecasts.get_forecast_impl(symbol="TSM", as_chart=True)
+    assert fc["ok"] is True
+    assert fc["data"]["coverage"]["backtest_count"] == 2
+    assert len(fc["data"]["forecasts"]) == 3
+
+    cl = prices.get_close_price_impl(symbol="TSM", as_chart=True)
+    assert cl["ok"] is True
+    assert cl["data"]["coverage"]["live_count"] == 1
+
+
 def test_get_chart_data_server_entrypoint_one_shot(chart_env):
     """End-to-end client perspective: call registered server tool with only symbol."""
     from canswim.mcp import server as srv

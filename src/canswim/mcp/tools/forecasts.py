@@ -20,7 +20,20 @@ def get_forecast_impl(
     start_date: Optional[str] = None,
     latest_only: bool = True,
     row_limit: int = 5000,
+    as_chart: bool = False,
+    confidence: int = 80,
+    history_years: float = 2.0,
 ) -> dict[str, Any]:
+    # SuperGrok fallback path when get_chart_data is missing from connector list
+    if as_chart:
+        from canswim.mcp.tools.charts import get_chart_data_impl
+
+        return get_chart_data_impl(
+            symbol=symbol,
+            confidence=confidence,
+            history_years=history_years,
+            include_reward_risk=True,
+        )
     ready, msg = ensure_db_ready()
     if not ready:
         return err_result(msg)

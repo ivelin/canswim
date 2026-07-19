@@ -51,17 +51,24 @@ CLIENT_ACCESS_BOUNDARY = (
 
 CHART_GUIDANCE = {
     "primary_tools": ["get_chart_data", "plot_chart"],
-    "alias_note": "plot_chart is the same as get_chart_data (same arguments and payload).",
-    "call": "get_chart_data(symbol) or plot_chart(symbol) — only symbol is required.",
+    "alias_note": (
+        "plot_chart ≡ get_chart_data. Server also accepts connector-prefixed "
+        "names (canswim___get_chart_data) by stripping the prefix."
+    ),
+    "call": (
+        "get_chart_data(symbol) or plot_chart(symbol). "
+        "If the connector rejects those names, call get_forecast(symbol, as_chart=true) "
+        "or get_close_price(symbol, as_chart=true) — same full chart payload."
+    ),
     "do_not": (
-        "Do not claim get_chart_data/plot_chart is unavailable if it appears in "
-        "tools/list or get_server_info.tools. Call it. Do not stitch "
-        "get_close_price + get_forecast for a dashboard chart."
+        "Do not claim get_chart_data is unavailable without trying as_chart=true "
+        "on get_forecast/get_close_price. Do not stitch raw get_close_price rows "
+        "with latest-only get_forecast for a dashboard chart."
     ),
     "fallback": (
-        "Only if tools/list truly omits both get_chart_data and plot_chart after "
-        "reconnecting the connector, use get_close_price + get_forecast "
-        "(latest only) — and say that backtest overlays are incomplete."
+        "get_forecast(symbol, as_chart=true) or get_close_price(symbol, as_chart=true). "
+        "Only if as_chart also fails, use latest-only rows and state that "
+        "backtest overlays are incomplete."
     ),
 }
 
