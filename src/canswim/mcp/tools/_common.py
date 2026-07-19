@@ -202,17 +202,26 @@ def ensure_db_ready(db_path: Optional[str] = None) -> tuple[bool, str]:
         try:
             init_search_db(path, same_data=False, target_column="Close")
         except Exception as e:
-            return False, f"Failed to init DuckDB at {path}: {e}"
+            # Log path server-side; do not leak host paths to MCP clients.
+            logger.error(f"MCP_INIT_DB failed at {path}: {e}")
+            return False, (
+                "Failed to initialize CANSWIM search data on the server. "
+                "An operator must fix host data setup."
+            )
         if tables_present(path):
             return True, path
-        return False, f"DuckDB init completed but expected tables missing at {path}"
+        return False, (
+            "CANSWIM search data init finished but required datasets are still missing. "
+            "An operator must repair the host data store."
+        )
 
     return (
         False,
         (
-            f"Search database missing or incomplete at {path}. "
-            "Run `python -m canswim dashboard` once to build it, "
-            "or set MCP_INIT_DB=1 to build from local parquet on MCP start."
+            "CANSWIM data is not ready on the server. "
+            "Remote clients cannot open a local database file — use MCP tools only. "
+            "An operator must build search data on the host "
+            "(run dashboard once, or set MCP_INIT_DB=1 on the server process)."
         ),
     )
 

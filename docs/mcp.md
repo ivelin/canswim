@@ -1,8 +1,20 @@
 # MCP server
 
-Expose precomputed TiDE forecasts and local market data to MCP clients (Claude Desktop, Cursor, etc.) over the **same DuckDB search database** used by the dashboard.
+Expose precomputed TiDE forecasts and market data to MCP clients (Claude Desktop, Cursor, SuperGrok, etc.). **Remote clients only access data through MCP tools** — there is no client-side database file, host path, or direct DuckDB connection for the connector.
+
+On the **host**, the server reads the same search store as the dashboard (operators: [data_store.md](data_store.md)). That is an implementation detail; do not surface host paths or engine names in client-facing product copy.
 
 **NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.**
+
+## Client access boundary
+
+| Clients may | Clients must not assume |
+|-------------|-------------------------|
+| Call MCP tools (`get_chart_data`, `get_forecast`, `get_close_price`, …) | A local DuckDB/file path on their machine |
+| Optional `get_db_schema` + `run_select` **via MCP** | Opening the host search DB outside this server |
+| Use `get_server_info.access` as the source of truth | SQL against “the DuckDB” without `run_select` |
+
+`get_server_info` includes an **`access`** string and **does not** return `db_path` / `data_dir` / `db_file` to remote clients.
 
 ## Behavior
 
@@ -114,7 +126,7 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 3. For **each** entry in `data.forecasts` (monthly backtests + latest live): plot `median` **dashed** and **fill** between `low` and `high` (see `plot_hints.client_recipe`). Do **not** drop to latest-only.
 4. Optional table: `data.reward_risk` (uptrending starts in the same confidence mapping).
 
-No `get_close_price` + `get_forecast` stitching required. Restart `canswim-mcp` after deploy so clients see version **0.0.20260719** and rediscover the tool.
+No `get_close_price` + `get_forecast` stitching required. Restart `canswim-mcp` after deploy so clients see the current package version and rediscover tools.
 
 ### Async refresh (default — SuperGrok / short tool timeouts)
 
@@ -154,14 +166,16 @@ progress emit (`MCP progress: …` / `MCP progress emit: …`). Set
 journalctl --user -u canswim-mcp -f | rg 'MCP progress'
 ```
 
-### Custom SQL (read-only)
+### Custom SQL (read-only, still MCP-only)
 
-1. Call **`get_db_schema`** so the client AI sees tables, types, and indexes.
-2. Call **`run_select`** with one `SELECT` or `WITH … SELECT` statement.
+Prefer purpose-built tools first (`get_chart_data`, `get_forecast`, …). For ad-hoc analytics:
+
+1. Call **`get_db_schema`** for logical tables/columns (no host path in the payload).
+2. Call **`run_select`** with one `SELECT` or `WITH … SELECT` statement **through MCP**.
 3. Guards:
    - Statement must start with `SELECT` or `WITH` (and contain `SELECT`).
    - DDL/DML keywords, multi-statement `;`, `PRAGMA`, `ATTACH`, `COPY`, etc. are **rejected**.
-   - DuckDB is opened **read-only** (`connect_readonly`).
+   - Server executes read-only; the client never receives a DB file path.
    - Results are wrapped with `LIMIT` (default 5000).
 4. **Writes are never free-form SQL** — only gated tools (`gather_tickers`, `forecast_tickers`, `refresh_tickers`, `refresh_job_start`) when `MCP_ALLOW_RUNS=1`.
 

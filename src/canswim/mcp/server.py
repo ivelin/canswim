@@ -1,8 +1,8 @@
 """CANSWIM MCP server entrypoint.
 
-Default is READ-ONLY — precomputed TiDE forecasts and market data from the
-local DuckDB search database. Optional write tools (gather/forecast) are
-registered for discoverability but require ``MCP_ALLOW_RUNS=1`` to execute.
+Default is READ-ONLY — precomputed TiDE forecasts and market data exposed
+only through MCP tools (remote clients have no host DB file). Optional write
+tools (gather/forecast) require ``MCP_ALLOW_RUNS=1`` to execute.
 """
 
 from __future__ import annotations
@@ -44,7 +44,10 @@ mcp._mcp_server.version = SERVER_VERSION
 
 @mcp.tool(
     name="health_check",
-    description="Check whether the local CANSWIM DuckDB search database is ready.",
+    description=(
+        "Check whether CANSWIM data is ready on the server. "
+        "Does not grant filesystem or database access — use MCP tools only."
+    ),
 )
 def health_check() -> dict[str, Any]:
     return meta.health_check_impl()
@@ -54,7 +57,8 @@ def health_check() -> dict[str, Any]:
     name="get_server_info",
     description=(
         "Server metadata: version (bump ⇒ re-discover tools), read-only flag, "
-        "tool list, db path, and refresh_guidance for portfolio async jobs."
+        "tool list, access boundary (MCP-only data), and refresh_guidance for "
+        "portfolio async jobs."
     ),
 )
 def get_server_info() -> dict[str, Any]:
@@ -63,7 +67,7 @@ def get_server_info() -> dict[str, Any]:
 
 @mcp.tool(
     name="list_tickers",
-    description="List stock symbols available in the local search database.",
+    description="List stock symbols available via this MCP server.",
 )
 def list_tickers() -> dict[str, Any]:
     return tickers.list_tickers_impl()
@@ -127,7 +131,10 @@ def scan_forecasts(
 
 @mcp.tool(
     name="get_close_price",
-    description="Historical close prices for a symbol from the local DuckDB (optional ISO date range).",
+    description=(
+        "Historical close prices for a symbol via MCP (optional ISO date range). "
+        "Not a filesystem or local-database API."
+    ),
 )
 def get_close_price(
     symbol: str,
@@ -150,7 +157,7 @@ def get_close_price(
         "plot median dashed and fill low–high — do not filter to latest only; "
         "no other tools needed for the default chart. "
         "confidence: 80/95/99 (default 80 → low quantile 0.2, high 0.95). "
-        "history_years: default 2. Read-only DuckDB (no torch)."
+        "history_years: default 2. Read-only MCP data (no torch)."
     ),
 )
 def get_chart_data(
@@ -181,10 +188,10 @@ def get_backtest_error(
 @mcp.tool(
     name="get_db_schema",
     description=(
-        "Export the local DuckDB search database schema for analytics SQL: "
-        "tables, columns (name/type/nullable), indexes, optional row counts, "
-        "and purpose notes. Also returns a compact markdown summary for agent "
-        "context. Use this before writing complex run_select queries. Read-only. "
+        "Logical table/column schema for optional MCP analytics (run_select). "
+        "Does not expose a host database path or grant a client DB connection — "
+        "schema is only for writing run_select queries through this server. "
+        "Prefer get_chart_data / get_forecast / get_close_price when possible. "
         "format: 'json' | 'markdown' | 'both' (default both)."
     ),
 )
@@ -203,12 +210,13 @@ def get_db_schema(
 @mcp.tool(
     name="run_select",
     description=(
-        "Run a single read-only SQL query against the local DuckDB search database "
-        "(same as Advanced Queries). Allowed: one SELECT or WITH…SELECT. "
-        "DDL/DML/multi-statement/PRAGMA/ATTACH are rejected. Connection is always "
-        "read-only. Writes only via gather_tickers / forecast_tickers / refresh_tickers "
-        "/ refresh_job_start when MCP_ALLOW_RUNS=1. Call get_db_schema first for "
-        "table/index layout. Results capped by row_limit (default 5000)."
+        "Optional analytics: one read-only SELECT or WITH…SELECT via this MCP server "
+        "(not a local database on the client). "
+        "DDL/DML/multi-statement/PRAGMA/ATTACH rejected. "
+        "Prefer purpose-built tools (get_chart_data, get_forecast, …) for charts "
+        "and standard queries. Call get_db_schema first for table layout. "
+        "Writes only via gather/forecast/refresh tools when MCP_ALLOW_RUNS=1. "
+        "Results capped by row_limit (default 5000)."
     ),
 )
 def run_select(sql: str, row_limit: int = 5000) -> dict[str, Any]:

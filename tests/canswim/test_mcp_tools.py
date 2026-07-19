@@ -101,6 +101,10 @@ def test_health_and_info(mcp_env, monkeypatch):
     h = meta.health_check_impl()
     assert h["ok"] is True
     assert h["data"]["is_read_only"] is True
+    assert h["data"]["data_ready"] is True
+    # No host filesystem / engine leakage to remote clients
+    assert "db_path" not in h["data"]
+    assert "db_file_exists" not in h["data"]
     info = meta.get_server_info_impl()
     assert info["ok"] is True
     assert info["data"]["is_read_only"] is True
@@ -108,6 +112,28 @@ def test_health_and_info(mcp_env, monkeypatch):
     assert "list_tickers" in info["data"]["tools"]
     assert "gather_tickers" in info["data"]["tools"]
     assert "forecast_tickers" in info["data"]["write_tools"]
+    assert "db_path" not in info["data"]
+    assert "env" not in info["data"]
+    access = (info["data"].get("access") or "").lower()
+    assert "mcp" in access
+    assert "only" in access
+    assert "duckdb" in access  # explicit: no client DuckDB access
+    assert "no client" in access or "not" in access
+
+
+def test_schema_and_select_omit_host_paths(mcp_env):
+    sch = query.get_db_schema_impl(format="both")
+    assert sch["ok"] is True
+    d = sch["data"]
+    assert "db_path" not in d
+    assert "access" in d
+    md = (d.get("markdown") or "").lower()
+    assert "path:" not in md
+    assert "/home/" not in md
+    assert ".duckdb" not in md
+    sel = query.run_select_impl("SELECT 1 AS n")
+    assert sel["ok"] is True
+    assert "access" in sel["data"]
 
 
 def test_write_tools_blocked_without_opt_in(mcp_env, monkeypatch):

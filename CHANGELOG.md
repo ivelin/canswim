@@ -2,6 +2,22 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260720
+
+Remote clients kept inventing a local DuckDB they could open; MCP text leaked host paths and engine details.
+
+### Highlights
+
+- **Client access boundary** — `get_server_info` / `health_check` / schema & SQL tools no longer return host `db_path`, `data_dir`, or “open local DuckDB” language
+- Explicit **`access`** message: data only via MCP tools; no client-side database file
+- Prefer purpose-built tools (`get_chart_data`, …); `run_select` framed as optional MCP analytics, not a private DB connection
+
+### Install
+
+```bash
+pip install canswim==0.0.20260720
+```
+
 ## 0.0.20260719
 
 MCP clients needed three tools and custom grouping to recreate the dashboard Charts tab.
