@@ -240,6 +240,71 @@ def test_sync_forecasts_to_search_db_accepts_legacy_time_column(
     assert res["forecast_rows"] == 5
 
 
+def test_sync_forecasts_mixed_date_and_time_columns(mini_db, tmp_path: Path):
+    """Hive may mix legacy ``time`` and modern ``date`` part files — must not wipe DB."""
+    root = tmp_path / "forecast"
+    # modern date column
+    d1 = (
+        root
+        / "symbol=CCC"
+        / "forecast_start_year=2026"
+        / "forecast_start_month=3"
+        / "forecast_start_day=2"
+    )
+    d1.mkdir(parents=True)
+    dates1 = pd.bdate_range("2026-03-02", periods=3)
+    pd.DataFrame(
+        {
+            "date": dates1,
+            "symbol": "CCC",
+            "close_quantile_0.01": 90.0,
+            "close_quantile_0.05": 92.0,
+            "close_quantile_0.2": 95.0,
+            "close_quantile_0.5": 100.0,
+            "close_quantile_0.8": 105.0,
+            "close_quantile_0.95": 108.0,
+            "close_quantile_0.99": 110.0,
+            "forecast_start_year": 2026,
+            "forecast_start_month": 3,
+            "forecast_start_day": 2,
+        }
+    ).to_parquet(d1 / "part.parquet", index=False)
+    # legacy time column
+    d2 = (
+        root
+        / "symbol=CCC"
+        / "forecast_start_year=2026"
+        / "forecast_start_month=4"
+        / "forecast_start_day=6"
+    )
+    d2.mkdir(parents=True)
+    dates2 = pd.bdate_range("2026-04-06", periods=2)
+    pd.DataFrame(
+        {
+            "time": dates2,
+            "symbol": "CCC",
+            "close_quantile_0.01": 91.0,
+            "close_quantile_0.05": 93.0,
+            "close_quantile_0.2": 96.0,
+            "close_quantile_0.5": 101.0,
+            "close_quantile_0.8": 106.0,
+            "close_quantile_0.95": 109.0,
+            "close_quantile_0.99": 111.0,
+            "forecast_start_year": 2026,
+            "forecast_start_month": 4,
+            "forecast_start_day": 6,
+        }
+    ).to_parquet(d2 / "part.parquet", index=False)
+
+    res = sync_forecasts_to_search_db(
+        mini_db, ["CCC"], forecast_path=str(root)
+    )
+    assert res["ok"] is True, res
+    assert res["forecast_rows"] == 5
+    after = get_forecast_rows(mini_db, "CCC", latest_only=False)
+    assert len(after) == 5
+
+
 def test_get_close_prices(mini_db):
     df = get_close_prices(mini_db, "AAA")
     assert len(df) == 2

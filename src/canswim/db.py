@@ -1134,24 +1134,67 @@ def sync_forecasts_to_search_db(
                     f'INSERT INTO stock_tickers ("{sym_col}") VALUES (?)', [s]
                 )
 
-        db_con.execute(
-            f"""--sql
-            DELETE FROM forecast
-            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
-            """
-        )
-        # Production hive parquet uses column "date"; older fixtures used "time".
-        # DuckDB errors if a referenced column is missing, so pick from schema.
+        # Production hive uses column "date"; older files used "time". Mixed schemas
+        # across the hive break plain read_parquet (schema mismatch) and used to
+        # DELETE symbols then fail INSERT → empty get_forecast after a "successful"
+        # refresh. union_by_name + COALESCE handles both.
         sample_files = sorted(glob.glob(forecast_glob, recursive=True))
-        pq_cols = {
-            str(r[0]).lower()
-            for r in db_con.execute(
-                f"DESCRIBE SELECT * FROM read_parquet('{sample_files[0]}') LIMIT 0"
-            ).fetchall()
-        }
-        if "date" in pq_cols:
+        if not sample_files:
+            return {
+                "ok": True,
+                "symbols": syms,
+                "forecast_rows": 0,
+                "message": "No forecast parquet files found",
+            }
+        # Prefer reading only target-symbol partitions (faster + fewer schema mixes).
+        # Fall back to full hive glob when layout is non-standard.
+        per_sym_files: list[str] = []
+        for s in syms:
+            per_sym_files.extend(
+                sorted(
+                    glob.glob(
+                        f"{fpath}symbol={s}/**/*.parquet", recursive=True
+                    )
+                )
+            )
+        # DuckDB list for multi-file read
+        if per_sym_files:
+            file_list_sql = "[" + ", ".join(
+                "'" + p.replace("'", "''") + "'" for p in per_sym_files
+            ) + "]"
+            read_src = (
+                f"read_parquet({file_list_sql}, hive_partitioning = 1, "
+                f"union_by_name = true, hive_types_autocast = true)"
+            )
+        else:
+            read_src = (
+                f"read_parquet('{forecast_glob}', hive_partitioning = 1, "
+                f"union_by_name = true, hive_types_autocast = true)"
+            )
+        # Build date expression from actual columns present after union_by_name.
+        try:
+            pq_cols = {
+                str(r[0]).lower()
+                for r in db_con.execute(
+                    f"DESCRIBE SELECT * FROM {read_src} AS f LIMIT 0"
+                ).fetchall()
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Forecast parquet schema probe failed: {e}",
+                "symbols": syms,
+                "forecast_rows": 0,
+            }
+        has_date = "date" in pq_cols
+        has_time = "time" in pq_cols
+        if has_date and has_time:
+            date_expr = (
+                "COALESCE(TRY_CAST(f.date AS DATE), TRY_CAST(f.time AS DATE))"
+            )
+        elif has_date:
             date_expr = "CAST(f.date AS DATE)"
-        elif "time" in pq_cols:
+        elif has_time:
             date_expr = "CAST(f.time AS DATE)"
         else:
             return {
@@ -1162,6 +1205,35 @@ def sync_forecasts_to_search_db(
                 "symbols": syms,
                 "forecast_rows": 0,
             }
+        # Atomic replace: only delete after a successful staged read count
+        try:
+            staged = db_con.execute(
+                f"""--sql
+                SELECT count(*) FROM {read_src} AS f
+                WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+                """
+            ).fetchone()[0]
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Forecast parquet read failed: {e}",
+                "symbols": syms,
+                "forecast_rows": 0,
+            }
+        if staged == 0:
+            return {
+                "ok": True,
+                "symbols": syms,
+                "forecast_rows": 0,
+                "message": "No forecast rows for symbols in parquet hive",
+            }
+
+        db_con.execute(
+            f"""--sql
+            DELETE FROM forecast
+            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+            """
+        )
         # Dedupe when multiple part files share symbol/start/date (common in hive dirs).
         db_con.execute(
             f"""--sql
@@ -1202,8 +1274,9 @@ def sync_forecasts_to_search_db(
                             {date_expr}
                         ORDER BY f.symbol
                     ) AS rn
-                FROM read_parquet('{forecast_glob}', hive_partitioning = 1) AS f
+                FROM {read_src} AS f
                 WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+                  AND {date_expr} IS NOT NULL
             )
             WHERE rn = 1
             """

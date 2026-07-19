@@ -2,6 +2,21 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260718
+
+Successful refresh still left `get_forecast` empty (TSM job succeeded, DuckDB had 0 rows).
+
+### Highlights
+
+- **Root cause:** `sync_forecasts_to_search_db` DELETE then INSERT failed on mixed hive parquet (`date` vs legacy `time` columns)
+- **Fix:** `union_by_name` + schema-aware date expr; probe rows before DELETE; surface sync errors in forecast messages
+
+### Install
+
+```bash
+pip install canswim==0.0.20260718
+```
+
 ## 0.0.20260717
 
 Catch-up forecasts were failing with a misleading “covariate misalignment” error.

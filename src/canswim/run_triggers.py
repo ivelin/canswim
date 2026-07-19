@@ -1153,6 +1153,11 @@ def forecast_for_tickers(
                 messages.append(
                     f"Charts updated with {sync_fc.get('forecast_rows', 0)} forecast rows."
                 )
+            else:
+                messages.append(
+                    "Charts forecast sync failed: "
+                    + str(sync_fc.get("error") or sync_fc)
+                )
         except Exception as e:
             messages.append(f"Charts forecast sync note: {e}")
 
