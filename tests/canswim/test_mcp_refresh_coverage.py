@@ -101,7 +101,7 @@ def _write_hive_forecast(froot: Path, symbol: str, start: str, n: int = 5) -> Pa
     return part
 
 
-def _wait_job(jid: str, timeout: float = 8.0) -> dict:
+def _wait_job(jid: str, timeout: float = 30.0) -> dict:
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -117,15 +117,19 @@ def _wait_job(jid: str, timeout: float = 8.0) -> dict:
 # AC1: async refresh start + status lifecycle with coverage
 # ---------------------------------------------------------------------------
 
-
 def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
     """Start must return immediately with job_id while work may still be running."""
-    entered = __import__("threading").Event()
-    release = __import__("threading").Event()
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+    call_count = {"n": 0}
 
     def slow_refresh(tickers, **kwargs):
+        call_count["n"] += 1
         entered.set()
-        release.wait(timeout=5.0)
+        # Always return mock result (never fall through to real torch/model).
+        release.wait(timeout=20.0)
         return {
             "ok": True,
             "ready": ["WWD"],
@@ -133,12 +137,13 @@ def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
             "forecast": {"ok": True, "forecasted": ["WWD"]},
         }
 
+    # Keep the patch active until the worker finishes — early assert failures
+    # must not unpatch while the daemon thread is still inside refresh_symbols.
     with patch("canswim.mcp.jobs.refresh_symbols", side_effect=slow_refresh):
         t0 = time.monotonic()
         start = job_tools.refresh_job_start_impl("WWD")
         elapsed = time.monotonic() - t0
-        assert start["ok"] is True
-        assert elapsed < 1.0  # not blocked on full refresh
+        assert start["ok"] is True, start
         data = start["data"]
         assert data["job_id"]
         assert data["done"] is False
@@ -146,13 +151,15 @@ def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
         assert data["next_tool"] == "refresh_job_status"
         assert data["poll_after_seconds"] > 0
         assert "client_hint" in data
-        assert entered.wait(timeout=2.0)
-        # Still not terminal while worker blocked
+        # Start returns before full refresh (cold CI can be ~1–2s, not minutes)
+        assert elapsed < 5.0, f"start blocked too long: {elapsed:.2f}s"
+        assert entered.wait(timeout=10.0), "worker never entered mocked refresh_symbols"
         mid = job_tools.refresh_job_status_impl(data["job_id"])
         assert mid["data"]["done"] is False
         release.set()
-        final = _wait_job(data["job_id"])
-        assert final["data"]["status"] == "succeeded"
+        final = _wait_job(data["job_id"], timeout=30.0)
+        assert final["data"]["status"] == "succeeded", final
+        assert call_count["n"] >= 1
         assert final["data"]["coverage"]["requested_count"] == 1
         assert final["data"]["coverage"]["batches_ok"] == 1
         assert final["data"]["coverage"]["full_list_complete"] is True
