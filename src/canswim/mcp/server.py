@@ -73,11 +73,64 @@ def list_tickers() -> dict[str, Any]:
     return tickers.list_tickers_impl()
 
 
+_CHART_TOOL_DESC = (
+    "PRIMARY chart tool (AVAILABLE on this server). "
+    "Call with symbol only for a full dashboard chart: ~1–2y actual closes + "
+    "ALL in-window forecast overlays (monthly backtests + latest live) with "
+    "median and low/high bands, plus plot_hints. "
+    "Do NOT claim this tool is unavailable; do NOT use get_close_price+"
+    "get_forecast for a full chart (that omits backtests). "
+    "Plot: actual solid; each forecasts[] median dashed + fill low–high. "
+    "confidence 80/95/99 (default 80); history_years default 2."
+)
+
+
+@mcp.tool(
+    name="get_chart_data",
+    description=_CHART_TOOL_DESC,
+)
+def get_chart_data(
+    symbol: str,
+    confidence: int = 80,
+    history_years: float = 2.0,
+    include_reward_risk: bool = True,
+) -> dict[str, Any]:
+    return charts.get_chart_data_impl(
+        symbol=symbol,
+        confidence=confidence,
+        history_years=history_years,
+        include_reward_risk=include_reward_risk,
+    )
+
+
+@mcp.tool(
+    name="plot_chart",
+    description=(
+        "Alias of get_chart_data — same one-shot dashboard chart payload. "
+        "Use if get_chart_data is missing from your connector tool list. "
+        + _CHART_TOOL_DESC
+    ),
+)
+def plot_chart(
+    symbol: str,
+    confidence: int = 80,
+    history_years: float = 2.0,
+    include_reward_risk: bool = True,
+) -> dict[str, Any]:
+    return charts.get_chart_data_impl(
+        symbol=symbol,
+        confidence=confidence,
+        history_years=history_years,
+        include_reward_risk=include_reward_risk,
+    )
+
+
 @mcp.tool(
     name="get_forecast",
     description=(
         "Return precomputed TiDE forecast quantile rows for a symbol. "
-        "By default returns only the latest forecast start_date. "
+        "By default returns only the latest forecast start_date "
+        "(NOT a full chart with backtests — use get_chart_data / plot_chart). "
         "Optional start_date (YYYY-MM-DD) returns forecasts from that date onward."
     ),
 )
@@ -133,7 +186,8 @@ def scan_forecasts(
     name="get_close_price",
     description=(
         "Historical close prices for a symbol via MCP (optional ISO date range). "
-        "Not a filesystem or local-database API."
+        "Prices only — for a full chart with forecast/backtest overlays call "
+        "get_chart_data or plot_chart instead."
     ),
 )
 def get_close_price(
@@ -144,33 +198,6 @@ def get_close_price(
 ) -> dict[str, Any]:
     return prices.get_close_price_impl(
         symbol=symbol, start=start, end=end, row_limit=row_limit
-    )
-
-
-@mcp.tool(
-    name="get_chart_data",
-    description=(
-        "ONE-SHOT dashboard Charts payload for a symbol: ~1–2y actual close line, "
-        "ALL in-window forecast overlays (monthly backtests + latest live) with "
-        "median + low/high confidence band, reward/risk rows, and plot_hints. "
-        "Client recipe: plot actual.dates/close solid; for EACH forecasts[] entry "
-        "plot median dashed and fill low–high — do not filter to latest only; "
-        "no other tools needed for the default chart. "
-        "confidence: 80/95/99 (default 80 → low quantile 0.2, high 0.95). "
-        "history_years: default 2. Read-only MCP data (no torch)."
-    ),
-)
-def get_chart_data(
-    symbol: str,
-    confidence: int = 80,
-    history_years: float = 2.0,
-    include_reward_risk: bool = True,
-) -> dict[str, Any]:
-    return charts.get_chart_data_impl(
-        symbol=symbol,
-        confidence=confidence,
-        history_years=history_years,
-        include_reward_risk=include_reward_risk,
     )
 
 

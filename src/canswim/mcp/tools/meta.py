@@ -11,15 +11,17 @@ from canswim.run_triggers import runs_allowed
 
 
 # Always-registered tools (read path + start-date preview + job status)
+# get_chart_data / plot_chart listed early so connectors surface the chart tool.
 READ_TOOL_NAMES = [
     "health_check",
     "get_server_info",
     "list_tickers",
+    "get_chart_data",
+    "plot_chart",
+    "get_close_price",
     "get_forecast",
     "get_reward_risk",
     "scan_forecasts",
-    "get_close_price",
-    "get_chart_data",
     "get_backtest_error",
     "get_db_schema",
     "run_select",
@@ -42,9 +44,26 @@ CLIENT_ACCESS_BOUNDARY = (
     "All CANSWIM data is available only through this MCP server's tools. "
     "There is no client-accessible database file, no local DuckDB path, and no "
     "host filesystem for the remote client. Prefer purpose-built tools "
-    "(get_chart_data, get_forecast, get_close_price, …). Optional analytics: "
-    "get_db_schema + run_select only — still via MCP, never a separate DB connection."
+    "(get_chart_data / plot_chart, get_forecast, get_close_price, …). Optional "
+    "analytics: get_db_schema + run_select only — still via MCP, never a "
+    "separate DB connection."
 )
+
+CHART_GUIDANCE = {
+    "primary_tools": ["get_chart_data", "plot_chart"],
+    "alias_note": "plot_chart is the same as get_chart_data (same arguments and payload).",
+    "call": "get_chart_data(symbol) or plot_chart(symbol) — only symbol is required.",
+    "do_not": (
+        "Do not claim get_chart_data/plot_chart is unavailable if it appears in "
+        "tools/list or get_server_info.tools. Call it. Do not stitch "
+        "get_close_price + get_forecast for a dashboard chart."
+    ),
+    "fallback": (
+        "Only if tools/list truly omits both get_chart_data and plot_chart after "
+        "reconnecting the connector, use get_close_price + get_forecast "
+        "(latest only) — and say that backtest overlays are incomplete."
+    ),
+}
 
 
 def health_check_impl() -> dict[str, Any]:
@@ -87,13 +106,15 @@ def get_server_info_impl() -> dict[str, Any]:
             "access": CLIENT_ACCESS_BOUNDARY,
             "model": (
                 "TiDE precomputed forecasts via MCP read tools only. "
-                "Charts: prefer get_chart_data (one-shot). "
-                "Optional analytics: get_db_schema + run_select (SELECT/WITH only "
-                "through MCP — not a client-side database). "
+                "Charts: ALWAYS call get_chart_data or plot_chart (one-shot; "
+                "includes backtests). Do not use get_close_price+get_forecast "
+                "for full charts. Optional analytics: get_db_schema + run_select "
+                "(SELECT/WITH only through MCP — not a client-side database). "
                 "Write tools gather_tickers/forecast_tickers/refresh_tickers/"
                 "refresh_job_start require MCP_ALLOW_RUNS=1 on the server. "
                 "Prefer refresh_tickers + refresh_job_status for long refreshes."
             ),
+            "chart_guidance": CHART_GUIDANCE,
             "refresh_guidance": {
                 "preferred_tools": [
                     "refresh_tickers",

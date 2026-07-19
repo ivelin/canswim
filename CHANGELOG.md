@@ -2,6 +2,23 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260721
+
+SuperGrok kept claiming `get_chart_data` was unavailable and fell back to `get_close_price` + `get_forecast` (latest-only, no backtests).
+
+### Highlights
+
+- **`plot_chart`** alias of `get_chart_data` (same payload) for connectors that miss one name
+- Tool descriptions assert **PRIMARY / AVAILABLE**; `get_forecast` / `get_close_price` redirect to chart tools
+- **`chart_guidance`** on `get_server_info` — do not claim unavailable if listed; do not stitch prices+forecast for full charts
+- Coerce string confidence / history_years / bool args from loose clients
+
+### Install
+
+```bash
+pip install canswim==0.0.20260721
+```
+
 ## 0.0.20260720
 
 Remote clients kept inventing a local DuckDB they could open; MCP text leaked host paths and engine details.
