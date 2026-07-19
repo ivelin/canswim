@@ -1,4 +1,4 @@
-"""CANSWIM MCP server (read-only tools over the local DuckDB search DB)."""
+"""CANSWIM MCP server (read tools for forecasts/market data; MCP-only access)."""
 
 from __future__ import annotations
 

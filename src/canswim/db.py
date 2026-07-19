@@ -1917,24 +1917,24 @@ def describe_search_schema(
         "schema_version_current": CURRENT_SCHEMA_VERSION,
         "migrations": list_migrations(),
         "sql_policy": (
-            "Custom SQL via run_select: single SELECT or WITH…SELECT only; "
-            "enforced + DuckDB read-only connection. "
-            "Mutations only via gather_tickers / forecast_tickers / refresh_tickers / refresh_job_start "
-            "when MCP_ALLOW_RUNS=1."
+            "Custom analytics SQL via MCP run_select only: single SELECT or "
+            "WITH…SELECT; read-only. Remote clients have no database file path. "
+            "Mutations only via gather_tickers / forecast_tickers / refresh_tickers / "
+            "refresh_job_start when MCP_ALLOW_RUNS=1."
         ),
         "tables": [],
         "indexes": [],
         "expected_tables": list(SEARCH_TABLES),
         "notes": [
-            "Parquet under data/ is the system of record; this DuckDB is the "
-            "search/UI cache (Charts, Scans, MCP).",
+            "Remote clients access data only through MCP tools (not a local DB file).",
             "forecast.start_date = forecast origin; forecast.date = horizon day.",
             "Join company_profile on upper(symbol) for sector/industry filters.",
             "Schema version is stored in canswim_schema_meta; "
-            "see docs/data_store.md for migration steps between app versions.",
+            "operators: see docs/data_store.md for migrations.",
         ],
     }
     if not out["db_exists"]:
+        # Keep path for server logs/tests; MCP layer strips host paths for clients.
         out["error"] = f"Database file not found: {path}"
         return out
     out["schema_version"] = get_schema_version(path)
@@ -2052,10 +2052,11 @@ def describe_search_schema(
 
 
 def format_schema_markdown(schema: dict[str, Any]) -> str:
-    """Compact Markdown schema dump for MCP client context."""
+    """Compact Markdown schema dump for MCP client context (no host paths)."""
     lines = [
-        f"# CANSWIM search DB schema",
-        f"Path: `{schema.get('db_path')}`",
+        "# CANSWIM data schema (MCP tools only)",
+        "",
+        schema.get("access") or "",
         "",
         schema.get("sql_policy") or "",
         "",

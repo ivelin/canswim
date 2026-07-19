@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
-from canswim.db import SEARCH_TABLES, get_db_path, tables_present
+from canswim.db import SEARCH_TABLES, tables_present
 from canswim.mcp import __version__
 from canswim.mcp.tools._common import err_result, ok_result, resolve_db_path
 from canswim.run_triggers import runs_allowed
@@ -39,24 +37,36 @@ WRITE_TOOL_NAMES = [
 
 TOOL_NAMES = READ_TOOL_NAMES + WRITE_TOOL_NAMES
 
+# Shown to remote clients so they do not invent host filesystem / engine access.
+CLIENT_ACCESS_BOUNDARY = (
+    "All CANSWIM data is available only through this MCP server's tools. "
+    "There is no client-accessible database file, no local DuckDB path, and no "
+    "host filesystem for the remote client. Prefer purpose-built tools "
+    "(get_chart_data, get_forecast, get_close_price, …). Optional analytics: "
+    "get_db_schema + run_select only — still via MCP, never a separate DB connection."
+)
+
 
 def health_check_impl() -> dict[str, Any]:
     db_path = resolve_db_path()
-    exists = Path(db_path).is_file()
     ready = tables_present(db_path)
     allow_runs = runs_allowed()
     payload = {
-        "db_path": db_path,
-        "db_file_exists": exists,
+        "data_ready": ready,
+        # Compatibility aliases (no paths / engine names)
         "tables_ready": ready,
-        "expected_tables": list(SEARCH_TABLES),
+        "datasets": list(SEARCH_TABLES),
         "is_read_only": not allow_runs,
         "runs_allowed": allow_runs,
+        "access": CLIENT_ACCESS_BOUNDARY,
         "disclaimer": "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
     }
     if not ready:
         return err_result(
-            "Search database not ready. Run dashboard once or set MCP_INIT_DB=1.",
+            "CANSWIM data is not ready on the server. "
+            "An operator must build or refresh the search data on the host "
+            "(dashboard once, or MCP_INIT_DB on the server process). "
+            "Remote clients cannot access a local database file.",
             data=payload,
         )
     return ok_result(payload)
@@ -74,14 +84,15 @@ def get_server_info_impl() -> dict[str, Any]:
             "version": __version__,
             "is_read_only": not allow_runs,
             "runs_allowed": allow_runs,
+            "access": CLIENT_ACCESS_BOUNDARY,
             "model": (
-                "TiDE precomputed forecasts (read tools). "
-                "Custom SQL: run_select is SELECT/WITH only on a read-only DuckDB "
-                "connection; get_db_schema exports tables/indexes for query authoring. "
+                "TiDE precomputed forecasts via MCP read tools only. "
+                "Charts: prefer get_chart_data (one-shot). "
+                "Optional analytics: get_db_schema + run_select (SELECT/WITH only "
+                "through MCP — not a client-side database). "
                 "Write tools gather_tickers/forecast_tickers/refresh_tickers/"
-                "refresh_job_start require MCP_ALLOW_RUNS=1 and may load torch. "
-                "Prefer refresh_job_start + refresh_job_status for long refreshes "
-                "(clients that time out on multi-minute tools)."
+                "refresh_job_start require MCP_ALLOW_RUNS=1 on the server. "
+                "Prefer refresh_tickers + refresh_job_status for long refreshes."
             ),
             "refresh_guidance": {
                 "preferred_tools": [
@@ -107,16 +118,9 @@ def get_server_info_impl() -> dict[str, Any]:
                     "refresh_job_status. Never claim success from the start response alone."
                 ),
             },
-            "db_path": get_db_path(),
             "tools": TOOL_NAMES,
             "read_tools": READ_TOOL_NAMES,
             "write_tools": WRITE_TOOL_NAMES,
-            "env": {
-                "data_dir": os.getenv("data_dir", "data"),
-                "db_file": os.getenv("db_file", "local.duckdb"),
-                "MCP_INIT_DB": os.getenv("MCP_INIT_DB", ""),
-                "MCP_ALLOW_RUNS": os.getenv("MCP_ALLOW_RUNS", ""),
-            },
             "disclaimer": "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
         }
     )
