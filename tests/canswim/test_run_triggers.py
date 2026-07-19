@@ -55,6 +55,8 @@ def test_parse_max_overflow_errors_by_default():
     assert len(r["omitted_tickers"]) == 50
     assert "refresh_job_start" in (r.get("recommended_tool") or "")
     assert r.get("client_hint")
+    # truncated list for display only — still fail closed
+    assert len(r["tickers"]) == 10
 
 
 def test_parse_max_truncation_legacy_mode():
