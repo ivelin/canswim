@@ -21,6 +21,7 @@ READ_TOOL_NAMES = [
     "get_reward_risk",
     "scan_forecasts",
     "get_close_price",
+    "get_chart_data",
     "get_backtest_error",
     "get_db_schema",
     "run_select",

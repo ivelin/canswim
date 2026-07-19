@@ -2,6 +2,21 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260719
+
+MCP clients needed three tools and custom grouping to recreate the dashboard Charts tab.
+
+### Highlights
+
+- **`get_chart_data`** — one-shot read-only tool: ~2y actual closes, **all** in-window forecast overlays (monthly backtests + live) with median + confidence band (80/95/99), reward/risk rows, and **plot_hints** / `client_recipe` for one-call plotting
+- Pure DuckDB (no torch/Gradio); matches Charts confidence mapping (high band 0.95)
+
+### Install
+
+```bash
+pip install canswim==0.0.20260719
+```
+
 ## 0.0.20260718
 
 Successful refresh still left `get_forecast` empty (TSM job succeeded, DuckDB had 0 rows).
