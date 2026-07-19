@@ -127,7 +127,7 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 3. For **each** entry in `data.forecasts` (monthly backtests + latest live): plot `median` **dashed** and **fill** between `low` and `high`. Do **not** drop to latest-only.
 4. Optional table: `data.reward_risk`.
 
-**Do not** use `get_close_price` + `get_forecast` for a full chart (that is latest-only and omits backtests). See `get_server_info.chart_guidance`. Restart `canswim-mcp` after deploy so clients rediscover tools (version bump).
+**Do not** use raw `get_close_price` rows + latest-only `get_forecast` for a full chart. If `get_chart_data` / `plot_chart` are missing from the connector list, call **`get_forecast(symbol, as_chart=true)`** or **`get_close_price(symbol, as_chart=true)`** (same full payload). The server also accepts connector-prefixed names like `canswim___get_chart_data`. See `get_server_info.chart_guidance`. Restart `canswim-mcp` after deploy so clients rediscover tools (version bump).
 
 ### Async refresh (default — SuperGrok / short tool timeouts)
 

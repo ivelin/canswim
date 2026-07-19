@@ -128,10 +128,12 @@ def plot_chart(
 @mcp.tool(
     name="get_forecast",
     description=(
-        "Return precomputed TiDE forecast quantile rows for a symbol. "
-        "By default returns only the latest forecast start_date "
-        "(NOT a full chart with backtests — use get_chart_data / plot_chart). "
-        "Optional start_date (YYYY-MM-DD) returns forecasts from that date onward."
+        "Forecast data for a symbol. "
+        "Default: latest-only quantile rows. "
+        "Set as_chart=true for the FULL dashboard chart payload (actual closes + "
+        "all in-window backtest/live forecast overlays) — same as get_chart_data. "
+        "Prefer as_chart=true (or get_chart_data/plot_chart) for plots; "
+        "do not stitch get_close_price + latest-only forecasts for full charts."
     ),
 )
 def get_forecast(
@@ -139,12 +141,18 @@ def get_forecast(
     start_date: Optional[str] = None,
     latest_only: bool = True,
     row_limit: int = 5000,
+    as_chart: bool = False,
+    confidence: int = 80,
+    history_years: float = 2.0,
 ) -> dict[str, Any]:
     return forecasts.get_forecast_impl(
         symbol=symbol,
         start_date=start_date,
         latest_only=latest_only,
         row_limit=row_limit,
+        as_chart=as_chart,
+        confidence=confidence,
+        history_years=history_years,
     )
 
 
@@ -186,8 +194,8 @@ def scan_forecasts(
     name="get_close_price",
     description=(
         "Historical close prices for a symbol via MCP (optional ISO date range). "
-        "Prices only — for a full chart with forecast/backtest overlays call "
-        "get_chart_data or plot_chart instead."
+        "Prices only by default. Set as_chart=true for the FULL dashboard chart "
+        "payload (same as get_chart_data / plot_chart), including backtest overlays."
     ),
 )
 def get_close_price(
@@ -195,9 +203,18 @@ def get_close_price(
     start: Optional[str] = None,
     end: Optional[str] = None,
     row_limit: int = 5000,
+    as_chart: bool = False,
+    confidence: int = 80,
+    history_years: float = 2.0,
 ) -> dict[str, Any]:
     return prices.get_close_price_impl(
-        symbol=symbol, start=start, end=end, row_limit=row_limit
+        symbol=symbol,
+        start=start,
+        end=end,
+        row_limit=row_limit,
+        as_chart=as_chart,
+        confidence=confidence,
+        history_years=history_years,
     )
 
 
@@ -403,6 +420,47 @@ def refresh_job_start(
 )
 def refresh_job_status(job_id: str) -> dict[str, Any]:
     return job_tools.refresh_job_status_impl(job_id=job_id)
+
+
+# SuperGrok / connector clients often send CallTool names as
+# ``canswim___get_chart_data`` (server prefix not stripped). Bare names work;
+# prefixed names used to fail with "Unknown tool". Resolve by stripping known
+# connector prefixes before tool lookup.
+_CONNECTOR_TOOL_PREFIXES = (
+    "canswim___",
+    "canswim/",
+    "canswim_",
+    "canswim-",
+)
+
+
+def _install_connector_tool_name_aliases(server: FastMCP) -> None:
+    tm = server._tool_manager
+    orig_get = tm.get_tool
+
+    def get_tool(name: str):  # type: ignore[no-untyped-def]
+        tool = orig_get(name)
+        if tool is not None:
+            return tool
+        raw = str(name or "")
+        for prefix in _CONNECTOR_TOOL_PREFIXES:
+            if raw.startswith(prefix):
+                bare = raw[len(prefix) :]
+                if bare:
+                    tool = orig_get(bare)
+                    if tool is not None:
+                        logger.info(
+                            "MCP tool name alias: {!r} → {!r}",
+                            raw,
+                            bare,
+                        )
+                        return tool
+        return None
+
+    tm.get_tool = get_tool  # type: ignore[method-assign]
+
+
+_install_connector_tool_name_aliases(mcp)
 
 
 def _resolve_transport(

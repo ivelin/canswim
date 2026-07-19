@@ -13,7 +13,20 @@ def get_close_price_impl(
     start: Optional[str] = None,
     end: Optional[str] = None,
     row_limit: int = 5000,
+    as_chart: bool = False,
+    confidence: int = 80,
+    history_years: float = 2.0,
 ) -> dict[str, Any]:
+    # SuperGrok fallback when chart tools are missing from connector list
+    if as_chart:
+        from canswim.mcp.tools.charts import get_chart_data_impl
+
+        return get_chart_data_impl(
+            symbol=symbol,
+            confidence=confidence,
+            history_years=history_years,
+            include_reward_risk=True,
+        )
     ready, msg = ensure_db_ready()
     if not ready:
         return err_result(msg)

@@ -2,6 +2,22 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260722
+
+SuperGrok called `canswim___get_chart_data` and got **Unknown tool** (connector prefix not stripped), then fell back to incomplete charts.
+
+### Highlights
+
+- **Connector prefix aliases** — CallTool names `canswim___…` / `canswim/…` resolve to bare tool names
+- **`get_forecast(as_chart=true)`** and **`get_close_price(as_chart=true)`** return the same full chart payload as `get_chart_data` (works when chart tools are missing from a stale connector list)
+- `chart_guidance` documents the as_chart fallback
+
+### Install
+
+```bash
+pip install canswim==0.0.20260722
+```
+
 ## 0.0.20260721
 
 SuperGrok kept claiming `get_chart_data` was unavailable and fell back to `get_close_price` + `get_forecast` (latest-only, no backtests).
