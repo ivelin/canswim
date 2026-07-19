@@ -105,8 +105,9 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `get_forecast` | Quantile forecast rows for a symbol | — |
 | `get_reward_risk` | Reward/risk for a forecast (confidence 80/95/99) | — |
 | `scan_forecasts` | Universe scan (≡ dashboard Scans) | — |
-| `get_close_price` | Historical closes | — |
-| `get_chart_data` | **One-shot** dashboard Charts payload: ~1–2y actual close, all in-window forecast overlays (backtests + live) with median + low/high band, reward/risk, `plot_hints` — plot without stitching other tools | — |
+| `get_close_price` | Historical closes only (not a full chart) | — |
+| `get_chart_data` | **PRIMARY one-shot** dashboard Charts payload: ~1–2y actual close, all in-window forecast overlays (backtests + live) with median + low/high band, reward/risk, `plot_hints` | — |
+| `plot_chart` | **Alias** of `get_chart_data` (same args/payload) — use if a connector omits `get_chart_data` | — |
 | `get_backtest_error` | Forecast vs actual error (mean abs log-error) | — |
 | `get_db_schema` | Tables, columns, indexes, row counts + markdown (for agent SQL) | — |
 | `run_select` | Single read-only `SELECT` or `WITH…SELECT` (≡ Advanced Queries) | — |
@@ -119,14 +120,14 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 
 ### One-shot chart (dashboard Charts equivalent)
 
-**`get_chart_data(symbol)`** is the only tool needed to plot the Charts tab view:
+**`get_chart_data(symbol)`** (alias **`plot_chart`**) is the only tool needed for the Charts tab view. Both names are registered; if a client says the tool is “unavailable”, reconnect the connector and call **`plot_chart`** if `get_chart_data` is missing from its tool list.
 
-1. Call **`get_chart_data`** with the symbol (optional `confidence` 80/95/99, default 80; `history_years` default 2).
+1. Call **`get_chart_data`** or **`plot_chart`** with the symbol (optional `confidence` 80/95/99, default 80; `history_years` default 2).
 2. Plot `data.actual.dates` / `data.actual.close` as a **solid** price line.
-3. For **each** entry in `data.forecasts` (monthly backtests + latest live): plot `median` **dashed** and **fill** between `low` and `high` (see `plot_hints.client_recipe`). Do **not** drop to latest-only.
-4. Optional table: `data.reward_risk` (uptrending starts in the same confidence mapping).
+3. For **each** entry in `data.forecasts` (monthly backtests + latest live): plot `median` **dashed** and **fill** between `low` and `high`. Do **not** drop to latest-only.
+4. Optional table: `data.reward_risk`.
 
-No `get_close_price` + `get_forecast` stitching required. Restart `canswim-mcp` after deploy so clients see the current package version and rediscover tools.
+**Do not** use `get_close_price` + `get_forecast` for a full chart (that is latest-only and omits backtests). See `get_server_info.chart_guidance`. Restart `canswim-mcp` after deploy so clients rediscover tools (version bump).
 
 ### Async refresh (default — SuperGrok / short tool timeouts)
 

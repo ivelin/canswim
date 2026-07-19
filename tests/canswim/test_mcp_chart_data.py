@@ -224,13 +224,29 @@ def test_get_chart_data_registered_on_server_and_server_info(chart_env):
     tm = getattr(srv.mcp, "_tool_manager", None)
     assert tm is not None
     assert "get_chart_data" in tm._tools
+    assert "plot_chart" in tm._tools
     assert "get_chart_data" in TOOL_NAMES
     assert "get_chart_data" in READ_TOOL_NAMES
+    assert "plot_chart" in READ_TOOL_NAMES
 
     info = meta.get_server_info_impl()
     assert info["ok"] is True
     assert "get_chart_data" in info["data"]["tools"]
+    assert "plot_chart" in info["data"]["tools"]
     assert "get_chart_data" in info["data"]["read_tools"]
+    # Description must assert availability (counters SuperGrok "unavailable" claim)
+    desc = tm._tools["get_chart_data"].description or ""
+    assert "PRIMARY" in desc or "AVAILABLE" in desc
+
+
+def test_plot_chart_alias_same_payload(chart_env):
+    from canswim.mcp import server as srv
+
+    a = charts.get_chart_data_impl(symbol="TSM")
+    b = srv.plot_chart(symbol="TSM")
+    assert a["ok"] and b["ok"]
+    assert a["data"]["coverage"] == b["data"]["coverage"]
+    assert len(a["data"]["forecasts"]) == len(b["data"]["forecasts"])
 
 
 def test_get_chart_data_server_entrypoint_one_shot(chart_env):

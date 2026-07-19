@@ -72,6 +72,7 @@ def test_tool_names_cover_surface():
         "scan_forecasts",
         "get_close_price",
         "get_chart_data",
+        "plot_chart",
         "get_backtest_error",
         "get_db_schema",
         "run_select",
@@ -93,6 +94,7 @@ def test_tool_names_cover_surface():
     assert "refresh_job_status" in READ_TOOL_NAMES
     assert "get_db_schema" in READ_TOOL_NAMES
     assert "get_chart_data" in READ_TOOL_NAMES
+    assert "plot_chart" in READ_TOOL_NAMES
 
 
 def test_health_and_info(mcp_env, monkeypatch):
@@ -119,6 +121,10 @@ def test_health_and_info(mcp_env, monkeypatch):
     assert "only" in access
     assert "duckdb" in access  # explicit: no client DuckDB access
     assert "no client" in access or "not" in access
+    cg = info["data"].get("chart_guidance") or {}
+    assert "get_chart_data" in (cg.get("primary_tools") or [])
+    assert "plot_chart" in (cg.get("primary_tools") or [])
+    assert "do not claim" in (cg.get("do_not") or "").lower()
 
 
 def test_schema_and_select_omit_host_paths(mcp_env):
