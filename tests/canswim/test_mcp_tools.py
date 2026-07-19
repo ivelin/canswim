@@ -71,6 +71,7 @@ def test_tool_names_cover_surface():
         "get_reward_risk",
         "scan_forecasts",
         "get_close_price",
+        "get_chart_data",
         "get_backtest_error",
         "get_db_schema",
         "run_select",
@@ -91,6 +92,7 @@ def test_tool_names_cover_surface():
     assert "resolve_forecast_start" in READ_TOOL_NAMES
     assert "refresh_job_status" in READ_TOOL_NAMES
     assert "get_db_schema" in READ_TOOL_NAMES
+    assert "get_chart_data" in READ_TOOL_NAMES
 
 
 def test_health_and_info(mcp_env, monkeypatch):

@@ -94,6 +94,7 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `get_reward_risk` | Reward/risk for a forecast (confidence 80/95/99) | — |
 | `scan_forecasts` | Universe scan (≡ dashboard Scans) | — |
 | `get_close_price` | Historical closes | — |
+| `get_chart_data` | **One-shot** dashboard Charts payload: ~1–2y actual close, all in-window forecast overlays (backtests + live) with median + low/high band, reward/risk, `plot_hints` — plot without stitching other tools | — |
 | `get_backtest_error` | Forecast vs actual error (mean abs log-error) | — |
 | `get_db_schema` | Tables, columns, indexes, row counts + markdown (for agent SQL) | — |
 | `run_select` | Single read-only `SELECT` or `WITH…SELECT` (≡ Advanced Queries) | — |
@@ -103,6 +104,17 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `refresh_tickers` | Gather + catch-up forecast — **async by default** (returns `job_id`; ≡ dashboard refresh). `wait=true` = old blocking path | `MCP_ALLOW_RUNS=1` |
 | `refresh_job_start` | Explicit async start (same as `refresh_tickers` with `wait=false`) | `MCP_ALLOW_RUNS=1` |
 | `refresh_job_status` | Poll a job from `refresh_tickers` / `refresh_job_start` | — |
+
+### One-shot chart (dashboard Charts equivalent)
+
+**`get_chart_data(symbol)`** is the only tool needed to plot the Charts tab view:
+
+1. Call **`get_chart_data`** with the symbol (optional `confidence` 80/95/99, default 80; `history_years` default 2).
+2. Plot `data.actual.dates` / `data.actual.close` as a **solid** price line.
+3. For **each** entry in `data.forecasts` (monthly backtests + latest live): plot `median` **dashed** and **fill** between `low` and `high` (see `plot_hints.client_recipe`). Do **not** drop to latest-only.
+4. Optional table: `data.reward_risk` (uptrending starts in the same confidence mapping).
+
+No `get_close_price` + `get_forecast` stitching required. Restart `canswim-mcp` after deploy so clients see version **0.0.20260719** and rediscover the tool.
 
 ### Async refresh (default — SuperGrok / short tool timeouts)
 

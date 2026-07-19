@@ -19,7 +19,7 @@ from loguru import logger  # noqa: E402
 from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
 
 from canswim.mcp import __version__ as SERVER_VERSION  # noqa: E402
-from canswim.mcp.tools import forecasts, meta, prices, query, tickers  # noqa: E402
+from canswim.mcp.tools import charts, forecasts, meta, prices, query, tickers  # noqa: E402
 from canswim.mcp.tools import jobs as job_tools  # noqa: E402
 from canswim.mcp.tools import runs as run_tools  # noqa: E402
 from canswim.mcp.tools._common import bind_mcp_progress  # noqa: E402
@@ -137,6 +137,33 @@ def get_close_price(
 ) -> dict[str, Any]:
     return prices.get_close_price_impl(
         symbol=symbol, start=start, end=end, row_limit=row_limit
+    )
+
+
+@mcp.tool(
+    name="get_chart_data",
+    description=(
+        "ONE-SHOT dashboard Charts payload for a symbol: ~1–2y actual close line, "
+        "ALL in-window forecast overlays (monthly backtests + latest live) with "
+        "median + low/high confidence band, reward/risk rows, and plot_hints. "
+        "Client recipe: plot actual.dates/close solid; for EACH forecasts[] entry "
+        "plot median dashed and fill low–high — do not filter to latest only; "
+        "no other tools needed for the default chart. "
+        "confidence: 80/95/99 (default 80 → low quantile 0.2, high 0.95). "
+        "history_years: default 2. Read-only DuckDB (no torch)."
+    ),
+)
+def get_chart_data(
+    symbol: str,
+    confidence: int = 80,
+    history_years: float = 2.0,
+    include_reward_risk: bool = True,
+) -> dict[str, Any]:
+    return charts.get_chart_data_impl(
+        symbol=symbol,
+        confidence=confidence,
+        history_years=history_years,
+        include_reward_risk=include_reward_risk,
     )
 
 

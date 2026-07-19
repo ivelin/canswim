@@ -2112,3 +2112,237 @@ def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
             elif pd.isna(v):
                 rec[k] = None
     return records
+
+
+# Dashboard Charts confidence radio → low quantile (high band always 0.95).
+CHART_CONFIDENCE_TO_LOW_QUANTILE: dict[int, float] = {
+    80: 0.2,
+    95: 0.05,
+    99: 0.01,
+}
+CHART_HIGH_QUANTILE = 0.95
+CHART_CENTRAL_QUANTILE = 0.5
+DEFAULT_CHART_HISTORY_YEARS = 2.0
+
+
+def _chart_date_str(value: Any) -> str:
+    """ISO calendar date YYYY-MM-DD for JSON chart series."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    ts = pd.Timestamp(value)
+    if pd.isna(ts):
+        return ""
+    return ts.strftime("%Y-%m-%d")
+
+
+def _chart_float_list(series: pd.Series) -> list[float | None]:
+    out: list[float | None] = []
+    for v in series.tolist():
+        if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
+            out.append(None)
+        else:
+            out.append(float(v))
+    return out
+
+
+def get_chart_data(
+    db_path: str,
+    symbol: str,
+    *,
+    confidence: int = 80,
+    history_years: float = DEFAULT_CHART_HISTORY_YEARS,
+    include_reward_risk: bool = True,
+) -> dict[str, Any]:
+    """Dashboard-equivalent chart payload for one symbol (DuckDB only).
+
+    Matches Charts tab semantics without loading torch/Gradio:
+
+    - actual close line over ``history_years`` (default 2)
+    - every forecast ``start_date`` in that window (monthly backtests + live)
+    - median (0.5) + band low (from confidence) / high (0.95)
+    - optional reward/risk rows for uptrending starts (``latest_only=False``)
+
+    Raises
+    ------
+    ValueError
+        Invalid confidence or history_years.
+    """
+    if confidence not in CHART_CONFIDENCE_TO_LOW_QUANTILE:
+        raise ValueError(
+            f"confidence must be one of {sorted(CHART_CONFIDENCE_TO_LOW_QUANTILE)}"
+        )
+    try:
+        hy = float(history_years)
+    except (TypeError, ValueError) as e:
+        raise ValueError("history_years must be a positive number") from e
+    if hy <= 0 or hy > 10:
+        raise ValueError("history_years must be in (0, 10]")
+
+    sym = str(symbol).strip().upper()
+    if not sym:
+        raise ValueError("symbol is required")
+
+    low_q = CHART_CONFIDENCE_TO_LOW_QUANTILE[confidence]
+    high_q = CHART_HIGH_QUANTILE
+    central_q = CHART_CENTRAL_QUANTILE
+    low_col = f"close_quantile_{low_q}"
+    high_col = f"close_quantile_{high_q}"
+    mid_col = f"close_quantile_{central_q}"
+
+    # Calendar-year window (~1–2y actuals); same spirit as Charts train_history view.
+    price_end = pd.Timestamp.now().normalize()
+    price_start = (price_end - pd.DateOffset(years=hy)).normalize()
+    price_start_s = price_start.strftime("%Y-%m-%d")
+    price_end_s = price_end.strftime("%Y-%m-%d")
+
+    close_df = get_close_prices(
+        db_path,
+        sym,
+        start=price_start_s,
+        end=price_end_s,
+        row_limit=max(DEFAULT_ROW_LIMIT, 3000),
+    )
+    actual_dates: list[str] = []
+    actual_close: list[float | None] = []
+    if close_df is not None and not close_df.empty:
+        date_col = "date" if "date" in close_df.columns else "Date"
+        close_col = "close" if "close" in close_df.columns else "Close"
+        ordered = close_df.sort_values(date_col)
+        actual_dates = [_chart_date_str(d) for d in ordered[date_col].tolist()]
+        actual_close = _chart_float_list(ordered[close_col])
+
+    # Latest live origin for kind tagging
+    live_start: str | None = None
+    with connect_readonly(db_path) as db_con:
+        row = db_con.execute(
+            "SELECT date FROM latest_forecast WHERE symbol = $s LIMIT 1",
+            {"s": sym},
+        ).fetchone()
+        if row and row[0] is not None:
+            live_start = _chart_date_str(row[0])
+
+    # Grouped forecast rows (same window filter as dashboard get_saved_forecasts_as_series).
+    forecasts_out: list[dict[str, Any]] = []
+    with connect_readonly(db_path) as db_con:
+        fdf = db_con.sql(
+            """--sql
+            SELECT *
+            FROM forecast AS f
+            WHERE f.symbol = $ticker AND f.start_date >= $start_date
+            ORDER BY f.start_date, f.date
+            """,
+            params={"ticker": sym, "start_date": price_start},
+        ).df()
+
+    if fdf is not None and not fdf.empty:
+        date_col = "Date" if "Date" in fdf.columns else "date"
+        if mid_col not in fdf.columns:
+            raise ValueError(f"forecast table missing {mid_col}")
+        if low_col not in fdf.columns:
+            raise ValueError(
+                f"forecast table missing {low_col} for confidence={confidence}"
+            )
+        if high_col not in fdf.columns:
+            raise ValueError(f"forecast table missing {high_col}")
+
+        for start_val, grp in fdf.groupby("start_date", sort=True):
+            start_s = _chart_date_str(start_val)
+            g = grp.sort_values(date_col)
+            kind = "live" if live_start and start_s == live_start else "backtest"
+            forecasts_out.append(
+                {
+                    "start_date": start_s,
+                    "kind": kind,
+                    "label": f"{sym} Close forecast",
+                    "dates": [_chart_date_str(d) for d in g[date_col].tolist()],
+                    "median": _chart_float_list(g[mid_col]),
+                    "low": _chart_float_list(g[low_col]),
+                    "high": _chart_float_list(g[high_col]),
+                }
+            )
+
+    reward_risk_rows: list[dict[str, Any]] = []
+    if include_reward_risk:
+        try:
+            rr_df = get_reward_risk(
+                db_path,
+                symbol=sym,
+                low_quantile=low_q,
+                latest_only=False,
+                uptrending_only=True,
+            )
+            reward_risk_rows = dataframe_to_records(rr_df)
+        except Exception as e:
+            logger.debug(f"get_chart_data reward_risk skipped for {sym}: {e}")
+
+    backtest_count = sum(1 for f in forecasts_out if f.get("kind") == "backtest")
+    live_count = sum(1 for f in forecasts_out if f.get("kind") == "live")
+    has_prices = len(actual_dates) > 0
+    has_forecasts = len(forecasts_out) > 0
+
+    message: str | None = None
+    if not has_prices and not has_forecasts:
+        message = (
+            f"No local prices or forecasts for {sym} in the chart window. "
+            "Gather market data and run a forecast/refresh first."
+        )
+    elif has_prices and not has_forecasts:
+        message = (
+            f"{sym}: prices shown. No saved forecasts in this window — "
+            "run a forecast or refresh to add prediction overlays."
+        )
+    elif not has_prices and has_forecasts:
+        message = (
+            f"{sym}: forecasts available but no closes in window; "
+            "update market data for the actual price line."
+        )
+
+    plot_hints = {
+        "title": f"{sym} — CANSWIM chart (dashboard-equivalent)",
+        "client_recipe": (
+            "ONE-SHOT: plot actual.dates/close as a solid line; for EACH entry in "
+            "forecasts plot median as a dashed line and fill between low and high "
+            "(alpha ~0.25). Plot ALL forecast overlays (backtests + live) — "
+            "do not filter to latest only. No other MCP tools are required."
+        ),
+        "actual_style": "solid line",
+        "forecast_median_style": "dashed line",
+        "band": "fill between low and high (alpha ~0.25)",
+        "x_axis": "date",
+        "y_axis": "close price",
+        "confidence": confidence,
+        "low_quantile": low_q,
+        "high_quantile": high_q,
+        "central_quantile": central_q,
+    }
+
+    as_of = price_end_s
+    return {
+        "symbol": sym,
+        "as_of": as_of,
+        "window": {
+            "price_start": price_start_s,
+            "price_end": price_end_s,
+            "history_years": hy,
+        },
+        "confidence": confidence,
+        "low_quantile": low_q,
+        "high_quantile": high_q,
+        "central_quantile": central_q,
+        "actual": {
+            "label": f"{sym} Close actual",
+            "dates": actual_dates,
+            "close": actual_close,
+        },
+        "forecasts": forecasts_out,
+        "reward_risk": reward_risk_rows,
+        "plot_hints": plot_hints,
+        "coverage": {
+            "has_prices": has_prices,
+            "has_forecasts": has_forecasts,
+            "forecast_start_count": len(forecasts_out),
+            "backtest_count": backtest_count,
+            "live_count": live_count,
+            "message": message,
+        },
+    }
