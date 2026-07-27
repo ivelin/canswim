@@ -12,7 +12,6 @@ from canswim.mcp.tools._common import (
     FAIL_JOB_UNKNOWN,
     FAIL_RUNS_DISABLED,
     client_error,
-    err_result,
     infer_fail_reason_from_error,
     ok_result,
 )
