@@ -121,6 +121,8 @@ def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
     """Start must return immediately with job_id while work may still be running."""
     import threading
 
+    from canswim.mcp import jobs as job_core
+
     entered = threading.Event()
     release = threading.Event()
     call_count = {"n": 0}
@@ -145,7 +147,8 @@ def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
         elapsed = time.monotonic() - t0
         assert start["ok"] is True, start
         data = start["data"]
-        assert data["job_id"]
+        jid = data["job_id"]
+        assert jid
         assert data["done"] is False
         assert data["status"] in ("queued", "running")
         assert data["next_tool"] == "refresh_job_status"
@@ -154,10 +157,16 @@ def test_refresh_job_start_returns_job_id_without_waiting_for_worker(jobs_env):
         # Start returns before full refresh (cold CI can be ~1–2s, not minutes)
         assert elapsed < 5.0, f"start blocked too long: {elapsed:.2f}s"
         assert entered.wait(timeout=10.0), "worker never entered mocked refresh_symbols"
-        mid = job_tools.refresh_job_status_impl(data["job_id"])
-        assert mid["data"]["done"] is False
+        mid = job_tools.refresh_job_status_impl(jid)
+        assert mid["data"]["done"] is False, mid
         release.set()
-        final = _wait_job(data["job_id"], timeout=30.0)
+        # Join the live worker before reading terminal status (avoids TOCTOU with
+        # orphan reconcile / concurrent tests writing the same job file).
+        with job_core._live_lock:
+            thr = job_core._live_threads.get(jid)
+        if thr is not None:
+            thr.join(timeout=30.0)
+        final = _wait_job(jid, timeout=30.0)
         assert final["data"]["status"] == "succeeded", final
         assert call_count["n"] >= 1
         assert final["data"]["coverage"]["requested_count"] == 1
@@ -181,17 +190,16 @@ def test_refresh_job_reports_incomplete_distinct_from_full_success(jobs_env):
         start = job_tools.refresh_job_start_impl("AAPL,MSFT,STRC,IBIT")
         jid = start["data"]["job_id"]
         final = _wait_job(jid)
-
-    assert final["data"]["status"] == "succeeded"
-    cov = final["data"]["coverage"]
-    assert cov["requested_count"] == 4
-    assert cov["ready_count"] == 2
-    assert cov["incomplete_count"] == 2
-    assert cov["forecasted_count"] == 1
-    # Batches finished without hard fail — incomplete is a separate signal
-    assert set(final["data"]["result"]["incomplete"]) == {"STRC", "IBIT"}
-    assert "AAPL" in final["data"]["result"]["ready"]
-    assert "AAPL" in final["data"]["result"]["forecasted"]
+        assert final["data"]["status"] == "succeeded"
+        cov = final["data"]["coverage"]
+        assert cov["requested_count"] == 4
+        assert cov["ready_count"] == 2
+        assert cov["incomplete_count"] == 2
+        assert cov["forecasted_count"] == 1
+        # Batches finished without hard fail — incomplete is a separate signal
+        assert set(final["data"]["result"]["incomplete"]) == {"STRC", "IBIT"}
+        assert "AAPL" in final["data"]["result"]["ready"]
+        assert "AAPL" in final["data"]["result"]["forecasted"]
 
 
 def test_refresh_job_failed_batch_sets_terminal_failed_and_coverage(jobs_env):
@@ -206,14 +214,13 @@ def test_refresh_job_failed_batch_sets_terminal_failed_and_coverage(jobs_env):
     with patch("canswim.mcp.jobs.refresh_symbols", side_effect=bad_refresh):
         start = job_tools.refresh_job_start_impl("ZZZ")
         final = _wait_job(start["data"]["job_id"])
-
-    assert final["data"]["status"] == "failed"
-    assert final["data"]["done"] is True
-    assert final["data"]["coverage"]["batches_failed"] >= 1
-    assert final["data"]["coverage"]["full_list_complete"] is False
-    assert "boom" in (final["data"].get("error") or "").lower() or "fail" in (
-        final["data"].get("message") or ""
-    ).lower()
+        assert final["data"]["status"] == "failed"
+        assert final["data"]["done"] is True
+        assert final["data"]["coverage"]["batches_failed"] >= 1
+        assert final["data"]["coverage"]["full_list_complete"] is False
+        assert "boom" in (final["data"].get("error") or "").lower() or "fail" in (
+            final["data"].get("message") or ""
+        ).lower()
 
 
 def test_server_refresh_tickers_async_then_status(jobs_env):

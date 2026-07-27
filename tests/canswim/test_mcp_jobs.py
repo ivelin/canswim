@@ -69,7 +69,8 @@ def test_job_lifecycle_succeeds(jobs_env):
         assert start["data"]["poll_after_seconds"] >= 0
         assert "client_hint" in start["data"]
 
-        # Wait for background worker
+        # Wait for background worker *inside* the patch so a slow daemon never
+        # falls through to real refresh_symbols (missing model on CI).
         deadline = time.time() + 5.0
         status = None
         while time.time() < deadline:
@@ -79,14 +80,14 @@ def test_job_lifecycle_succeeds(jobs_env):
                 break
             time.sleep(0.05)
 
-    assert status is not None
-    assert status["data"]["status"] == "succeeded"
-    assert status["data"]["done"] is True
-    assert status["data"]["progress_pct"] == 100.0
-    assert status["data"]["poll_after_seconds"] == 0
-    assert status["data"]["next_tool"] is None
-    assert status["data"]["result"]["ok"] is True
-    assert seen_cb  # progress was forwarded to job file
+        assert status is not None
+        assert status["data"]["status"] == "succeeded"
+        assert status["data"]["done"] is True
+        assert status["data"]["progress_pct"] == 100.0
+        assert status["data"]["poll_after_seconds"] == 0
+        assert status["data"]["next_tool"] is None
+        assert status["data"]["result"]["ok"] is True
+        assert seen_cb  # progress was forwarded to job file
 
     # Job file lives under data_dir/mcp_jobs
     job_file = Path(jobs_env) / "mcp_jobs" / f"{jid}.json"
@@ -108,9 +109,10 @@ def test_job_lifecycle_failed(jobs_env):
                 break
             time.sleep(0.05)
 
-    assert status["data"]["status"] == "failed"
-    assert "boom" in status["data"]["error"]
-    assert status["data"]["done"] is True
+        assert status is not None
+        assert status["data"]["status"] == "failed"
+        assert "boom" in status["data"]["error"]
+        assert status["data"]["done"] is True
 
 
 def test_single_flight_rejects_second_start(jobs_env):
@@ -259,13 +261,14 @@ def test_job_batches_large_list(jobs_env):
                 break
             time.sleep(0.05)
 
-    assert status["data"]["status"] == "succeeded"
-    assert status["data"]["coverage"]["requested_count"] == 45
-    assert status["data"]["coverage"]["full_list_complete"] is True
-    assert len(calls) == 3  # 20+20+5
-    assert "only claim success" in status["data"]["client_hint"].lower() or (
-        "ticker_list" in status["data"]["client_hint"].lower()
-    )
+        assert status is not None
+        assert status["data"]["status"] == "succeeded"
+        assert status["data"]["coverage"]["requested_count"] == 45
+        assert status["data"]["coverage"]["full_list_complete"] is True
+        assert len(calls) == 3  # 20+20+5
+        assert "only claim success" in status["data"]["client_hint"].lower() or (
+            "ticker_list" in status["data"]["client_hint"].lower()
+        )
 
 
 def test_get_server_info_refresh_guidance(jobs_env, monkeypatch):
@@ -298,16 +301,17 @@ def test_refresh_tickers_tool_defaults_to_async_job(jobs_env, monkeypatch):
         },
     ):
         out = asyncio.run(srv.refresh_tickers(tickers="AAA", wait=False))
-    assert out["ok"] is True
-    assert out["data"]["job_id"]
-    assert out["data"]["via"] == "refresh_tickers→async_job"
-    assert out["data"]["next_tool"] == "refresh_job_status"
-    assert "BACKGROUND" in out["data"]["client_hint"]
-    # Wait for worker so we don't leave a dangling thread mid-assert noise
-    jid = out["data"]["job_id"]
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        st = job_tools.refresh_job_status_impl(jid)
-        if st["data"]["done"]:
-            break
-        time.sleep(0.05)
+        assert out["ok"] is True
+        assert out["data"]["job_id"]
+        assert out["data"]["via"] == "refresh_tickers→async_job"
+        assert out["data"]["next_tool"] == "refresh_job_status"
+        assert "BACKGROUND" in out["data"]["client_hint"]
+        # Wait inside the patch so the daemon never hits real torch/model load.
+        jid = out["data"]["job_id"]
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            st = job_tools.refresh_job_status_impl(jid)
+            if st["data"]["done"]:
+                break
+            time.sleep(0.05)
+        assert st is not None and st["data"]["done"] is True

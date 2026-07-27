@@ -64,12 +64,13 @@ def jobs_dir() -> Path:
     return d
 
 
-def _job_path(job_id: str) -> Path:
+def _job_path(job_id: str, *, store_dir: str | Path | None = None) -> Path:
     # only allow simple ids (uuid hex / uuid with dashes)
     safe = str(job_id).strip()
     if not safe or ".." in safe or "/" in safe or "\\" in safe:
         raise ValueError(f"invalid job_id: {job_id!r}")
-    return jobs_dir() / f"{safe}.json"
+    base = Path(store_dir) if store_dir else jobs_dir()
+    return base / f"{safe}.json"
 
 
 def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
@@ -80,9 +81,11 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def read_job(job_id: str) -> Optional[dict[str, Any]]:
+def read_job(
+    job_id: str, *, store_dir: str | Path | None = None
+) -> Optional[dict[str, Any]]:
     try:
-        path = _job_path(job_id)
+        path = _job_path(job_id, store_dir=store_dir)
     except ValueError:
         return None
     if not path.is_file():
@@ -95,9 +98,13 @@ def read_job(job_id: str) -> Optional[dict[str, Any]]:
 
 
 def _write_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Persist job JSON. Uses job['store_dir'] when set so workers keep writing
+    to the directory they were started in even if process data_dir env changes
+    (pytest isolation / multi-tenant)."""
     job = dict(job)
     job["updated_at"] = _utc_now()
-    _atomic_write(_job_path(job["job_id"]), job)
+    store = job.get("store_dir")
+    _atomic_write(_job_path(job["job_id"], store_dir=store), job)
     return job
 
 
@@ -138,11 +145,9 @@ def _reconcile_orphan(job: dict[str, Any]) -> dict[str, Any]:
     owner_pid = job.get("owner_pid")
     if owner_pid is not None and int(owner_pid) == os.getpid() and status == STATUS_QUEUED:
         # Just created; thread may not be registered yet — leave alone briefly
-        created = job.get("created_at") or ""
         try:
             # If updated within last 2s, still starting
-            # Compare by re-reading mtime
-            path = _job_path(jid)
+            path = _job_path(jid, store_dir=job.get("store_dir"))
             if path.is_file() and (time.time() - path.stat().st_mtime) < 2.0:
                 return job
         except OSError:
@@ -326,6 +331,7 @@ def start_refresh_job(
         tlist = list(parsed["tickers"])
         ticker_csv = ",".join(tlist)
         n = len(tlist)
+        store = str(jobs_dir())
         job: dict[str, Any] = {
             "job_id": job_id,
             "kind": JOB_KIND_REFRESH,
@@ -344,6 +350,9 @@ def start_refresh_job(
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
             "owner_pid": os.getpid(),
+            # Pin store path so daemon workers keep writing here if data_dir env
+            # changes mid-run (pytest per-test isolation).
+            "store_dir": store,
             "error": None,
             "result": None,
         }
@@ -357,6 +366,7 @@ def start_refresh_job(
                 "ticker_list": tlist,
                 "include_covariates": bool(include_covariates),
                 "dry_run": bool(dry_run),
+                "store_dir": store,
             },
             daemon=True,
         )
@@ -398,15 +408,21 @@ def _run_refresh_worker(
     ticker_list: list[str],
     include_covariates: bool,
     dry_run: bool,
+    store_dir: str | None = None,
 ) -> None:
+    def _load() -> Optional[dict[str, Any]]:
+        return read_job(job_id, store_dir=store_dir)
+
     def _progress(frac: float, desc: str = "") -> None:
         try:
             f = max(0.0, min(1.0, float(frac)))
         except (TypeError, ValueError):
             f = 0.0
-        job = read_job(job_id)
+        job = _load()
         if job is None:
             return
+        if store_dir and not job.get("store_dir"):
+            job["store_dir"] = store_dir
         job["status"] = STATUS_RUNNING
         job["done"] = False
         job["progress_pct"] = round(f * 100.0, 1)
@@ -425,9 +441,11 @@ def _run_refresh_worker(
         ] or [[]]
         n_batches = len(batches)
 
-        job = read_job(job_id)
+        job = _load()
         if job is None:
             return
+        if store_dir and not job.get("store_dir"):
+            job["store_dir"] = store_dir
         job["status"] = STATUS_RUNNING
         job["message"] = (
             f"Starting refresh: {n} symbol(s) in {n_batches} batch(es)…"
@@ -530,8 +548,10 @@ def _run_refresh_worker(
         if last_error and batches_failed:
             merged["error"] = last_error
 
-        job = read_job(job_id) or {}
+        job = _load() or {}
         job["job_id"] = job_id
+        if store_dir:
+            job["store_dir"] = store_dir
         job["requested_count"] = n
         if merged["ok"]:
             job["status"] = STATUS_SUCCEEDED
@@ -561,7 +581,9 @@ def _run_refresh_worker(
         )
     except Exception as e:
         logger.exception("MCP refresh job crashed job_id={}: {}", job_id, e)
-        job = read_job(job_id) or {"job_id": job_id, "kind": JOB_KIND_REFRESH}
+        job = _load() or {"job_id": job_id, "kind": JOB_KIND_REFRESH}
+        if store_dir:
+            job["store_dir"] = store_dir
         job["status"] = STATUS_FAILED
         job["done"] = True
         job["error"] = f"{type(e).__name__}: {e}"
