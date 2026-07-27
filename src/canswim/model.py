@@ -532,6 +532,12 @@ class CanswimModel:
         return False
 
     def download_model(self, repo_id: str = None, **kwargs):
+        """Download from HF when enabled; otherwise load local checkpoint.
+
+        Returns True if ``self.torch_model`` is set after this call.
+        Does not raise on local miss — callers that require a model (forecast)
+        must check and fail with a clear error.
+        """
         torch_model = self.hfhub.download_model(
             repo_id=repo_id,
             model_name=self.model_name,
@@ -540,9 +546,15 @@ class CanswimModel:
         )
         if torch_model is None:
             logger.info("No model downloaded from remote repo. Loading local model...")
-            self.load_model()
-        else:
-            self.torch_model = torch_model
+            ok = self.load_model()
+            if not ok:
+                logger.error(
+                    f"Local model load failed for {self.model_name!r} "
+                    f"(cwd={os.getcwd()}); torch_model remains unset."
+                )
+            return bool(self.torch_model is not None)
+        self.torch_model = torch_model
+        return True
 
     def build(self, **kwargs):
         try:

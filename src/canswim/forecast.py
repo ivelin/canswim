@@ -170,17 +170,48 @@ class CanswimForecaster:
         self.canswim_model = CanswimModel(forecast_only=True)
         self.hfhub = HFHub()
 
+    def _require_torch_model(self, *, via: str) -> None:
+        """Fail fast with an actionable message if weights never loaded."""
+        tm = getattr(self.canswim_model, "torch_model", None)
+        if tm is not None:
+            return
+        name = getattr(self.canswim_model, "model_name", "canswim_model.pt")
+        cwd = os.getcwd()
+        path = os.path.join(cwd, name)
+        exists = os.path.exists(path)
+        islink = os.path.islink(path)
+        link_note = ""
+        if islink and not exists:
+            try:
+                link_note = f" (broken symlink -> {os.readlink(path)})"
+            except OSError:
+                link_note = " (broken symlink)"
+        raise RuntimeError(
+            f"Forecast model not loaded ({via}): {name} missing or unreadable "
+            f"at {path}{link_note}. exists={exists}, islink={islink}, cwd={cwd}. "
+            f"With hfhub_sync=False place a trained checkpoint in the process "
+            f"working directory, or set hfhub_sync=True to download from HF Hub "
+            f"(repo ivelin/canswim)."
+        )
+
     def download_model(self):
-        """Load model from HF Hub"""
-        # download model from hf hub
+        """Load model from HF Hub (or local fallback when hfhub_sync is off)."""
         self.canswim_model.download_model()
-        logger.info("trainer params", self.canswim_model.torch_model.trainer_params)
+        self._require_torch_model(via="download_model")
+        logger.info(f"trainer params {self.canswim_model.torch_model.trainer_params}")
         self.canswim_model.torch_model.trainer_params["logger"] = False
 
     def load_model(self):
         """Load model from local storage"""
-        self.canswim_model.load()
-        logger.info("trainer params", self.canswim_model.torch_model.trainer_params)
+        # Prefer CanswimModel.load_model (TiDE weights); keep legacy alias if present.
+        loader = getattr(self.canswim_model, "load_model", None) or getattr(
+            self.canswim_model, "load", None
+        )
+        if loader is None:
+            raise RuntimeError("CanswimModel has no load_model/load method")
+        loader()
+        self._require_torch_model(via="load_model")
+        logger.info(f"trainer params {self.canswim_model.torch_model.trainer_params}")
         self.canswim_model.torch_model.trainer_params["logger"] = False
 
     def download_data(self):

@@ -96,3 +96,29 @@ def test_forecast_main_aborts_runtime_when_no_forecasts_saved():
         with pytest.raises(RuntimeError, match="no forecasts saved|Missing ground-truth"):
             forecast_main(forecast_start_date="2024-06-03")
 
+
+def test_download_model_raises_clear_error_when_torch_model_missing(tmp_path, monkeypatch):
+    """Missing checkpoint must not surface as AttributeError on trainer_params."""
+    monkeypatch.chdir(tmp_path)
+    # No canswim_model.pt in cwd; hf hub download skipped in local mode
+    monkeypatch.setenv("hfhub_sync", "False")
+    cf = CanswimForecaster()
+    # Force torch_model unset and download_model local path
+    cf.canswim_model.torch_model = None
+    with patch.object(cf.canswim_model, "download_model", return_value=False):
+        with pytest.raises(RuntimeError, match="Forecast model not loaded"):
+            cf.download_model()
+
+
+def test_require_torch_model_mentions_broken_symlink(tmp_path, monkeypatch):
+    """Broken symlink should be diagnosed in the error text."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "missing_target.pt"
+    link = tmp_path / "canswim_model.pt"
+    link.symlink_to(target)
+    cf = CanswimForecaster()
+    cf.canswim_model.torch_model = None
+    cf.canswim_model.model_name = "canswim_model.pt"
+    with pytest.raises(RuntimeError, match="broken symlink"):
+        cf._require_torch_model(via="test")
+
