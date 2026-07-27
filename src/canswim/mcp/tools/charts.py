@@ -9,7 +9,15 @@ from canswim.db import (
     DEFAULT_CHART_HISTORY_YEARS,
     get_chart_data,
 )
-from canswim.mcp.tools._common import ensure_db_ready, err_result, ok_result, resolve_db_path
+from canswim.mcp.tools._common import (
+    FAIL_INTERNAL,
+    FAIL_INVALID_INPUT,
+    client_error,
+    db_not_ready_result,
+    ensure_db_ready,
+    ok_result,
+    resolve_db_path,
+)
 
 
 def _coerce_confidence(confidence: Any) -> int:
@@ -52,18 +60,19 @@ def get_chart_data_impl(
     """One-shot chart payload matching the Gradio Charts tab (structured data only)."""
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if not symbol or not str(symbol).strip():
-        return err_result("symbol is required")
+        return client_error("symbol is required", fail_reason=FAIL_INVALID_INPUT)
     try:
         conf = _coerce_confidence(confidence)
         hy = _coerce_history_years(history_years)
         include_rr = _coerce_bool(include_reward_risk, default=True)
     except ValueError as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INVALID_INPUT)
     if conf not in CHART_CONFIDENCE_TO_LOW_QUANTILE:
-        return err_result(
-            f"confidence must be one of {sorted(CHART_CONFIDENCE_TO_LOW_QUANTILE)}"
+        return client_error(
+            f"confidence must be one of {sorted(CHART_CONFIDENCE_TO_LOW_QUANTILE)}",
+            fail_reason=FAIL_INVALID_INPUT,
         )
     db_path = resolve_db_path()
     try:
@@ -79,6 +88,6 @@ def get_chart_data_impl(
         payload["available"] = True
         return ok_result(payload)
     except ValueError as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INVALID_INPUT)
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)

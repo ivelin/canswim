@@ -204,6 +204,7 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
             if isinstance(requested_count, int)
             else None,
             result=result if isinstance(result, dict) else None,
+            error=job.get("error"),
         ),
     }
     if job.get("error"):
@@ -212,6 +213,17 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
         view["result"] = result
         if isinstance(result, dict) and result.get("coverage"):
             view["coverage"] = result["coverage"]
+        if isinstance(result, dict) and result.get("fail_reason"):
+            view.setdefault("fail_reason", result.get("fail_reason"))
+    # Stable discriminator for failed jobs when result lacks fail_reason
+    if status == STATUS_FAILED and not view.get("fail_reason"):
+        err_txt = str(job.get("error") or "")
+        if "Forecast model not loaded" in err_txt or "trainer_params" in err_txt:
+            view["fail_reason"] = "model_not_loaded"
+        elif "Job interrupted" in err_txt:
+            view["fail_reason"] = "job_interrupted"
+        else:
+            view["fail_reason"] = "job_failed"
     return view
 
 
@@ -222,6 +234,7 @@ def _client_hint(
     *,
     requested_count: int | None = None,
     result: dict[str, Any] | None = None,
+    error: Any = None,
 ) -> str:
     if status == STATUS_SUCCEEDED:
         cov = (result or {}).get("coverage") or {}
@@ -246,6 +259,18 @@ def _client_hint(
             "Verify with get_forecast / list_tickers as needed."
         )
     if status == STATUS_FAILED:
+        err = str(error or "")
+        if isinstance(result, dict):
+            err = err or str(result.get("error") or "")
+            if result.get("fail_reason") == "model_not_loaded":
+                err = err or "Forecast model not loaded"
+        # Prefer model-specific guidance when the crash was a missing checkpoint
+        if "Forecast model not loaded" in err or "model_not_loaded" in err.lower():
+            return (
+                "Job failed: forecast model weights are missing on the server. "
+                "Report that an operator must restore canswim_model.pt (or enable "
+                "hfhub_sync). Do not claim the portfolio is refreshed."
+            )
         return (
             "Job failed. Report the error and coverage to the user. "
             "Do not claim the portfolio is refreshed. "
@@ -586,8 +611,19 @@ def _run_refresh_worker(
             job["store_dir"] = store_dir
         job["status"] = STATUS_FAILED
         job["done"] = True
-        job["error"] = f"{type(e).__name__}: {e}"
+        # Prefer the exception message when already actionable (e.g. model not loaded)
+        msg = str(e).strip()
+        if "Forecast model not loaded" in msg:
+            job["error"] = msg
+        else:
+            job["error"] = f"{type(e).__name__}: {e}"
         job["message"] = job["error"]
+        if "Forecast model not loaded" in msg or "trainer_params" in msg:
+            job["result"] = {
+                "ok": False,
+                "error": job["error"],
+                "fail_reason": "model_not_loaded",
+            }
         try:
             _write_job(job)
         except OSError:

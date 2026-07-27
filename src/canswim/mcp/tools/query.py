@@ -15,7 +15,15 @@ from canswim.db import (
     format_schema_markdown,
     run_select,
 )
-from canswim.mcp.tools._common import ensure_db_ready, err_result, ok_result, resolve_db_path
+from canswim.mcp.tools._common import (
+    FAIL_INTERNAL,
+    FAIL_INVALID_INPUT,
+    client_error,
+    db_not_ready_result,
+    ensure_db_ready,
+    ok_result,
+    resolve_db_path,
+)
 from canswim.mcp.tools.meta import CLIENT_ACCESS_BOUNDARY
 
 # Client-facing policy (no engine/path leakage)
@@ -40,9 +48,9 @@ def run_select_impl(sql: str, row_limit: int = 5000) -> dict[str, Any]:
     """Execute a single read-only SELECT (or WITH…SELECT) via MCP only."""
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if not sql or not str(sql).strip():
-        return err_result("sql is required")
+        return client_error("sql is required", fail_reason=FAIL_INVALID_INPUT)
     db_path = resolve_db_path()
     try:
         df = run_select(db_path, sql, row_limit=row_limit)
@@ -56,9 +64,11 @@ def run_select_impl(sql: str, row_limit: int = 5000) -> dict[str, Any]:
             }
         )
     except SelectOnlyError as e:
-        return err_result(str(e), read_only=True)
+        return client_error(
+            str(e), fail_reason=FAIL_INVALID_INPUT, read_only=True
+        )
     except Exception as e:
-        return err_result(str(e), read_only=True)
+        return client_error(str(e), fail_reason=FAIL_INTERNAL, read_only=True)
 
 
 def get_db_schema_impl(
@@ -75,7 +85,7 @@ def get_db_schema_impl(
     if not ready:
         db_path = resolve_db_path()
         if not Path(db_path).is_file():
-            return err_result(msg)
+            return db_not_ready_result(msg)
         # fall through with partial data
 
     db_path = resolve_db_path()
@@ -86,7 +96,7 @@ def get_db_schema_impl(
             include_sample_values=include_sample_values,
         )
         if schema.get("error") and not schema.get("tables"):
-            return err_result(
+            return db_not_ready_result(
                 "CANSWIM schema is unavailable (data not ready on the server)."
             )
 
@@ -125,4 +135,4 @@ def get_db_schema_impl(
             )
         return ok_result(data)
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)

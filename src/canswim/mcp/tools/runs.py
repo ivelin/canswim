@@ -13,7 +13,17 @@ from canswim.run_triggers import (
     resolve_start_for_run,
     runs_allowed,
 )
-from canswim.mcp.tools._common import ProgressCb, err_result, ok_result
+from canswim.mcp.tools._common import (
+    FAIL_INVALID_INPUT,
+    FAIL_MODEL_NOT_LOADED,
+    FAIL_REMOTE_API,
+    FAIL_RUNS_DISABLED,
+    ProgressCb,
+    client_error,
+    err_result,
+    infer_fail_reason_from_error,
+    ok_result,
+)
 
 
 RUN_TOOL_NAMES = [
@@ -24,6 +34,44 @@ RUN_TOOL_NAMES = [
 ]
 
 
+def _runs_blocked_result(blocked: dict[str, Any]) -> dict[str, Any]:
+    return client_error(
+        blocked.get("error") or "Run triggers are disabled.",
+        fail_reason=FAIL_RUNS_DISABLED,
+        runs_allowed=False,
+    )
+
+
+def _run_failure_result(
+    result: dict[str, Any],
+    *,
+    default_error: str,
+    client_hint: str | None = None,
+) -> dict[str, Any]:
+    """Map gather/forecast/refresh failure dict → client-facing err_result shape."""
+    err = result.get("error") or default_error
+    fr = result.get("fail_reason")
+    if not fr or fr == "covariates":
+        inferred = infer_fail_reason_from_error(err)
+        if inferred:
+            fr = inferred
+    if not fr and result.get("remote_api"):
+        fr = FAIL_REMOTE_API
+    remote = result.get("remote_api") or (result.get("gather") or {}).get(
+        "remote_api"
+    )
+    kwargs: dict[str, Any] = {
+        "data": result,
+        "remote_api": remote,
+    }
+    # Prefer model/operator hints over generic refresh retry text
+    if client_hint and fr != FAIL_MODEL_NOT_LOADED:
+        kwargs["client_hint"] = client_hint
+    if fr:
+        return client_error(err, fail_reason=str(fr), **kwargs)
+    return err_result(err, **kwargs)
+
+
 def resolve_forecast_start_impl(
     start_date: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -31,7 +79,11 @@ def resolve_forecast_start_impl(
     info = resolve_start_for_run(start_date)
     if info.get("ok"):
         return ok_result(info)
-    return err_result(info.get("error") or "resolve failed", data=info)
+    return client_error(
+        info.get("error") or "resolve failed",
+        fail_reason=FAIL_INVALID_INPUT,
+        data=info,
+    )
 
 
 def gather_tickers_impl(
@@ -41,11 +93,15 @@ def gather_tickers_impl(
 ) -> dict[str, Any]:
     blocked = require_runs_allowed()
     if blocked is not None:
-        return err_result(blocked["error"], runs_allowed=False)
+        return _runs_blocked_result(blocked)
 
     parsed = parse_ticker_list(tickers)
     if not parsed["ok"]:
-        return err_result(parsed.get("error") or "bad tickers", data=parsed)
+        return client_error(
+            parsed.get("error") or "bad tickers",
+            fail_reason=FAIL_INVALID_INPUT,
+            data=parsed,
+        )
 
     if progress_cb is not None:
         try:
@@ -70,13 +126,7 @@ def gather_tickers_impl(
             pass
     if result.get("ok"):
         return ok_result(result)
-    # Surface structured remote_api (network / key / plan) for MCP clients
-    return err_result(
-        result.get("error") or "gather failed",
-        data=result,
-        remote_api=result.get("remote_api"),
-        fail_reason=result.get("fail_reason"),
-    )
+    return _run_failure_result(result, default_error="gather failed")
 
 
 def forecast_tickers_impl(
@@ -87,11 +137,15 @@ def forecast_tickers_impl(
 ) -> dict[str, Any]:
     blocked = require_runs_allowed()
     if blocked is not None:
-        return err_result(blocked["error"], runs_allowed=False)
+        return _runs_blocked_result(blocked)
 
     parsed = parse_ticker_list(tickers)
     if not parsed["ok"]:
-        return err_result(parsed.get("error") or "bad tickers", data=parsed)
+        return client_error(
+            parsed.get("error") or "bad tickers",
+            fail_reason=FAIL_INVALID_INPUT,
+            data=parsed,
+        )
 
     result = forecast_for_tickers(
         tickers,
@@ -102,12 +156,7 @@ def forecast_tickers_impl(
     )
     if result.get("ok"):
         return ok_result(result)
-    return err_result(
-        result.get("error") or "forecast failed",
-        data=result,
-        remote_api=result.get("remote_api"),
-        fail_reason=result.get("fail_reason"),
-    )
+    return _run_failure_result(result, default_error="forecast failed")
 
 
 def refresh_tickers_impl(
@@ -123,12 +172,13 @@ def refresh_tickers_impl(
     """
     blocked = require_runs_allowed()
     if blocked is not None:
-        return err_result(blocked["error"], runs_allowed=False)
+        return _runs_blocked_result(blocked)
 
     parsed = parse_ticker_list(tickers, overflow="error")
     if not parsed["ok"]:
-        return err_result(
+        return client_error(
             parsed.get("error") or "bad tickers",
+            fail_reason=FAIL_INVALID_INPUT,
             data=parsed,
             client_hint=parsed.get("client_hint"),
             recommended_tool=parsed.get("recommended_tool") or "refresh_job_start",
@@ -158,12 +208,17 @@ def refresh_tickers_impl(
     remote = result.get("remote_api") or (result.get("gather") or {}).get(
         "remote_api"
     )
-    return err_result(
-        result.get("error") or "refresh failed",
-        data=result,
-        remote_api=remote,
-        fail_reason=result.get("fail_reason")
-        or (result.get("gather") or {}).get("fail_reason"),
+    if remote and not result.get("remote_api"):
+        result = dict(result)
+        result["remote_api"] = remote
+    if not result.get("fail_reason") and (result.get("gather") or {}).get(
+        "fail_reason"
+    ):
+        result = dict(result)
+        result["fail_reason"] = result["gather"]["fail_reason"]
+    return _run_failure_result(
+        result,
+        default_error="refresh failed",
         client_hint=(
             "Refresh failed. Do not claim success. "
             "Prefer refresh_job_start for long runs; poll refresh_job_status."

@@ -5,7 +5,15 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from canswim.db import dataframe_to_records, get_backtest_error, get_close_prices
-from canswim.mcp.tools._common import ensure_db_ready, err_result, ok_result, resolve_db_path
+from canswim.mcp.tools._common import (
+    FAIL_INTERNAL,
+    FAIL_INVALID_INPUT,
+    client_error,
+    db_not_ready_result,
+    ensure_db_ready,
+    ok_result,
+    resolve_db_path,
+)
 
 
 def get_close_price_impl(
@@ -29,9 +37,9 @@ def get_close_price_impl(
         )
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if not symbol or not str(symbol).strip():
-        return err_result("symbol is required")
+        return client_error("symbol is required", fail_reason=FAIL_INVALID_INPUT)
     db_path = resolve_db_path()
     try:
         df = get_close_prices(
@@ -49,7 +57,7 @@ def get_close_price_impl(
             }
         )
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)
 
 
 def get_backtest_error_impl(
@@ -58,7 +66,7 @@ def get_backtest_error_impl(
 ) -> dict[str, Any]:
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     db_path = resolve_db_path()
     try:
         sym = str(symbol).strip().upper() if symbol else None
@@ -71,4 +79,4 @@ def get_backtest_error_impl(
             }
         )
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)
