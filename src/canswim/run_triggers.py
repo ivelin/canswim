@@ -1202,11 +1202,23 @@ def forecast_for_tickers(
     except Exception as e:
         logger.exception("forecast_for_tickers failed")
         err = str(e)
+        fail_reason = "covariates"
+        # Model checkpoint missing/unreadable — not a covariate alignment issue
+        if (
+            "Forecast model not loaded" in err
+            or "trainer_params" in err
+            or (
+                "canswim_model.pt" in err and "missing" in err.lower()
+            )
+        ):
+            fail_reason = "model_not_loaded"
+            # Keep the clear RuntimeError text (already actionable for operators)
         # Map Darts dim errors to consumer language (ETFs / fund-thin often hit this)
-        if "dimensionality" in err.lower() or "past_covariates" in err.lower():
+        elif "dimensionality" in err.lower() or "past_covariates" in err.lower():
             err = DIMENSIONALITY_FAIL_MSG.format(
                 symbols=", ".join(tickers) if tickers else "requested symbols"
             )
+            fail_reason = "covariates"
         return {
             "ok": False,
             "error": err,
@@ -1219,7 +1231,7 @@ def forecast_for_tickers(
             "skipped": skipped_all,
             "messages": messages,
             "model_loaded": model_loaded,
-            "fail_reason": "covariates",
+            "fail_reason": fail_reason,
         }
     finally:
         if prev_list is None:

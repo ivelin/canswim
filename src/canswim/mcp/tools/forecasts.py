@@ -10,7 +10,15 @@ from canswim.db import (
     get_reward_risk,
     scan_forecasts,
 )
-from canswim.mcp.tools._common import ensure_db_ready, err_result, ok_result, resolve_db_path
+from canswim.mcp.tools._common import (
+    FAIL_INTERNAL,
+    FAIL_INVALID_INPUT,
+    client_error,
+    db_not_ready_result,
+    ensure_db_ready,
+    ok_result,
+    resolve_db_path,
+)
 
 _VALID_CONFIDENCE = {80, 95, 99}
 
@@ -36,9 +44,9 @@ def get_forecast_impl(
         )
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if not symbol or not str(symbol).strip():
-        return err_result("symbol is required")
+        return client_error("symbol is required", fail_reason=FAIL_INVALID_INPUT)
     db_path = resolve_db_path()
     try:
         df = get_forecast_rows(
@@ -56,17 +64,20 @@ def get_forecast_impl(
             }
         )
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)
 
 
 def get_reward_risk_impl(symbol: str, confidence: int = 80) -> dict[str, Any]:
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if confidence not in _VALID_CONFIDENCE:
-        return err_result(f"confidence must be one of {sorted(_VALID_CONFIDENCE)}")
+        return client_error(
+            f"confidence must be one of {sorted(_VALID_CONFIDENCE)}",
+            fail_reason=FAIL_INVALID_INPUT,
+        )
     if not symbol or not str(symbol).strip():
-        return err_result("symbol is required")
+        return client_error("symbol is required", fail_reason=FAIL_INVALID_INPUT)
     lq = (100 - confidence) / 100
     db_path = resolve_db_path()
     try:
@@ -82,7 +93,7 @@ def get_reward_risk_impl(symbol: str, confidence: int = 80) -> dict[str, Any]:
             }
         )
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)
 
 
 def scan_forecasts_impl(
@@ -93,9 +104,12 @@ def scan_forecasts_impl(
 ) -> dict[str, Any]:
     ready, msg = ensure_db_ready()
     if not ready:
-        return err_result(msg)
+        return db_not_ready_result(msg)
     if confidence not in _VALID_CONFIDENCE:
-        return err_result(f"confidence must be one of {sorted(_VALID_CONFIDENCE)}")
+        return client_error(
+            f"confidence must be one of {sorted(_VALID_CONFIDENCE)}",
+            fail_reason=FAIL_INVALID_INPUT,
+        )
     db_path = resolve_db_path()
     try:
         df = scan_forecasts(
@@ -116,4 +130,4 @@ def scan_forecasts_impl(
             }
         )
     except Exception as e:
-        return err_result(str(e))
+        return client_error(str(e), fail_reason=FAIL_INTERNAL)

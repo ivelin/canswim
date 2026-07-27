@@ -88,11 +88,14 @@ def health_check_impl() -> dict[str, Any]:
         "disclaimer": "NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.",
     }
     if not ready:
-        return err_result(
+        from canswim.mcp.tools._common import FAIL_DB_NOT_READY, client_error
+
+        return client_error(
             "CANSWIM data is not ready on the server. "
             "An operator must build or refresh the search data on the host "
             "(dashboard once, or MCP_INIT_DB on the server process). "
             "Remote clients cannot access a local database file.",
+            fail_reason=FAIL_DB_NOT_READY,
             data=payload,
         )
     return ok_result(payload)

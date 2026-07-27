@@ -118,6 +118,22 @@ Canonical registration: `src/canswim/mcp/server.py`. Update this table in the **
 | `refresh_job_start` | Explicit async start (same as `refresh_tickers` with `wait=false`) | `MCP_ALLOW_RUNS=1` |
 | `refresh_job_status` | Poll a job from `refresh_tickers` / `refresh_job_start` | — |
 
+### Error shape (client-facing)
+
+Tool results use a stable envelope:
+
+| Field | Meaning |
+|-------|---------|
+| `ok` | `true` / `false` |
+| `error` | Non-empty human string when `ok` is false — what failed and who acts (client vs operator) |
+| `fail_reason` | Machine-readable code when known (branch without scraping free text) |
+| `client_hint` | Short next-step guidance for agents (poll job, fix args, contact operator, …) |
+| `data` | Optional structured payload (partial results, coverage, parse details) |
+
+Common `fail_reason` values: `invalid_input`, `db_not_ready`, `runs_disabled`, `job_unknown`, `job_busy`, `job_failed`, `model_not_loaded`, `remote_api`. Failed async jobs also set `data.fail_reason` / `data.client_hint` on `refresh_job_status` when `status=failed`.
+
+**Do not** claim success when `ok` is false or a job `status` is still `queued`/`running`. Prefer `client_hint` over inventing recovery steps.
+
 ### One-shot chart (dashboard Charts equivalent)
 
 **`get_chart_data(symbol)`** (alias **`plot_chart`**) is the only tool needed for the Charts tab view. Both names are registered; if a client says the tool is “unavailable”, reconnect the connector and call **`plot_chart`** if `get_chart_data` is missing from its tool list.

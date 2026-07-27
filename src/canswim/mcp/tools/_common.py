@@ -226,6 +226,61 @@ def ensure_db_ready(db_path: Optional[str] = None) -> tuple[bool, str]:
     )
 
 
+# Stable fail_reason codes for MCP clients (branch without scraping free text).
+FAIL_INVALID_INPUT = "invalid_input"
+FAIL_DB_NOT_READY = "db_not_ready"
+FAIL_RUNS_DISABLED = "runs_disabled"
+FAIL_JOB_UNKNOWN = "job_unknown"
+FAIL_JOB_BUSY = "job_busy"
+FAIL_JOB_FAILED = "job_failed"
+FAIL_JOB_INTERRUPTED = "job_interrupted"
+FAIL_MODEL_NOT_LOADED = "model_not_loaded"
+FAIL_REMOTE_API = "remote_api"
+FAIL_INTERNAL = "internal"
+
+_DEFAULT_CLIENT_HINTS: dict[str, str] = {
+    FAIL_INVALID_INPUT: (
+        "Fix the tool arguments (required fields, formats) and call again."
+    ),
+    FAIL_DB_NOT_READY: (
+        "An operator must initialize search data on the host "
+        "(run dashboard once, or set MCP_INIT_DB=1). "
+        "Remote clients cannot open a local database file."
+    ),
+    FAIL_RUNS_DISABLED: (
+        "An operator must set MCP_ALLOW_RUNS=1 (or CANSWIM_ALLOW_RUNS=1) "
+        "on the MCP server process for gather/forecast/refresh tools."
+    ),
+    FAIL_JOB_UNKNOWN: (
+        "Use the job_id returned by refresh_job_start or refresh_tickers "
+        "(wait=false). Do not invent ids."
+    ),
+    FAIL_JOB_BUSY: (
+        "Poll refresh_job_status until the active job finishes "
+        "(status succeeded or failed), then start a new refresh_job_start."
+    ),
+    FAIL_JOB_FAILED: (
+        "Report the error and coverage to the user. Do not claim the portfolio "
+        "is refreshed. Retry with refresh_job_start after the cause is fixed."
+    ),
+    FAIL_JOB_INTERRUPTED: (
+        "The MCP process restarted or the worker exited. Start again with "
+        "refresh_job_start."
+    ),
+    FAIL_MODEL_NOT_LOADED: (
+        "An operator must place canswim_model.pt in the MCP working directory "
+        "or enable hfhub_sync to download trained weights from Hugging Face."
+    ),
+    FAIL_REMOTE_API: (
+        "Check network, API keys, and provider plan/rate limits; then retry "
+        "with a smaller symbol list if needed."
+    ),
+    FAIL_INTERNAL: (
+        "Retry once. If it persists, report the error string to the host operator."
+    ),
+}
+
+
 def ok_result(data: Any, **extra: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"ok": True, "data": data}
     out.update(extra)
@@ -233,6 +288,75 @@ def ok_result(data: Any, **extra: Any) -> dict[str, Any]:
 
 
 def err_result(message: str, **extra: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {"ok": False, "error": message}
+    """Client-facing failure: always non-empty ``error``; optional discriminators.
+
+    Prefer :func:`client_error` when setting a stable ``fail_reason``.
+    """
+    msg = (str(message) if message is not None else "").strip() or "Request failed."
+    out: dict[str, Any] = {"ok": False, "error": msg}
     out.update(extra)
+    # Drop empty optional strings so clients do not see blank hints
+    for key in ("client_hint", "fail_reason", "error"):
+        if key in out and out[key] is not None and str(out[key]).strip() == "":
+            if key == "error":
+                out[key] = "Request failed."
+            else:
+                out.pop(key, None)
+    fr = out.get("fail_reason")
+    if fr and not out.get("client_hint"):
+        hint = _DEFAULT_CLIENT_HINTS.get(str(fr))
+        if hint:
+            out["client_hint"] = hint
     return out
+
+
+def client_error(
+    message: str,
+    *,
+    fail_reason: str,
+    client_hint: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Canonical MCP failure with machine-readable ``fail_reason`` + human ``error``."""
+    fr = (fail_reason or FAIL_INTERNAL).strip() or FAIL_INTERNAL
+    hint = client_hint
+    if hint is None:
+        hint = _DEFAULT_CLIENT_HINTS.get(fr)
+    kwargs = dict(extra)
+    kwargs["fail_reason"] = fr
+    if hint:
+        kwargs["client_hint"] = hint
+    return err_result(message, **kwargs)
+
+
+def db_not_ready_result(message: str) -> dict[str, Any]:
+    """Failure when search DB is missing / not initialized for read tools."""
+    return client_error(message, fail_reason=FAIL_DB_NOT_READY)
+
+
+def infer_fail_reason_from_error(error: str | None) -> str | None:
+    """Best-effort map of known error text → stable fail_reason for clients."""
+    if not error:
+        return None
+    err = str(error)
+    low = err.lower()
+    if "forecast model not loaded" in low or "trainer_params" in low:
+        return FAIL_MODEL_NOT_LOADED
+    if "job interrupted" in low or "worker exit" in low:
+        return FAIL_JOB_INTERRUPTED
+    if "unknown job_id" in low:
+        return FAIL_JOB_UNKNOWN
+    if (
+        "mcp_allow_runs" in low
+        or "canswim_allow_runs" in low
+        or "runs are disabled" in low
+        or "run triggers are disabled" in low
+    ):
+        return FAIL_RUNS_DISABLED
+    if "already" in low and "job" in low:
+        return FAIL_JOB_BUSY
+    if "data is not ready" in low or (
+        "search data" in low and "operator" in low
+    ):
+        return FAIL_DB_NOT_READY
+    return None

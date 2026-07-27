@@ -2,6 +2,23 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260727
+
+MCP clients (SuperGrok, etc.) need stable, human-readable failures with machine-readable discriminators — not bare `AttributeError` fragments.
+
+### Highlights
+
+- **Client error shape** — failures return `ok: false`, non-empty `error`, and usually `fail_reason` + `client_hint` (what failed / who acts / next step)
+- Stable codes: `invalid_input`, `db_not_ready`, `runs_disabled`, `job_unknown`, `job_busy`, `job_failed`, `model_not_loaded`, `remote_api`, …
+- **Model missing** surfaces as `fail_reason=model_not_loaded` through `forecast_tickers` / refresh jobs (not mislabeled as covariates)
+- Async job status attaches `fail_reason` on failed jobs for agent branching
+
+### Install
+
+```bash
+pip install canswim==0.0.20260727
+```
+
 ## 0.0.20260722
 
 SuperGrok called `canswim___get_chart_data` and got **Unknown tool** (connector prefix not stripped), then fell back to incomplete charts.
