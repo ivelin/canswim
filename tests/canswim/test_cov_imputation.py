@@ -24,8 +24,9 @@ def _price_ts(n: int = 30, start: str = "2024-01-02") -> TimeSeries:
     return timeseries_from_observed_df(df)
 
 
-def test_prepare_earn_zero_fills_missing_ticker():
+def test_prepare_earn_zero_fills_missing_ticker_when_train_imputation_allowed():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     # Only COVERED has earnings rows
     idx = pd.MultiIndex.from_tuples(
         [
@@ -56,8 +57,38 @@ def test_prepare_earn_zero_fills_missing_ticker():
     assert out["IPO"].pd_dataframe().notna().all().all()
 
 
+def test_prepare_earn_refuses_zero_fill_on_forecast_path():
+    """Forecast hard rule: missing earnings → skip, never invent fund rows."""
+    c = Covariates()
+    assert c.allow_fundamentals_imputation is False
+    idx = pd.MultiIndex.from_tuples(
+        [("COVERED", pd.Timestamp("2024-01-15"))],
+        names=["Symbol", "Date"],
+    )
+    c.earnings_loaded_df = pd.DataFrame(
+        {
+            "eps": [1.0],
+            "epsEstimated": [0.9],
+            "time": ["amc"],
+            "revenue": [1e6],
+            "revenueEstimated": [9e5],
+            "updatedFromDate": pd.to_datetime(["2024-01-10"]),
+            "fiscalDateEnding": pd.to_datetime(["2023-12-31"]),
+        },
+        index=idx,
+    )
+    prices = {"COVERED": _price_ts(), "IPO": _price_ts()}
+    out = c.prepare_earn_series(
+        tickers=prices.keys(), stock_price_series=prices
+    )
+    assert "COVERED" in out
+    assert "IPO" not in out
+    assert "IPO" in c.last_fundamentals_skipped
+
+
 def test_prepare_est_zero_fills_missing_ticker():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     # Minimal annual estimates for one symbol only
     idx = pd.MultiIndex.from_tuples(
         [
@@ -106,6 +137,7 @@ def test_prepare_est_zero_fills_missing_ticker():
 
 def test_prepare_key_metrics_zero_fills_missing():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     idx = pd.MultiIndex.from_tuples(
         [
             ("HAS", pd.Timestamp("2024-03-31")),
@@ -128,10 +160,11 @@ def test_prepare_key_metrics_zero_fills_missing():
 
 
 def test_fund_thin_empty_batch_zero_fills_earn_like_etf():
-    """ETF-style batch: no earnings rows at all still gets train-shaped columns."""
+    """ETF-style batch: train imputation still pads empty earnings loads."""
     from canswim.covariates import _EARN_FEATURE_COLS
 
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     c.earnings_loaded_df = pd.DataFrame()  # empty load (XLF-only filter)
     prices = {"XLF": _price_ts()}
     out = c.prepare_earn_series(stock_price_series=prices)
@@ -141,6 +174,7 @@ def test_fund_thin_empty_batch_zero_fills_earn_like_etf():
 
 def test_fund_thin_empty_batch_zero_fills_key_metrics():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     c.kms_loaded_df = pd.DataFrame()
     # Provide columns via mock of disk template path
     c._key_metrics_template_columns = lambda: [  # type: ignore[method-assign]
@@ -160,6 +194,7 @@ def test_fund_thin_empty_batch_zero_fills_key_metrics():
 
 def test_fund_thin_empty_batch_zero_fills_estimates():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     prices = {"XLF": _price_ts(n=60, start="2023-06-01")}
     # Disk template via stub
     tmpl = c._zero_cov_from_columns(

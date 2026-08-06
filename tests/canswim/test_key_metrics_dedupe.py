@@ -92,8 +92,9 @@ def test_prepare_key_metrics_collapses_biz_day_collision():
 
 
 def test_prepare_key_metrics_imputes_missing_symbol_without_aborting():
-    """Missing KMS for one ticker is zero-filled (#33); others still prepare."""
+    """Missing KMS for one ticker is zero-filled (#33 train); others still prepare."""
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     idx = pd.MultiIndex.from_tuples(
         [
             ("OK", pd.Timestamp("2023-06-30")),

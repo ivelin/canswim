@@ -180,10 +180,17 @@ def test_forecast_model_not_loaded_via_tool(mcp_ready, monkeypatch):
         )
 
     with patch(
-        "canswim.forecast.CanswimForecaster.download_model",
-        boom_download,
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=lambda symbols, **kw: (
+            [str(s).strip().upper() for s in symbols],
+            [],
+        ),
     ):
-        out = run_tools.forecast_tickers_impl("AAA", dry_run=False)
+        with patch(
+            "canswim.forecast.CanswimForecaster.download_model",
+            boom_download,
+        ):
+            out = run_tools.forecast_tickers_impl("AAA", dry_run=False)
     _assert_client_failure(out, fail_reason=FAIL_MODEL_NOT_LOADED)
     assert "Forecast model not loaded" in out["error"]
     assert out.get("client_hint")

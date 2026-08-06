@@ -115,25 +115,33 @@ def test_gather_force_allow_skips_gate(monkeypatch):
     assert r["tickers"] == ["AAPL"]
 
 
+def _fund_all_ready(symbols, **kwargs):
+    return [str(s).strip().upper() for s in symbols], []
+
+
 def test_forecast_dry_run_resolves_start(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": "2026-03-05",
-            "error": None,
-            "latest_close_used": "2026-07-10",
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=_fund_all_ready,
     ):
-        r = forecast_for_tickers(
-            "AAPL,MSFT",
-            forecast_start_date="2026-03-05",
-            dry_run=True,
-        )
+        with patch(
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": "2026-03-05",
+                "error": None,
+                "latest_close_used": "2026-07-10",
+            },
+        ):
+            r = forecast_for_tickers(
+                "AAPL,MSFT",
+                forecast_start_date="2026-03-05",
+                dry_run=True,
+            )
     assert r["ok"] is True
     assert r["dry_run"] is True
     assert r["mode"] == "single"
@@ -145,33 +153,37 @@ def test_forecast_blank_start_is_catchup_dry_run(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     monkeypatch.setenv("CATCHUP_MONTHS", "6")
     with patch(
-        "canswim.run_triggers.list_monthly_catchup_origins",
-        return_value=[
-            "2026-01-02",
-            "2026-02-02",
-            "2026-03-02",
-            "2026-04-01",
-            "2026-05-01",
-            "2026-06-01",
-            "2026-07-13",
-        ],
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=_fund_all_ready,
     ):
         with patch(
-            "canswim.run_triggers.resolve_start_for_run",
-            return_value={
-                "ok": True,
-                "start": "2026-07-13",
-                "reason": "default_live",
-                "live_default": "2026-07-13",
-                "input": None,
-                "error": None,
-            },
+            "canswim.run_triggers.list_monthly_catchup_origins",
+            return_value=[
+                "2026-01-02",
+                "2026-02-02",
+                "2026-03-02",
+                "2026-04-01",
+                "2026-05-01",
+                "2026-06-01",
+                "2026-07-13",
+            ],
         ):
             with patch(
-                "canswim.run_triggers.list_symbols_with_saved_forecast",
-                return_value=[],
+                "canswim.run_triggers.resolve_start_for_run",
+                return_value={
+                    "ok": True,
+                    "start": "2026-07-13",
+                    "reason": "default_live",
+                    "live_default": "2026-07-13",
+                    "input": None,
+                    "error": None,
+                },
             ):
-                r = forecast_for_tickers("AAPL", dry_run=True)
+                with patch(
+                    "canswim.run_triggers.list_symbols_with_saved_forecast",
+                    return_value=[],
+                ):
+                    r = forecast_for_tickers("AAPL", dry_run=True)
     assert r["ok"] is True
     assert r["mode"] == "catchup"
     assert r["dry_run"] is True
@@ -269,24 +281,28 @@ def test_forecast_passes_resolved_start_to_forecaster(monkeypatch):
     cf.get_forecast.return_value = {"AAPL": mock_ts}
 
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": "2026-03-05",
-            "error": None,
-            "latest_close_used": None,
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=_fund_all_ready,
     ):
-        with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-            with patch("canswim.forecast.get_next_open_market_day"):
-                r = forecast_for_tickers(
-                    "AAPL",
-                    forecast_start_date="2026-03-05",
-                    dry_run=False,
-                )
+        with patch(
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": "2026-03-05",
+                "error": None,
+                "latest_close_used": None,
+            },
+        ):
+            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                with patch("canswim.forecast.get_next_open_market_day"):
+                    r = forecast_for_tickers(
+                        "AAPL",
+                        forecast_start_date="2026-03-05",
+                        dry_run=False,
+                    )
 
     assert r["ok"] is True
     assert r["forecasted"] == ["AAPL"]

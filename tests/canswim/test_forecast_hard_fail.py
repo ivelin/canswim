@@ -24,23 +24,27 @@ def test_forecast_hard_fail_when_no_groups(monkeypatch):
     cf.prep_next_stock_group.return_value = iter([])
 
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": None,
-            "error": None,
-            "latest_close_used": None,
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        return_value=(["AAPL"], []),
     ):
         with patch(
-            "canswim.run_triggers.list_symbols_with_saved_forecast",
-            return_value=set(),
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": None,
+                "error": None,
+                "latest_close_used": None,
+            },
         ):
-            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-                r = forecast_for_tickers("AAPL", forecast_start_date="2026-03-02")
+            with patch(
+                "canswim.run_triggers.list_symbols_with_saved_forecast",
+                return_value=set(),
+            ):
+                with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                    r = forecast_for_tickers("AAPL", forecast_start_date="2026-03-02")
 
     assert r["ok"] is False
     # no groups prepared → covariate/align failure path (not pure price gap)
@@ -63,25 +67,29 @@ def test_forecast_hard_fail_when_partial_skip(monkeypatch):
     cf.get_forecast.return_value = {"AAPL": mock_ts}
 
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": None,
-            "error": None,
-            "latest_close_used": None,
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        return_value=(["AAPL", "MSFT"], []),
     ):
         with patch(
-            "canswim.run_triggers.list_symbols_with_saved_forecast",
-            return_value=set(),
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": None,
+                "error": None,
+                "latest_close_used": None,
+            },
         ):
-            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-                r = forecast_for_tickers(
-                    "AAPL,MSFT", forecast_start_date="2026-03-02"
-                )
+            with patch(
+                "canswim.run_triggers.list_symbols_with_saved_forecast",
+                return_value=set(),
+            ):
+                with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                    r = forecast_for_tickers(
+                        "AAPL,MSFT", forecast_start_date="2026-03-02"
+                    )
 
     assert r["ok"] is False
     assert r.get("need_gather") or r.get("need_covariates")

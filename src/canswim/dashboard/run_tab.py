@@ -460,8 +460,9 @@ def _refresh_summary(result: dict) -> str:
         if is_cov:
             lines.append(
                 "1. **Recommended:** Try again after **Update market data** "
-                "(fundamentals). ETFs and other fund-thin names use zero-filled "
-                "fund inputs like IPOs—if it still fails, open **Technical log**."
+                "(fundamentals). Forecast never invents fundamentals — names without "
+                "real earnings/key metrics/estimates are skipped. "
+                "If it still fails, open **Technical log**."
             )
             lines.append(
                 "2. Or forecast a regular stock (e.g. LLY) to confirm the model path."
