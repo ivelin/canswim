@@ -2,6 +2,23 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260808
+
+Idempotent multi-entry work: weekend and MCP share one refresh job registry.
+
+### Highlights
+
+- **Weekend catch-up (service default)** enqueues the same async **refresh job** as MCP (`source=weekend`) for the full DuckDB universe
+- MCP clients requesting a **subset** of an in-flight weekend (or other) job **coalesce** onto that `job_id` — no duplicate gather/forecast
+- Forecast/gather remain **idempotent** (skip-if-saved partition, lean gather); flock is only a narrow per-batch write guard vs CLI
+- Live-only / skip-gather weekend still uses the CLI batch path
+
+### Install
+
+```bash
+pip install canswim==0.0.20260808
+```
+
 ## 0.0.20260807
 
 Weekend all-DB forecast runs **inside** the long-lived canswim process (APScheduler), not a separate systemd timer.

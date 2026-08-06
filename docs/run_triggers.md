@@ -28,15 +28,12 @@ Loads every symbol from DuckDB **`stock_tickers`**, batches gather + forecast.
 | **In-process (MCP with `MCP_ALLOW_RUNS=1`)** | **Monthly catch-up (~12) + live** (`CANSWIM_WEEKEND_CATCHUP` defaults **on**) |
 | **CLI one-shot** `python -m canswim weekend` | Live week only (pass **`--catchup`** for monthly + live) |
 
-Host path uses `force_allow` (not gated by MCP_ALLOW_RUNS for CLI). Shared
-**`fcntl.flock`** on `data_dir/canswim_data_run.lock` serializes weekend with MCP
-async refresh (one heavy pipeline at a time). This is **not** a sticky pidfile:
-the kernel releases the lock when the holding process exits, crashes, or the host
-reboots. A leftover `.lock` file on disk does **not** block future runs (file
-presence ≠ locked). MCP clients that request the same/subset refresh while a job
-is in flight **coalesce** onto that `job_id` (see [mcp.md](mcp.md)). Forecast
-skips origins that already have a saved partition. See [cli.md](cli.md) and
-[deploy_service.md](deploy_service.md).
+**Service weekend (MCP + catch-up):** enqueues the same async **refresh job** as
+MCP for all DuckDB symbols (`source=weekend`). Clients with a subset **coalesce**
+onto that `job_id` (see [mcp.md](mcp.md)). Units are idempotent: lean gather +
+skip-if-saved forecast. CLI one-shot and live-only weekend still batch in-process
+with a narrow `fcntl.flock` write guard (not a sticky pidfile). See [cli.md](cli.md)
+and [deploy_service.md](deploy_service.md).
 
 ## Get market data (lean & rate-limit aware)
 

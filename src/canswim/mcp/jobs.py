@@ -36,8 +36,14 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 TERMINAL = frozenset({STATUS_SUCCEEDED, STATUS_FAILED})
 
+# Who enqueued the job (MCP client vs in-process weekend). Same worker + coalesce.
+SOURCE_MCP = "mcp"
+SOURCE_WEEKEND = "weekend"
+
 # Portfolio-scale async refresh (blocking refresh_tickers stays at DEFAULT_MAX_TICKERS)
 JOB_MAX_TICKERS = 200
+# Weekend / host internal enqueues may cover full DuckDB universe.
+JOB_MAX_TICKERS_INTERNAL = 50_000
 # Internal worker chunks (GPU/memory + finer progress). Not exposed as separate jobs.
 WORKER_BATCH_SIZE = 20
 
@@ -227,6 +233,7 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
     view: dict[str, Any] = {
         "job_id": job.get("job_id"),
         "kind": job.get("kind"),
+        "source": job.get("source") or SOURCE_MCP,
         "status": status,
         "done": done,
         "tickers": job.get("tickers"),
@@ -249,6 +256,7 @@ def _public_view(job: dict[str, Any]) -> dict[str, Any]:
             else None,
             result=result if isinstance(result, dict) else None,
             error=job.get("error"),
+            source=job.get("source"),
         ),
     }
     if job.get("error"):
@@ -279,6 +287,7 @@ def _client_hint(
     requested_count: int | None = None,
     result: dict[str, Any] | None = None,
     error: Any = None,
+    source: Any = None,
 ) -> str:
     if status == STATUS_SUCCEEDED:
         cov = (result or {}).get("coverage") or {}
@@ -320,12 +329,44 @@ def _client_hint(
             "Do not claim the portfolio is refreshed. "
             "They may retry with refresh_job_start after fixing the cause."
         )
+    src = f" (source={source})" if source else ""
     return (
-        f"Job still in progress (status={status}). "
+        f"Job still in progress (status={status}){src}. "
         f"Wait about {poll}s, then call refresh_job_status with job_id={job_id}. "
         "Do not claim the refresh is complete until status is succeeded or failed. "
-        "Do not call refresh_tickers / refresh_job_start again while this job runs."
+        "If your symbols are a subset of this job, call refresh_job_start again — "
+        "the server coalesces onto the same job_id (no duplicate work)."
     )
+
+
+def wait_for_job(
+    job_id: str,
+    *,
+    timeout_s: Optional[float] = None,
+    poll_s: float = 1.0,
+) -> dict[str, Any]:
+    """Block until job reaches a terminal status (or timeout).
+
+    Used by the in-process weekend path so scheduler waits on the same job
+    clients poll via ``refresh_job_status``.
+    """
+    deadline = None if timeout_s is None else (time.time() + float(timeout_s))
+    poll = max(0.05, float(poll_s))
+    while True:
+        out = get_job_status(job_id)
+        if not out.get("ok"):
+            return out
+        data = out.get("data") or {}
+        if data.get("done") or data.get("status") in TERMINAL:
+            return out
+        if deadline is not None and time.time() >= deadline:
+            return {
+                "ok": False,
+                "error": f"Timed out waiting for job_id={job_id}",
+                "job_id": job_id,
+                "data": data,
+            }
+        time.sleep(poll)
 
 
 def get_job_status(job_id: str) -> dict[str, Any]:
@@ -346,22 +387,45 @@ def start_refresh_job(
     *,
     include_covariates: bool = True,
     dry_run: bool = False,
+    force_allow: bool = False,
+    source: str = SOURCE_MCP,
+    max_tickers: Optional[int] = None,
+    wait: bool = False,
+    wait_timeout_s: Optional[float] = None,
 ) -> dict[str, Any]:
     """Validate, enqueue, spawn background refresh; return immediately.
 
-    Requires ``MCP_ALLOW_RUNS=1``. Only one non-terminal refresh job at a time.
+    External MCP clients require ``MCP_ALLOW_RUNS=1`` (unless ``force_allow``).
+    Only one non-terminal refresh job at a time; **subset requests coalesce**
+    onto the active job (same work units — no duplicate gather/forecast).
+
+    Parameters
+    ----------
+    force_allow
+        Host/weekend path: skip MCP_ALLOW_RUNS gate (same as CLI force_allow).
+    source
+        ``mcp`` or ``weekend`` — recorded for operators; same worker either way.
+    max_tickers
+        Cap for parse (default :data:`JOB_MAX_TICKERS`; weekend uses internal max).
+    wait
+        If True, block until the job (or coalesced job) is terminal.
     """
-    blocked = require_runs_allowed()
-    if blocked is not None:
-        return {
-            "ok": False,
-            "error": blocked["error"],
-            "runs_allowed": False,
-        }
+    if not force_allow:
+        blocked = require_runs_allowed()
+        if blocked is not None:
+            return {
+                "ok": False,
+                "error": blocked["error"],
+                "runs_allowed": False,
+            }
+
+    cap = int(max_tickers) if max_tickers is not None else JOB_MAX_TICKERS
+    if force_allow and max_tickers is None and source == SOURCE_WEEKEND:
+        cap = JOB_MAX_TICKERS_INTERNAL
 
     parsed = parse_ticker_list(
         tickers,
-        max_tickers=JOB_MAX_TICKERS,
+        max_tickers=cap,
         overflow="error",
     )
     if not parsed.get("ok"):
@@ -395,28 +459,40 @@ def start_refresh_job(
             if hit is not None:
                 view = _public_view(hit)
                 view["coalesced"] = True
+                src = hit.get("source") or SOURCE_MCP
                 view["message"] = (
                     f"Joined in-flight job {hit.get('job_id')} "
-                    f"(request covered by active {hit.get('status')} refresh; "
-                    "no duplicate work). Poll refresh_job_status."
+                    f"(source={src}, status={hit.get('status')}; "
+                    "request covered — no duplicate work). Poll refresh_job_status."
                 )
                 logger.info(
-                    "MCP refresh coalesced into job_id={} n_req={} n_active={}",
+                    "Refresh coalesced into job_id={} source={} n_req={} n_active={}",
                     hit.get("job_id"),
+                    src,
                     len(tlist),
                     hit.get("requested_count"),
                 )
-                return {
+                out = {
                     "ok": True,
                     "coalesced": True,
                     "data": view,
                 }
+                if wait:
+                    waited = wait_for_job(
+                        str(hit.get("job_id")),
+                        timeout_s=wait_timeout_s,
+                    )
+                    if waited.get("ok"):
+                        waited["coalesced"] = True
+                    return waited
+                return out
             view = _public_view(active)
             return {
                 "ok": False,
                 "error": (
                     f"A refresh job is already {active.get('status')} "
-                    f"(job_id={active.get('job_id')}). "
+                    f"(job_id={active.get('job_id')}, "
+                    f"source={active.get('source') or SOURCE_MCP}). "
                     "It does not cover this full ticker list. "
                     "Poll refresh_job_status until it finishes, then start a new one "
                     "for any remaining symbols."
@@ -429,9 +505,11 @@ def start_refresh_job(
         ticker_csv = ",".join(tlist)
         n = len(tlist)
         store = str(jobs_dir())
+        src = (source or SOURCE_MCP).strip().lower() or SOURCE_MCP
         job: dict[str, Any] = {
             "job_id": job_id,
             "kind": JOB_KIND_REFRESH,
+            "source": src,
             "status": STATUS_QUEUED,
             "done": False,
             "tickers": ticker_csv,
@@ -439,9 +517,10 @@ def start_refresh_job(
             "requested_count": n,
             "include_covariates": bool(include_covariates),
             "dry_run": bool(dry_run),
+            "force_allow": bool(force_allow),
             "progress_pct": 0.0,
             "message": (
-                f"Queued — {n} symbol(s), "
+                f"Queued — {n} symbol(s), source={src}, "
                 f"{(n + WORKER_BATCH_SIZE - 1) // WORKER_BATCH_SIZE} batch(es)…"
             ),
             "created_at": _utc_now(),
@@ -463,6 +542,7 @@ def start_refresh_job(
                 "ticker_list": tlist,
                 "include_covariates": bool(include_covariates),
                 "dry_run": bool(dry_run),
+                "force_allow": bool(force_allow),
                 "store_dir": store,
             },
             daemon=True,
@@ -472,17 +552,113 @@ def start_refresh_job(
         thr.start()
 
     logger.info(
-        "MCP refresh job started job_id={} n_tickers={} dry_run={}",
+        "Refresh job started job_id={} source={} n_tickers={} dry_run={}",
         job_id,
+        src,
         n,
         dry_run,
     )
     # Re-read in case worker already advanced
     latest = read_job(job_id) or job
-    return {
+    out = {
         "ok": True,
+        "coalesced": False,
         "data": _public_view(latest),
     }
+    if wait:
+        waited = wait_for_job(job_id, timeout_s=wait_timeout_s)
+        return waited
+    return out
+
+
+def run_all_db_refresh_job(
+    *,
+    include_covariates: bool = True,
+    dry_run: bool = False,
+    symbols: Optional[list[str]] = None,
+    wait: bool = True,
+    wait_timeout_s: Optional[float] = None,
+) -> dict[str, Any]:
+    """Enqueue catch-up refresh for the full DuckDB universe (weekend path).
+
+    Uses the **same** job registry and worker as MCP ``refresh_job_start`` so
+    concurrent clients with a subset of symbols **coalesce** onto this job
+    instead of starting duplicate work. Forecast/gather remain idempotent
+    (skip-if-saved / lean gather).
+
+    If a smaller in-flight job exists, waits for it to finish first (those
+    symbols are then cheap skip-if-done), then starts the full-universe job.
+    If an in-flight job already covers the full universe, joins it.
+    """
+    from canswim.weekend import list_db_symbols
+
+    universe = (
+        sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+        if symbols is not None
+        else list_db_symbols()
+    )
+    if not universe:
+        return {
+            "ok": False,
+            "error": "No symbols in stock_tickers (empty Charts universe).",
+            "symbols": [],
+            "source": SOURCE_WEEKEND,
+        }
+
+    # Drain non-covering active jobs so we can start (or join) full coverage.
+    # Idempotent units: prior job work is not re-done.
+    idle_deadline = (
+        None if wait_timeout_s is None else (time.time() + float(wait_timeout_s))
+    )
+    while True:
+        active = find_active_refresh_job()
+        if active is None:
+            break
+        active_set = _norm_ticker_set(active.get("ticker_list") or active.get("tickers"))
+        univ_set = set(universe)
+        if univ_set and univ_set <= active_set:
+            logger.info(
+                "Weekend joining existing job_id={} (covers full universe n={})",
+                active.get("job_id"),
+                active.get("requested_count"),
+            )
+            if wait:
+                return wait_for_job(
+                    str(active["job_id"]),
+                    timeout_s=wait_timeout_s,
+                )
+            return {"ok": True, "coalesced": True, "data": _public_view(active)}
+        jid = str(active.get("job_id") or "")
+        logger.info(
+            "Weekend waiting for in-flight job_id={} (n={}) before full-universe start",
+            jid,
+            active.get("requested_count"),
+        )
+        remaining = None
+        if idle_deadline is not None:
+            remaining = max(0.0, idle_deadline - time.time())
+            if remaining <= 0:
+                return {
+                    "ok": False,
+                    "error": f"Timed out waiting for active job_id={jid}",
+                    "active_job_id": jid,
+                    "source": SOURCE_WEEKEND,
+                }
+        waited = wait_for_job(jid, timeout_s=remaining)
+        if not waited.get("ok") and not (waited.get("data") or {}).get("done"):
+            return waited
+
+    ticker_csv = ",".join(universe)
+    return start_refresh_job(
+        ticker_csv,
+        include_covariates=include_covariates,
+        dry_run=dry_run,
+        force_allow=True,
+        source=SOURCE_WEEKEND,
+        max_tickers=max(len(universe), JOB_MAX_TICKERS),
+        wait=wait,
+        wait_timeout_s=wait_timeout_s,
+    )
 
 
 def _merge_symbol_lists(*lists: Any) -> list[str]:
@@ -505,6 +681,7 @@ def _run_refresh_worker(
     ticker_list: list[str],
     include_covariates: bool,
     dry_run: bool,
+    force_allow: bool = False,
     store_dir: str | None = None,
 ) -> None:
     def _load() -> Optional[dict[str, Any]]:
@@ -587,15 +764,16 @@ def _run_refresh_worker(
                 _progress(_base + _span * f, msg)
 
             _progress(base, f"Batch {bi + 1}/{n_batches}: starting {batch_csv[:80]}…")
-            # Serialize with weekend scheduler / CLI weekend (shared flock)
+            # Narrow write critical section vs CLI weekend (same host data_dir).
+            # Idempotent units (skip-if-saved + lean gather) make re-entry cheap.
             from canswim.data_run_lock import exclusive_data_run
 
-            with exclusive_data_run(f"mcp-refresh-job-{job_id[:8]}", blocking=True):
+            with exclusive_data_run(f"refresh-job-{job_id[:8]}-b{bi}", blocking=True):
                 result = refresh_symbols(
                     batch_csv,
                     include_covariates=include_covariates,
                     dry_run=dry_run,
-                    force_allow=False,
+                    force_allow=bool(force_allow),
                     progress_cb=_batch_cb,
                     max_tickers=max(len(batch), DEFAULT_MAX_TICKERS),
                 )
