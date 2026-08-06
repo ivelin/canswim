@@ -236,6 +236,7 @@ FAIL_JOB_FAILED = "job_failed"
 FAIL_JOB_INTERRUPTED = "job_interrupted"
 FAIL_MODEL_NOT_LOADED = "model_not_loaded"
 FAIL_REMOTE_API = "remote_api"
+FAIL_FUNDAMENTALS = "fundamentals"
 FAIL_INTERNAL = "internal"
 
 _DEFAULT_CLIENT_HINTS: dict[str, str] = {
@@ -274,6 +275,12 @@ _DEFAULT_CLIENT_HINTS: dict[str, str] = {
     FAIL_REMOTE_API: (
         "Check network, API keys, and provider plan/rate limits; then retry "
         "with a smaller symbol list if needed."
+    ),
+    FAIL_FUNDAMENTALS: (
+        "These symbols lack real local earnings, key metrics, and/or analyst "
+        "estimates. Run Update market data / gather when the data provider plan "
+        "includes those endpoints; do not claim a forecast was produced. "
+        "Forecast never invents fundamentals (no zero-fill placeholders)."
     ),
     FAIL_INTERNAL: (
         "Retry once. If it persists, report the error string to the host operator."
@@ -359,4 +366,11 @@ def infer_fail_reason_from_error(error: str | None) -> str | None:
         "search data" in low and "operator" in low
     ):
         return FAIL_DB_NOT_READY
+    if (
+        "real fundamentals" in low
+        or "no real fundamentals" in low
+        or "zero-filled placeholder" in low
+        or ("earnings" in low and "key metrics" in low and "estimates" in low)
+    ):
+        return FAIL_FUNDAMENTALS
     return None

@@ -78,7 +78,7 @@ Two separate steps, same backend (`canswim.run_triggers`). Details: **[docs/run_
 
 \*MCP write tools need `MCP_ALLOW_RUNS=1`. Full MCP guide: **[docs/mcp.md](docs/mcp.md)**.
 
-Scoped get-market-data uses **~3 years** of history (lookback + catch-up), **fundamentals** (unless `--no_covariates`), and **skips downloads** when local files are already complete. Forecasts **stop** if data is incomplete (no invented prices).
+Scoped get-market-data uses **~3 years** of history (lookback + catch-up), **fundamentals** (unless `--no_covariates`), and **skips downloads** when local files are already complete. Forecasts **stop** if data is incomplete (no invented prices or zero-filled fundamentals).
 
 ```bash
 python -m canswim gatherdata --tickers "AAPL, MSFT"

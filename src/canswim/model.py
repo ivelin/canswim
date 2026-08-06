@@ -427,9 +427,20 @@ class CanswimModel:
         )
         logger.info(f"Prepared {len(self.targets.target_series)} stock targets")
 
-    def prepare_forecast_data(self, start_date: pd.Timestamp = None):
+    def prepare_forecast_data(
+        self,
+        start_date: pd.Timestamp = None,
+        *,
+        allow_fundamentals_imputation: bool = False,
+    ):
         # prepare stock price time series
         ## ticker_train_dict = dict((k, self.ticker_dict[k]) for k in self.stock_tickers)
+        # Forecast/backtest hard rule: never invent fund covariates.
+        # Train sets allow_fundamentals_imputation=True via prepare_data().
+        self.covariates.allow_fundamentals_imputation = bool(
+            allow_fundamentals_imputation
+        )
+        self.covariates.last_fundamentals_skipped = []
         self.prepare_stock_price_data(start_date=start_date)
         self.covariates.prepare_data(
             stock_price_series=self.stock_price_series,
@@ -486,7 +497,10 @@ class CanswimModel:
         logger.info("Forecasting data prepared")
 
     def prepare_data(self):
-        self.prepare_forecast_data(self.train_date_start)
+        # Train may impute fund-thin symbols so feature dim matches checkpoint (#33).
+        self.prepare_forecast_data(
+            self.train_date_start, allow_fundamentals_imputation=True
+        )
         logger.info("Preparing train, val, test splits")
         self.__prepare_data_splits()
 

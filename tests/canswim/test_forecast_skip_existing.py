@@ -106,28 +106,36 @@ def test_get_stocks_without_forecast_subtracts_already_saved():
     assert out == ["AMD"]
 
 
+def _fund_all_ready(symbols, **kwargs):
+    return [str(s).strip().upper() for s in symbols], []
+
+
 def test_forecast_skips_model_when_all_already_saved(monkeypatch):
     monkeypatch.setenv("MCP_ALLOW_RUNS", "1")
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": None,
-            "error": None,
-            "latest_close_used": None,
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=_fund_all_ready,
     ):
         with patch(
-            "canswim.run_triggers.list_symbols_with_saved_forecast",
-            return_value={"AAPL", "MSFT"},
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": None,
+                "error": None,
+                "latest_close_used": None,
+            },
         ):
-            with patch("canswim.forecast.CanswimForecaster") as CF:
-                r = forecast_for_tickers(
-                    "AAPL,MSFT", forecast_start_date="2026-03-02"
-                )
+            with patch(
+                "canswim.run_triggers.list_symbols_with_saved_forecast",
+                return_value={"AAPL", "MSFT"},
+            ):
+                with patch("canswim.forecast.CanswimForecaster") as CF:
+                    r = forecast_for_tickers(
+                        "AAPL,MSFT", forecast_start_date="2026-03-02"
+                    )
     assert r["ok"] is True
     assert r.get("already_saved") is True
     assert r.get("model_loaded") is False
@@ -153,25 +161,29 @@ def test_forecast_only_runs_missing_symbols(monkeypatch):
     cf.get_forecast.return_value = {"MSFT": mock_ts}
 
     with patch(
-        "canswim.run_triggers.resolve_start_for_run",
-        return_value={
-            "ok": True,
-            "start": "2026-03-02",
-            "reason": "snapped_week_start",
-            "live_default": "2026-07-13",
-            "input": None,
-            "error": None,
-            "latest_close_used": None,
-        },
+        "canswim.eligibility.partition_by_fundamentals",
+        side_effect=_fund_all_ready,
     ):
         with patch(
-            "canswim.run_triggers.list_symbols_with_saved_forecast",
-            return_value={"AAPL"},  # AAPL done; only MSFT needs work
+            "canswim.run_triggers.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-03-02",
+                "reason": "snapped_week_start",
+                "live_default": "2026-07-13",
+                "input": None,
+                "error": None,
+                "latest_close_used": None,
+            },
         ):
-            with patch("canswim.forecast.CanswimForecaster", return_value=cf):
-                r = forecast_for_tickers(
-                    "AAPL,MSFT", forecast_start_date="2026-03-02"
-                )
+            with patch(
+                "canswim.run_triggers.list_symbols_with_saved_forecast",
+                return_value={"AAPL"},  # AAPL done; only MSFT needs work
+            ):
+                with patch("canswim.forecast.CanswimForecaster", return_value=cf):
+                    r = forecast_for_tickers(
+                        "AAPL,MSFT", forecast_start_date="2026-03-02"
+                    )
 
     assert r["ok"] is True
     assert r.get("model_loaded") is True

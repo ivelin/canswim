@@ -57,6 +57,28 @@ class Covariates:
         self.future_covariates = {}
         self.data_dir = os.getenv("data_dir", "data")
         self.data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
+        # Forecast/backtest: False → never invent fund rows (hard rule).
+        # Train may set True so #33 IPO / fund-thin dim padding still works.
+        self.allow_fundamentals_imputation = False
+        self.last_fundamentals_skipped: list[str] = []
+
+    def _impute_fund_or_skip(
+        self,
+        *,
+        symbol: str,
+        build_fn,
+        what: str,
+    ):
+        """Zero-fill only when imputation allowed; else record skip and return None."""
+        if self.allow_fundamentals_imputation:
+            logger.info(f"Zero-filling {what} for {symbol} (train imputation allowed)")
+            return build_fn()
+        logger.warning(
+            f"No real {what} for {symbol}; refusing zero-fill "
+            "(forecast requires real fundamentals)"
+        )
+        self.last_fundamentals_skipped.append(str(symbol).upper())
+        return None
 
     @property
     def pyarrow_filters(self):
@@ -98,10 +120,11 @@ class Covariates:
         return t_earn
 
     def prepare_earn_series(self, tickers=None, stock_price_series: dict = None):
-        """Earnings past-covs; missing names (IPOs, ETFs, thin coverage) are zero-filled.
+        """Earnings past-covs.
 
-        Fund-thin symbols never have EPS/revenue history; we still emit the train
-        schema so past_covariates dim matches the checkpoint (same idea as #33).
+        Train (``allow_fundamentals_imputation=True``): missing names may be
+        zero-filled so feature dim matches the checkpoint (#33).
+        Forecast (default False): missing names are **skipped** — never invented.
         """
         logger.info("preparing past covariates: earnings estimates ")
         price_map = stock_price_series if isinstance(stock_price_series, dict) else {}
@@ -110,16 +133,22 @@ class Covariates:
 
         earn_src = getattr(self, "earnings_loaded_df", None)
         if earn_src is None or (hasattr(earn_src, "empty") and earn_src.empty):
-            # No earnings in this batch (e.g. sector ETF alone) — fixed schema
-            if price_map:
+            if price_map and self.allow_fundamentals_imputation:
                 logger.info(
-                    "No earnings loaded for this batch (common for ETFs / fund-thin "
-                    f"names); zero-filling {len(_EARN_FEATURE_COLS)} earn columns"
+                    "No earnings loaded for this batch; zero-filling "
+                    f"{len(_EARN_FEATURE_COLS)} earn columns (train imputation)"
                 )
                 for t, prices in price_map.items():
                     t_earn_series[t] = self._zero_cov_from_columns(
                         _EARN_FEATURE_COLS, prices, fillna_value=-1
                     )
+            elif price_map:
+                for t in price_map:
+                    self.last_fundamentals_skipped.append(str(t).upper())
+                logger.warning(
+                    "No earnings loaded for this batch; refusing zero-fill for "
+                    f"{list(price_map.keys())} (forecast requires real fundamentals)"
+                )
             return t_earn_series
 
         # convert date strings to numerical representation
@@ -176,29 +205,32 @@ class Covariates:
                 t_earn_series[t] = tes
             except (KeyError, AssertionError, ValueError) as e:
                 logger.warning(
-                    f"No earnings series for {t} ({type(e)}: {e}); will zero-fill"
+                    f"No earnings series for {t} ({type(e)}: {e})"
                 )
 
-        # Issue #33 / fund-thin (ETF, IPO): impute missing earn covs so dim matches train
+        # Train-only: impute missing earn covs so dim matches checkpoint (#33).
+        # Forecast: leave missing symbols out (hard rule — no invented fundamentals).
         if price_map:
             template = next(iter(t_earn_series.values()), None)
-            if template is None:
-                logger.info(
-                    "No earnings in batch; zero-filling "
-                    f"{len(_EARN_FEATURE_COLS)} columns for all requested symbols"
-                )
-                for t, prices in price_map.items():
-                    t_earn_series[t] = self._zero_cov_from_columns(
-                        _EARN_FEATURE_COLS, prices, fillna_value=-1
-                    )
-            else:
-                for t, prices in price_map.items():
-                    if t not in t_earn_series:
-                        logger.info(
-                            f"Zero-filling earnings covariates for {t} "
-                            f"({len(template.components)} columns)"
+            for t, prices in price_map.items():
+                if t in t_earn_series:
+                    continue
+                if self.allow_fundamentals_imputation:
+                    if template is None:
+                        t_earn_series[t] = self._zero_cov_from_columns(
+                            _EARN_FEATURE_COLS, prices, fillna_value=-1
                         )
+                    else:
                         t_earn_series[t] = self._zero_cov_like(template, prices)
+                    logger.info(
+                        f"Zero-filling earnings covariates for {t} (train imputation)"
+                    )
+                else:
+                    logger.warning(
+                        f"No real earnings for {t}; refusing zero-fill "
+                        "(forecast requires real fundamentals)"
+                    )
+                    self.last_fundamentals_skipped.append(str(t).upper())
 
         return t_earn_series
 
@@ -312,17 +344,32 @@ class Covariates:
                 ), f"found gaps in series: \n{ts_padded.gaps()}"
                 t_inst_ownership_series[t] = ts_padded
             except KeyError as e:
-                # Do not drop the symbol: model was trained with ownership columns.
-                logger.info(
-                    f"No institutional ownership rows for {t} ({e}); zero-filling "
-                    f"{len(self.INST_OWNERSHIP_COLS)} ownership columns"
-                )
-                t_inst_ownership_series[t] = self._zero_ownership_series(prices)
+                if self.allow_fundamentals_imputation:
+                    logger.info(
+                        f"No institutional ownership rows for {t} ({e}); "
+                        f"zero-filling {len(self.INST_OWNERSHIP_COLS)} columns "
+                        "(train imputation)"
+                    )
+                    t_inst_ownership_series[t] = self._zero_ownership_series(prices)
+                else:
+                    logger.warning(
+                        f"No real institutional ownership for {t} ({e}); "
+                        "refusing zero-fill (forecast requires real fundamentals)"
+                    )
+                    self.last_fundamentals_skipped.append(str(t).upper())
             except AssertionError as e:
-                logger.warning(
-                    f"Ownership series invalid for {t} ({type(e)}: {e}); zero-filling"
-                )
-                t_inst_ownership_series[t] = self._zero_ownership_series(prices)
+                if self.allow_fundamentals_imputation:
+                    logger.warning(
+                        f"Ownership series invalid for {t} ({type(e)}: {e}); "
+                        "zero-filling (train imputation)"
+                    )
+                    t_inst_ownership_series[t] = self._zero_ownership_series(prices)
+                else:
+                    logger.warning(
+                        f"Ownership series invalid for {t} ({type(e)}: {e}); "
+                        "refusing zero-fill"
+                    )
+                    self.last_fundamentals_skipped.append(str(t).upper())
 
         return t_inst_ownership_series
 
@@ -340,10 +387,15 @@ class Covariates:
         new_covs = new_covs or {}
         # Nothing new to stack — keep existing (do not wipe symbols)
         if not new_covs:
-            if column_template is not None and old_covs:
+            if (
+                column_template is not None
+                and old_covs
+                and self.allow_fundamentals_imputation
+            ):
                 logger.warning(
                     "No new covariates for this stack step; zero-filling "
-                    f"{len(column_template.components)} template columns"
+                    f"{len(column_template.components)} template columns "
+                    "(train imputation)"
                 )
                 stacked = {}
                 for t, covs in old_covs.items():
@@ -358,9 +410,15 @@ class Covariates:
                             f"Skipping {t} while zero-fill stacking: {type(e)}: {e}"
                         )
                 return stacked if stacked else old_covs
-            logger.warning(
-                "No new covariates for this stack step; keeping prior covariates"
-            )
+            if not new_covs and old_covs and not self.allow_fundamentals_imputation:
+                logger.warning(
+                    "No new covariates for this stack step and imputation disabled; "
+                    "keeping prior covariates without invented fund columns"
+                )
+            else:
+                logger.warning(
+                    "No new covariates for this stack step; keeping prior covariates"
+                )
             return old_covs
         # stack sales and earnings to past covariates
         stacked_covs = {}
@@ -368,13 +426,19 @@ class Covariates:
         for t, covs in list(old_covs.items()):
             try:
                 if t not in new_covs:
-                    # Missing optional cov for this ticker: zero-fill columns so
-                    # feature dim stays consistent and we do not drop the symbol.
-                    logger.info(
-                        f"No new covariates for {t}; zero-filling "
-                        f"{len(template.components)} columns"
-                    )
-                    new_ts = self._zero_cov_like(template, covs)
+                    if self.allow_fundamentals_imputation:
+                        logger.info(
+                            f"No new covariates for {t}; zero-filling "
+                            f"{len(template.components)} columns (train imputation)"
+                        )
+                        new_ts = self._zero_cov_like(template, covs)
+                    else:
+                        logger.warning(
+                            f"Dropping {t} from covariate stack: missing fund block "
+                            "(forecast requires real fundamentals; no zero-fill)"
+                        )
+                        self.last_fundamentals_skipped.append(str(t).upper())
+                        continue
                 else:
                     new_ts = new_covs[t]
                 assert (
@@ -489,22 +553,32 @@ class Covariates:
         return timeseries_from_observed_df(aligned)
 
     def prepare_key_metrics(self, stock_price_series=None):
-        """Key metrics past-covs; missing names (IPOs, ETFs) are zero-filled to train dim."""
+        """Key metrics past-covs.
+
+        Train may zero-fill missing names; forecast skips them (no invented fund data).
+        """
         logger.info("preparing past covariates: key metrics")
         t_kms_series = {}
         stock_price_series = stock_price_series or {}
         kms_src = getattr(self, "kms_loaded_df", None)
         if kms_src is None or (hasattr(kms_src, "empty") and kms_src.empty):
             cols = self._key_metrics_template_columns()
-            if cols and stock_price_series:
+            if cols and stock_price_series and self.allow_fundamentals_imputation:
                 logger.info(
-                    "No key metrics loaded for this batch (common for ETFs / "
-                    f"fund-thin names); zero-filling {len(cols)} columns"
+                    "No key metrics loaded for this batch; zero-filling "
+                    f"{len(cols)} columns (train imputation)"
                 )
                 for t, prices in stock_price_series.items():
                     t_kms_series[t] = self._zero_cov_from_columns(
                         cols, prices, fillna_value=-1
                     )
+            elif stock_price_series:
+                for t in stock_price_series:
+                    self.last_fundamentals_skipped.append(str(t).upper())
+                logger.warning(
+                    "No key metrics loaded for this batch; refusing zero-fill "
+                    f"for {list(stock_price_series.keys())}"
+                )
             return t_kms_series
 
         kms_loaded_df = kms_src.copy()
@@ -553,35 +627,35 @@ class Covariates:
                 ), f"found gaps in tmks series: \n{kms_ser_padded.gaps()}"
                 t_kms_series[t] = kms_ser_padded
             except (KeyError, AssertionError, ValueError) as e:
-                logger.warning(
-                    f"No key metrics for {t} ({type(e)}: {e}); will zero-fill"
-                )
-        # Issue #33 / fund-thin (ETF, IPO): impute missing key metrics so dim matches
+                logger.warning(f"No key metrics for {t} ({type(e)}: {e})")
+        # Train-only impute; forecast skips missing symbols.
         if stock_price_series:
             template = next(iter(t_kms_series.values()), None)
-            if template is None:
-                cols = self._key_metrics_template_columns()
-                if cols:
-                    logger.info(
-                        f"No key metrics in batch; zero-filling {len(cols)} columns "
-                        "for all requested symbols"
-                    )
-                    for t, prices in stock_price_series.items():
+            cols = self._key_metrics_template_columns() if template is None else None
+            for t, prices in stock_price_series.items():
+                if t in t_kms_series:
+                    continue
+                if self.allow_fundamentals_imputation:
+                    if template is not None:
+                        t_kms_series[t] = self._zero_cov_like(template, prices)
+                    elif cols:
                         t_kms_series[t] = self._zero_cov_from_columns(
                             cols, prices, fillna_value=-1
                         )
+                    else:
+                        logger.warning(
+                            "No key-metrics template available; stack will omit this block"
+                        )
+                        break
+                    logger.info(
+                        f"Zero-filling key metrics for {t} (train imputation)"
+                    )
                 else:
                     logger.warning(
-                        "No key-metrics template available; stack will omit this block"
+                        f"No real key metrics for {t}; refusing zero-fill "
+                        "(forecast requires real fundamentals)"
                     )
-            else:
-                for t, prices in stock_price_series.items():
-                    if t not in t_kms_series:
-                        logger.info(
-                            f"Zero-filling key metrics for {t} "
-                            f"({len(template.components)} columns)"
-                        )
-                        t_kms_series[t] = self._zero_cov_like(template, prices)
+                    self.last_fundamentals_skipped.append(str(t).upper())
         return t_kms_series
 
     def _key_metrics_template_columns(self) -> list[str]:
@@ -884,35 +958,36 @@ class Covariates:
 
                 except (KeyError, AssertionError, ValueError) as e:
                     logger.info(
-                        f"No analyst estimates[{period}] for {t} ({type(e)}: {e}); "
-                        "will zero-fill"
+                        f"No analyst estimates[{period}] for {t} ({type(e)}: {e})"
                     )
-        # Issue #33 / fund-thin (ETF, IPO): impute so future_cov dim matches train
+        # Train-only impute; forecast skips missing symbols.
         if stock_price_series:
             template = next(iter(t_est_series.values()), None)
-            if template is None:
+            if template is None and self.allow_fundamentals_imputation:
                 logger.info(
-                    f"No analyst estimates[{period}] in batch "
-                    "(common for ETFs / fund-thin names); loading disk template"
+                    f"No analyst estimates[{period}] in batch; "
+                    "loading disk template (train imputation)"
                 )
                 template = self._build_est_template_from_disk(
                     period=period,
                     n_future_periods=n_future_periods,
                     price_like=next(iter(stock_price_series.values())),
                 )
-            if template is not None:
-                for t, prices in stock_price_series.items():
-                    if t not in t_est_series:
-                        logger.info(
-                            f"Zero-filling analyst estimates[{period}] for {t} "
-                            f"({len(template.components)} columns)"
-                        )
-                        t_est_series[t] = self._zero_cov_like(template, prices)
-            else:
-                logger.warning(
-                    f"No analyst estimates[{period}] template; "
-                    "stack may omit this block (dim risk)"
-                )
+            for t, prices in stock_price_series.items():
+                if t in t_est_series:
+                    continue
+                if self.allow_fundamentals_imputation and template is not None:
+                    logger.info(
+                        f"Zero-filling analyst estimates[{period}] for {t} "
+                        f"(train imputation, {len(template.components)} columns)"
+                    )
+                    t_est_series[t] = self._zero_cov_like(template, prices)
+                else:
+                    logger.warning(
+                        f"No real analyst estimates[{period}] for {t}; "
+                        "refusing zero-fill (forecast requires real fundamentals)"
+                    )
+                    self.last_fundamentals_skipped.append(str(t).upper())
         return t_est_series
 
     def _build_est_template_from_disk(

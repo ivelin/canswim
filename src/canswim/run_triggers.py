@@ -109,8 +109,15 @@ COVARIATE_FAIL_MSG = (
     "Prices may be fine, but model inputs (ownership, estimates, or other fundamentals) "
     "are missing or could not be aligned. "
     "Try Update market data again (includes fundamentals), then re-run the forecast. "
-    "ETFs and other fund-thin names use zero-filled fund covariates (like IPOs); "
-    "if this still fails, see Technical log for a feature-dimension mismatch."
+    "Forecast never invents fundamentals (no zero-filled fund placeholders). "
+    "If this still fails, see Technical log for a feature-dimension mismatch."
+)
+
+MISSING_FUNDAMENTALS_MSG = (
+    "No real fundamentals on file for: {symbols}. "
+    "Forecasts and backtests require local earnings, key metrics, and analyst estimates "
+    "(not zero-filled placeholders). "
+    "Update market data when your FMP plan includes those endpoints, then retry."
 )
 
 # Catch-up as-of origins need full model lookback *before* the origin date.
@@ -787,6 +794,36 @@ def forecast_for_tickers(
 
     tickers: list[str] = parsed["tickers"]
     messages: list[str] = list(parsed.get("messages") or [])
+
+    # Hard rule: do not forecast/backtest without real fund data on disk.
+    from canswim.eligibility import partition_by_fundamentals
+
+    fund_ready, fund_missing = partition_by_fundamentals(tickers)
+    if fund_missing:
+        messages.append(
+            "Skipped (no real fundamentals — earnings + key metrics + estimates): "
+            + ", ".join(fund_missing)
+        )
+    if not fund_ready:
+        return {
+            "ok": False,
+            "error": MISSING_FUNDAMENTALS_MSG.format(
+                symbols=", ".join(fund_missing) or "requested symbols"
+            ),
+            "tickers": tickers,
+            "rejected": parsed.get("rejected", []),
+            "resolved_start": None,
+            "forecasted": [],
+            "skipped": fund_missing,
+            "incomplete": fund_missing,
+            "need_gather": True,
+            "need_covariates": True,
+            "fail_reason": "fundamentals",
+            "messages": messages,
+        }
+    if fund_missing:
+        tickers = fund_ready
+
     blank = forecast_start_date is None or not str(forecast_start_date).strip()
     months = (
         catchup_months
@@ -971,10 +1008,12 @@ def forecast_for_tickers(
                 symbols=", ".join(incomplete_syms) or "requested symbols",
                 need=need_bars or 336,
             )
-        elif reason == "covariates":
-            err = COVARIATE_FAIL_MSG.format(
-                symbols=", ".join(incomplete_syms) or "requested symbols"
-            )
+        elif reason in ("covariates", "fundamentals"):
+            err = (
+                MISSING_FUNDAMENTALS_MSG
+                if reason == "fundamentals"
+                else COVARIATE_FAIL_MSG
+            ).format(symbols=", ".join(incomplete_syms) or "requested symbols")
         else:
             err = INCOMPLETE_DATA_MSG.format(
                 symbols=", ".join(incomplete_syms) or "requested symbols"
@@ -992,8 +1031,8 @@ def forecast_for_tickers(
             "skipped": incomplete_syms,
             "already_have_forecast": sorted(all_already),
             "messages": messages,
-            "need_gather": reason in ("prices", "short_history"),
-            "need_covariates": reason == "covariates",
+            "need_gather": reason in ("prices", "short_history", "fundamentals"),
+            "need_covariates": reason in ("covariates", "fundamentals"),
             "model_loaded": model_loaded,
             "fail_reason": reason,
             "skip_details": list(skip_details or []),

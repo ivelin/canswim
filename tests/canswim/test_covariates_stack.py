@@ -42,6 +42,7 @@ def test_prepare_ownership_zero_fills_missing_ticker():
     c.inst_symbol_ownership_df = pd.DataFrame(columns=cols, index=idx)
 
     prices = _price_ts()
+    c.allow_fundamentals_imputation = True
     out = c.prepare_institutional_symbol_ownership_series(
         stock_price_series={"QLYS": prices}
     )
@@ -51,6 +52,7 @@ def test_prepare_ownership_zero_fills_missing_ticker():
 
 def test_stack_zero_fills_missing_ticker_not_drop():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     base = _price_ts().drop_columns(["Close"])  # Open/High/Low/Volume
     # Only AAPL has new covs; QLYS should be zero-filled not dropped
     new_aapl = timeseries_from_observed_df(
@@ -72,6 +74,7 @@ def test_stack_zero_fills_missing_ticker_not_drop():
 
 def test_stack_empty_new_with_column_template():
     c = Covariates()
+    c.allow_fundamentals_imputation = True
     base = _price_ts().drop_columns(["Close"])
     template = timeseries_from_observed_df(
         pd.DataFrame(

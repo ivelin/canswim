@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Sequence, Tuple
+from pathlib import Path
+from typing import Optional, Sequence, Tuple
 
 import pandas as pd
 from loguru import logger
@@ -126,6 +127,127 @@ def assert_no_invented_ohlc(price_df: pd.DataFrame) -> None:
 
 class GroundTruthDataError(RuntimeError):
     """Raised when train/forecast cannot proceed without inventing market data."""
+
+
+# --- Real fundamentals (forecast hard rule: no zero-filled fund covariates) ---
+
+_FUND_EARNINGS = "earnings_calendar.parquet"
+_FUND_KEY_METRICS = "keymetrics_history.parquet"
+_FUND_EST_ANNUAL = "analyst_estimates_annual.parquet"
+_FUND_EST_QUARTER = "analyst_estimates_quarter.parquet"
+
+
+def data_3rd_party_root(
+    data_dir: Optional[str | Path] = None,
+    third: Optional[str] = None,
+) -> Path:
+    import os
+
+    root = Path(data_dir or os.getenv("data_dir", "data"))
+    sub = third or os.getenv("data-3rd-party", "data-3rd-party")
+    return root / sub
+
+
+def _symbols_in_parquet(path: Path) -> set[str]:
+    """Uppercase symbols present as MultiIndex level 0 or a symbol column."""
+    if not path.is_file():
+        return set()
+    try:
+        df = pd.read_parquet(path)
+    except Exception as e:
+        logger.warning("Could not read {}: {}", path, e)
+        return set()
+    if df is None or df.empty:
+        return set()
+    if isinstance(df.index, pd.MultiIndex) and df.index.nlevels >= 1:
+        return {str(s).upper() for s in df.index.get_level_values(0).unique()}
+    for col in ("Symbol", "symbol"):
+        if col in df.columns:
+            return {str(s).upper() for s in df[col].dropna().unique()}
+    return set()
+
+
+def load_fundamentals_symbol_sets(
+    data_dir: Optional[str | Path] = None,
+    third: Optional[str] = None,
+) -> dict[str, set[str]]:
+    """Load symbol sets for each required fund parquet (cached by caller if needed)."""
+    root = data_3rd_party_root(data_dir, third)
+    return {
+        "earnings": _symbols_in_parquet(root / _FUND_EARNINGS),
+        "key_metrics": _symbols_in_parquet(root / _FUND_KEY_METRICS),
+        "est_annual": _symbols_in_parquet(root / _FUND_EST_ANNUAL),
+        "est_quarter": _symbols_in_parquet(root / _FUND_EST_QUARTER),
+    }
+
+
+def symbols_with_real_fundamentals(
+    data_dir: Optional[str | Path] = None,
+    third: Optional[str] = None,
+    *,
+    fund_sets: Optional[dict[str, set[str]]] = None,
+) -> set[str]:
+    """Symbols that have real local earnings + key metrics + estimates.
+
+    Requires non-empty rows for:
+    - earnings calendar
+    - key metrics
+    - analyst estimates (annual **or** quarterly)
+
+    Used as a hard gate for forecast/backtest (no zero-filled fund placeholders).
+    """
+    sets = fund_sets or load_fundamentals_symbol_sets(data_dir, third)
+    estimates = sets.get("est_annual", set()) | sets.get("est_quarter", set())
+    return (
+        sets.get("earnings", set())
+        & sets.get("key_metrics", set())
+        & estimates
+    )
+
+
+def fundamentals_are_ready(
+    symbol: str,
+    *,
+    data_dir: Optional[str | Path] = None,
+    third: Optional[str] = None,
+    fund_sets: Optional[dict[str, set[str]]] = None,
+) -> Tuple[bool, str]:
+    """Return (ok, reason) for a single symbol's real fundamentals on disk."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return False, "empty symbol"
+    sets = fund_sets or load_fundamentals_symbol_sets(data_dir, third)
+    missing: list[str] = []
+    if sym not in sets.get("earnings", set()):
+        missing.append("earnings")
+    if sym not in sets.get("key_metrics", set()):
+        missing.append("key_metrics")
+    est = sets.get("est_annual", set()) | sets.get("est_quarter", set())
+    if sym not in est:
+        missing.append("analyst_estimates")
+    if missing:
+        return False, "missing real " + ", ".join(missing)
+    return True, "ok"
+
+
+def partition_by_fundamentals(
+    symbols: Sequence[str],
+    *,
+    data_dir: Optional[str | Path] = None,
+    third: Optional[str] = None,
+    fund_sets: Optional[dict[str, set[str]]] = None,
+) -> Tuple[list[str], list[str]]:
+    """Split symbols into (ready, missing_fundamentals), preserving order."""
+    sets = fund_sets or load_fundamentals_symbol_sets(data_dir, third)
+    ready: list[str] = []
+    missing: list[str] = []
+    for s in symbols:
+        ok, _ = fundamentals_are_ready(s, fund_sets=sets)
+        if ok:
+            ready.append(str(s).strip().upper())
+        else:
+            missing.append(str(s).strip().upper())
+    return ready, missing
 
 
 def observed_trading_day_freq(index: pd.DatetimeIndex) -> pd.offsets.CustomBusinessDay:

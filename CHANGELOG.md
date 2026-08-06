@@ -2,6 +2,25 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260806
+
+Forecast/backtest must not invent fundamentals (zero-filled earnings, key metrics, or estimates).
+
+### Highlights
+
+- **Hard rule** — forecast/catch-up/refresh skip symbols without real local
+  earnings + key metrics + analyst estimates (`fail_reason=fundamentals`)
+- **No forecast-time fund zero-fill** — train may still impute (#33) via
+  `allow_fundamentals_imputation=True`; inference refuses placeholders
+- **Operator purge** — `scripts/purge_forecasts_without_fundamentals.py` removes
+  hive partitions that lack fund data; rebuild DuckDB after
+
+### Install
+
+```bash
+pip install canswim==0.0.20260806
+```
+
 ## 0.0.20260727
 
 MCP clients (SuperGrok, etc.) need stable, human-readable failures with machine-readable discriminators — not bare `AttributeError` fragments.
