@@ -64,6 +64,8 @@ parser.add_argument(
         `mcp` — MCP server (read-only by default; write tools need MCP_ALLOW_RUNS=1).
           Use --http / --transport streamable-http --host/--port for gateway HTTP.
         `resolve_start` — show which forecast start date would be used.
+        `weekend` — host job: gather + live-week forecast for all DB symbols
+          (stock_tickers). Use with systemd timer or cron on weekends.
         """,
     choices=[
         "dashboard",
@@ -75,6 +77,7 @@ parser.add_argument(
         "forecast",
         "mcp",
         "resolve_start",
+        "weekend",
     ],
 )
 
@@ -103,7 +106,35 @@ parser.add_argument(
     action="store_true",
     default=False,
     help=(
-        "With `forecast --tickers`: only check symbols and start date (no model run)."
+        "With `forecast --tickers` or `weekend`: plan only (no model / no gather writes)."
+    ),
+)
+
+parser.add_argument(
+    "--catchup",
+    action="store_true",
+    default=False,
+    help=(
+        "With `weekend`: blank forecast start (monthly catch-up + live). "
+        "Default is live week start only."
+    ),
+)
+
+parser.add_argument(
+    "--skip_gather",
+    action="store_true",
+    default=False,
+    help="With `weekend`: forecast only (skip market-data update).",
+)
+
+parser.add_argument(
+    "--batch_size",
+    type=int,
+    required=False,
+    default=None,
+    help=(
+        "With `weekend`: symbols per gather/forecast batch "
+        "(default WEEKEND_BATCH_SIZE or 25)."
     ),
 )
 
@@ -268,6 +299,18 @@ match args.task:
         from canswim.cli_run import run_resolve_start
 
         sys.exit(run_resolve_start(args.forecast_start_date))
+    case "weekend":
+        from canswim.cli_run import run_weekend
+
+        sys.exit(
+            run_weekend(
+                dry_run=bool(args.dry_run),
+                catchup=bool(args.catchup),
+                include_covariates=not args.no_covariates,
+                batch_size=args.batch_size,
+                skip_gather=bool(args.skip_gather),
+            )
+        )
     case "mcp":
         from canswim.mcp.server import main as mcp_main
 

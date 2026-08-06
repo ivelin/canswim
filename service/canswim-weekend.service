@@ -1,0 +1,32 @@
+[Unit]
+Description=CANSWIM weekend gather + live-week forecast (all stock_tickers)
+Documentation=https://ivelin.github.io/canswim/deploy_service/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same layout as canswim-mcp / dashboard — override in drop-ins if needed.
+Environment=CANSWIM_DIR=%h/canswim
+Environment=CANSWIM_HOME=%h/.canswim
+Environment=data_dir=%h/.canswim/data
+Environment=db_file=canswim_local.duckdb
+Environment=hfhub_sync=False
+Environment=PYTHON=%h/.venvs/dgx-spark-cu130/bin/python
+WorkingDirectory=%h/canswim
+# Host operator job (not MCP-gated): force_allow is built into the weekend path.
+ExecStart=/bin/bash -lc 'set -euo pipefail; \
+  cd "${CANSWIM_DIR}"; \
+  export PYTHONPATH="${CANSWIM_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"; \
+  export data_dir="${data_dir}"; \
+  export db_file="${db_file}"; \
+  export hfhub_sync="${hfhub_sync:-False}"; \
+  if [[ -r "${HOME}/.env" ]]; then set -a; source "${HOME}/.env"; set +a; \
+    export FMP_API_KEY="${FMP_API_KEY:-${FMP_API_Key:-}}"; fi; \
+  exec "${PYTHON:-python3}" -m canswim weekend'
+Nice=10
+# Long runs (full DB) can take hours
+TimeoutStartSec=12h
+
+[Install]
+WantedBy=default.target

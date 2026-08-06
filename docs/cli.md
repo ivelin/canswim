@@ -29,6 +29,7 @@ Local work should keep **`hfhub_sync=False`** (default) unless you intentionally
 | `gatherdata` | Get market data (full universe or scoped) | `--tickers`, `--no_covariates` |
 | `forecast` | Run forecasts (full or scoped) | `--tickers`, `--forecast_start_date`, `--dry_run` |
 | `resolve_start` | Print which forecast start date would be used | `--forecast_start_date` |
+| `weekend` | Host job: gather + **live week** forecast for **all** DuckDB `stock_tickers` | `--dry_run`, `--catchup`, `--skip_gather`, `--batch_size`, `--no_covariates` |
 | `mcp` | MCP server for clients | env `MCP_ALLOW_RUNS=1` for writes; `--http --host --port` for Streamable HTTP |
 | `train` | Continuous model training (full history) | `--new_model` |
 | `modelsearch` | Hyperparameter search | — |
@@ -63,14 +64,35 @@ python -m canswim dashboard --same_data True
 
 Without `--tickers`, `gatherdata` / `forecast` keep **full-universe / train-style** behavior (longer history, not the lean 2y scoped path).
 
+### Weekend job (all symbols in the database)
+
+Uses the Charts/search universe (`stock_tickers` in DuckDB), not a CSV alone.
+Default forecast origin is the **live week start** (`resolve_start` with a blank date). Batches through gather + forecast so a full DB does not hit MCP-style 50-symbol caps.
+
+```bash
+# Plan only (start date + batch list)
+data_dir=$HOME/.canswim/data python -m canswim weekend --dry_run
+
+# Live run (host operator; long-running)
+data_dir=$HOME/.canswim/data python -m canswim weekend
+
+# Optional: monthly catch-up + live for the whole DB (much longer)
+data_dir=$HOME/.canswim/data python -m canswim weekend --catchup
+```
+
+Production timer: [deploy_service.md](deploy_service.md) (`canswim-weekend.timer`). Wrapper: `./weekend.sh`.
+
 ### Flags (scoped gather / forecast)
 
 | Flag | Tasks | Meaning |
 |------|-------|---------|
 | `--tickers "AAPL, MSFT"` | `gatherdata`, `forecast` | Scoped run via `run_triggers` (≤50 symbols) |
 | `--forecast_start_date YYYY-MM-DD` | `forecast`, `resolve_start` | Origin date; week-aligned per [run_triggers.md](run_triggers.md) |
-| `--dry_run` | `forecast --tickers` | Validate only (no torch) |
-| `--no_covariates` | `gatherdata --tickers` | Prices (+ broad market path) only; skip earnings, ownership, etc. |
+| `--dry_run` | `forecast --tickers`, `weekend` | Validate only (no torch / no gather writes for weekend) |
+| `--catchup` | `weekend` | Monthly catch-up + live (blank start); default is **live week only** |
+| `--skip_gather` | `weekend` | Forecast only |
+| `--batch_size N` | `weekend` | Symbols per batch (default `WEEKEND_BATCH_SIZE` or 25) |
+| `--no_covariates` | `gatherdata --tickers`, `weekend` | Prices only; skip earnings, ownership, etc. |
 | `--same_data True` | `dashboard` | Reuse DuckDB search DB (faster start) |
 | `--new_model True` | `train` | Train a new model instead of continuing |
 | `--http` | `mcp` | Streamable HTTP (gateway) instead of stdio |
