@@ -1,29 +1,29 @@
-#!/usr/bin/bash
-#args=("$@")
+#!/usr/bin/env bash
+# CANSWIM weekend forecast — all symbols in the Charts/search DB (stock_tickers).
+# Prefer systemd: service/canswim-weekend.timer (see docs/deploy_service.md).
+# Cron example (Saturday 06:00):
+#   0 6 * * 6 /home/YOU/canswim/weekend.sh >> /tmp/canswim-weekend.log 2>&1
+set -euo pipefail
 
-# This script is intended to be executed by cron each weekend.
-# The goal is to pull latest market data for the week 
-# and run forecast for the following week.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${ROOT}"
 
-# stop on first error
-# print verbose messages
-set -ex
+export CANSWIM_DIR="${CANSWIM_DIR:-${ROOT}}"
+export CANSWIM_HOME="${CANSWIM_HOME:-${HOME}/.canswim}"
+export data_dir="${data_dir:-${CANSWIM_HOME}/data}"
+export db_file="${db_file:-canswim_local.duckdb}"
+export hfhub_sync="${hfhub_sync:-False}"
+export PYTHONPATH="${CANSWIM_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 
-echo "CANSWIM Weekend Forecast Routine: Starting..."
+if [[ -r "${HOME}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${HOME}/.env"
+  set +a
+  export FMP_API_KEY="${FMP_API_KEY:-${FMP_API_Key:-}}"
+fi
 
-conda activate canswim
-pip install -e ./
-
-#python -m canswim "${args[@]}"
-
-python -m canswim 
-
-# gather up to date market data
-##./canswim.sh gatherdata
-
-# run forecast and upload to hf hub
-##./canswim.sh forecast
-
-echo "CANSWIM Weekend Forecast Routine: Finished."
-
-
+PYTHON="${CANSWIM_PYTHON:-${PYTHON:-python3}}"
+echo "CANSWIM Weekend: Starting (data_dir=${data_dir}) …"
+# Live week start for all stock_tickers (add --catchup for monthly origins).
+exec "${PYTHON}" -m canswim weekend "$@"

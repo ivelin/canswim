@@ -19,6 +19,14 @@ MCP write tools need `MCP_ALLOW_RUNS=1`. CLI and dashboard do not.
 
 Without `--tickers`, CLI `gatherdata` / `forecast` keep **full-universe / train-style** behavior.
 
+## Weekend host job (all DB symbols)
+
+CLI task **`weekend`** (`./weekend.sh`, `canswim-weekend.timer`) loads every symbol
+from DuckDB **`stock_tickers`**, batches gather + forecast, and defaults to the
+**live week start** from blank `resolve_start`. Optional `--catchup` uses blank
+forecast start (monthly catch-up + live). Host operator path (`force_allow`), not
+an MCP tool. See [cli.md](cli.md) and [deploy_service.md](deploy_service.md).
+
 ## Get market data (lean & rate-limit aware)
 
 For scoped runs (`--tickers` / dashboard / MCP):

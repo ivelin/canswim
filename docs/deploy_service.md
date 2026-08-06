@@ -205,6 +205,33 @@ curl -sS -X POST "http://127.0.0.1:3472/mcp" \
 
 FastMCP serves the protocol at **`/mcp`** on that port. Details: [mcp.md](mcp.md).
 
+## 3b. Weekend timer (all DB symbols, live week forecast)
+
+Recurring **host** job (not MCP): load every symbol in DuckDB `stock_tickers`, update market data in batches, forecast the **live week start** (next market week open). Same policy as CLI `gather` / `forecast`.
+
+Templates in the checkout: `service/canswim-weekend.service` and `service/canswim-weekend.timer` (copy into `~/.canswim/service/` and/or `~/.config/systemd/user/`).
+
+```bash
+# From repo (or after copying units)
+cp service/canswim-weekend.service service/canswim-weekend.timer ~/.config/systemd/user/
+# Point PYTHON / CANSWIM_DIR at this host (edit unit or drop-in)
+systemctl --user daemon-reload
+systemctl --user enable --now canswim-weekend.timer
+systemctl --user list-timers 'canswim-weekend*' --no-pager
+# Manual one-shot:
+systemctl --user start canswim-weekend.service
+journalctl --user -u canswim-weekend -n 50 --no-pager
+```
+
+Dry-run without systemd:
+
+```bash
+data_dir=$HOME/.canswim/data python -m canswim weekend --dry_run
+# or: ./weekend.sh --dry_run
+```
+
+Default calendar: **Saturday 06:00** local (`OnCalendar=Sat *-*-* 06:00:00`). Adjust the timer for your timezone / market. Full catch-up is opt-in: `python -m canswim weekend --catchup` (edit `ExecStart` if you want the timer to catch up).
+
 ## 4. Public MCP via gateway + apikey
 
 Use one edge (e.g. **Tailscale Funnel → Caddy :8080**) for all MCPs. Pattern:

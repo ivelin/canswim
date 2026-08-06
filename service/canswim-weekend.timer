@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule CANSWIM weekend forecast (all DB symbols, live week start)
+Documentation=https://ivelin.github.io/canswim/deploy_service/
+
+[Timer]
+# Saturday 06:00 local (after Friday close / before Monday open in US-centric setups)
+OnCalendar=Sat *-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=canswim-weekend.service
+
+[Install]
+WantedBy=timers.target

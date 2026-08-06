@@ -61,3 +61,28 @@ def run_resolve_start(forecast_start_date: Optional[str] = None) -> int:
     """Preview week-aligned start (no gather/forecast)."""
     info = resolve_start_for_run(forecast_start_date or None)
     return _print_result(info)
+
+
+def run_weekend(
+    *,
+    dry_run: bool = False,
+    catchup: bool = False,
+    include_covariates: bool = True,
+    batch_size: int | None = None,
+    skip_gather: bool = False,
+) -> int:
+    """Weekend host job: gather + forecast for all DuckDB stock_tickers."""
+    from canswim.weekend import DEFAULT_WEEKEND_BATCH, run_weekend_all_db
+
+    logger.info(
+        f"CLI weekend: dry_run={dry_run} catchup={catchup} "
+        f"batch_size={batch_size or DEFAULT_WEEKEND_BATCH} skip_gather={skip_gather}"
+    )
+    result = run_weekend_all_db(
+        dry_run=dry_run,
+        catchup=catchup,
+        include_covariates=include_covariates,
+        batch_size=batch_size or DEFAULT_WEEKEND_BATCH,
+        skip_gather=skip_gather,
+    )
+    return _print_result(result)
