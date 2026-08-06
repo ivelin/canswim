@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # CANSWIM weekend forecast — all symbols in the Charts/search DB (stock_tickers).
-# Prefer systemd: service/canswim-weekend.timer (see docs/deploy_service.md).
-# Cron example (Saturday 06:00):
-#   0 6 * * 6 /home/YOU/canswim/weekend.sh >> /tmp/canswim-weekend.log 2>&1
+# One-shot / manual. For recurring runs, use the in-process APScheduler inside
+# canswim-mcp (MCP_ALLOW_RUNS=1) — see docs/deploy_service.md §3b.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

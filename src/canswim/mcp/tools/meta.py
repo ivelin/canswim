@@ -107,12 +107,20 @@ def get_server_info_impl() -> dict[str, Any]:
     from canswim.mcp.jobs import JOB_MAX_TICKERS
     from canswim.run_triggers import DEFAULT_MAX_TICKERS
 
+    try:
+        from canswim.scheduler import get_scheduler_status
+
+        weekend_sched = get_scheduler_status()
+    except Exception:
+        weekend_sched = {"running": False, "error": "status unavailable"}
+
     return ok_result(
         {
             "name": "canswim-mcp",
             "version": __version__,
             "is_read_only": not allow_runs,
             "runs_allowed": allow_runs,
+            "weekend_scheduler": weekend_sched,
             "access": CLIENT_ACCESS_BOUNDARY,
             "model": (
                 "TiDE precomputed forecasts via MCP read tools only. "

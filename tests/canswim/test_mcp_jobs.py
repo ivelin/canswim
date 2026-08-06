@@ -43,6 +43,101 @@ def test_status_empty_id(jobs_env):
     assert out["ok"] is False
 
 
+def test_coalesce_subset_returns_same_job_id(jobs_env):
+    """Second client requesting a subset of an active job joins without new work."""
+    import threading
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    def slow_refresh(tickers, **kwargs):
+        entered.set()
+        release.wait(timeout=5.0)
+        return {
+            "ok": True,
+            "ready": ["AAPL", "MSFT", "GOOG"],
+            "gather": {"ok": True},
+            "forecast": {"ok": True},
+        }
+
+    with patch("canswim.mcp.jobs.refresh_symbols", side_effect=slow_refresh):
+        first = job_tools.refresh_job_start_impl("AAPL,MSFT,GOOG")
+        assert first["ok"] is True
+        jid = first["data"]["job_id"]
+        assert entered.wait(timeout=2.0)
+
+        # Same list → coalesce
+        same = job_tools.refresh_job_start_impl("AAPL,MSFT,GOOG")
+        assert same["ok"] is True
+        assert same.get("coalesced") is True
+        assert same["data"]["job_id"] == jid
+        assert same["data"].get("coalesced") is True
+
+        # Subset → coalesce
+        sub = job_tools.refresh_job_start_impl("MSFT")
+        assert sub["ok"] is True
+        assert sub.get("coalesced") is True
+        assert sub["data"]["job_id"] == jid
+
+        # Disjoint / supersets that are not covered → busy
+        busy = job_tools.refresh_job_start_impl("TSLA")
+        assert busy["ok"] is False
+        assert busy.get("active_job_id") == jid
+        assert busy.get("fail_reason") == "job_busy"
+
+        release.set()
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if job_tools.refresh_job_status_impl(jid)["data"]["done"]:
+                break
+            time.sleep(0.05)
+
+
+def test_coalesce_with_active_job_unit():
+    """Pure unit: subset matches; dry_run / covariates mismatch does not."""
+    active = {
+        "job_id": "abc",
+        "status": "running",
+        "ticker_list": ["AAPL", "MSFT"],
+        "dry_run": False,
+        "include_covariates": True,
+    }
+    hit = job_core.coalesce_with_active_job(
+        ["msft"],
+        include_covariates=True,
+        dry_run=False,
+        active=active,
+    )
+    assert hit is not None and hit["job_id"] == "abc"
+    assert (
+        job_core.coalesce_with_active_job(
+            ["MSFT", "TSLA"],
+            include_covariates=True,
+            dry_run=False,
+            active=active,
+        )
+        is None
+    )
+    assert (
+        job_core.coalesce_with_active_job(
+            ["MSFT"],
+            include_covariates=False,
+            dry_run=False,
+            active=active,
+        )
+        is None
+    )
+    assert (
+        job_core.coalesce_with_active_job(
+            ["MSFT"],
+            include_covariates=True,
+            dry_run=True,
+            active=active,
+        )
+        is None
+    )
+
+
 def test_job_lifecycle_succeeds(jobs_env):
     """Worker runs refresh_symbols mock and reaches succeeded."""
     seen_cb: list[tuple[float, str]] = []

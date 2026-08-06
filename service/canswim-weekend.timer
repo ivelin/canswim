@@ -1,5 +1,5 @@
 [Unit]
-Description=Schedule CANSWIM weekend forecast (all DB symbols, live week start)
+Description=DEPRECATED — prefer in-process APScheduler (CANSWIM_WEEKEND_SCHEDULER / MCP_ALLOW_RUNS)
 Documentation=https://ivelin.github.io/canswim/deploy_service/
 
 [Timer]

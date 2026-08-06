@@ -205,32 +205,44 @@ curl -sS -X POST "http://127.0.0.1:3472/mcp" \
 
 FastMCP serves the protocol at **`/mcp`** on that port. Details: [mcp.md](mcp.md).
 
-## 3b. Weekend timer (all DB symbols, live week forecast)
+## 3b. Weekend job (in-process — no extra systemd unit)
 
-Recurring **host** job (not MCP): load every symbol in DuckDB `stock_tickers`, update market data in batches, forecast the **live week start** (next market week open). Same policy as CLI `gather` / `forecast`.
+Recurring **all-DB** gather + **monthly catch-up (~12 origins) + live week**
+forecast for every DuckDB `stock_tickers` symbol runs **inside** the long-lived
+canswim process via **[APScheduler](https://apscheduler.readthedocs.io/)**
+(`BackgroundScheduler` + `CronTrigger`). Do **not** add a separate timer service.
 
-Templates in the checkout: `service/canswim-weekend.service` and `service/canswim-weekend.timer` (copy into `~/.canswim/service/` and/or `~/.config/systemd/user/`).
+| Process | Default |
+|---------|---------|
+| **MCP** with `MCP_ALLOW_RUNS=1` | Scheduler **on** (Sat 06:00 local) |
+| **Dashboard** | Scheduler **off** unless `CANSWIM_WEEKEND_SCHEDULER=1` |
+| Concurrent heavy work | Shared **`fcntl.flock`** on `data_dir/canswim_data_run.lock` — MCP refresh, weekend scheduler, and CLI `weekend` take turns. Kernel-released on crash/reboot (leftover file is not a lock) |
+| Multi-client refresh | Same/subset ticker list while a job runs → coalesce to one `job_id` (no duplicate work) |
 
 ```bash
-# From repo (or after copying units)
-cp service/canswim-weekend.service service/canswim-weekend.timer ~/.config/systemd/user/
-# Point PYTHON / CANSWIM_DIR at this host (edit unit or drop-in)
-systemctl --user daemon-reload
-systemctl --user enable --now canswim-weekend.timer
-systemctl --user list-timers 'canswim-weekend*' --no-pager
-# Manual one-shot:
-systemctl --user start canswim-weekend.service
-journalctl --user -u canswim-weekend -n 50 --no-pager
+# MCP unit already has MCP_ALLOW_RUNS=1 on this host → weekend cron is active after restart
+systemctl --user restart canswim-mcp
+# Confirm: get_server_info → weekend_scheduler.running true; next_run_time set
+
+# Force on/off
+Environment=CANSWIM_WEEKEND_SCHEDULER=1   # or 0
+# Cron (local TZ): day-of-week, hour, minute
+Environment=CANSWIM_WEEKEND_DOW=sat
+Environment=CANSWIM_WEEKEND_HOUR=6
+Environment=CANSWIM_WEEKEND_MINUTE=0
+# Catch-up is ON by default (monthly backtests + live). Live-only:
+# Environment=CANSWIM_WEEKEND_CATCHUP=0
 ```
 
-Dry-run without systemd:
+Manual one-shot (same code path, no schedule):
 
 ```bash
 data_dir=$HOME/.canswim/data python -m canswim weekend --dry_run
+data_dir=$HOME/.canswim/data python -m canswim weekend
 # or: ./weekend.sh --dry_run
 ```
 
-Default calendar: **Saturday 06:00** local (`OnCalendar=Sat *-*-* 06:00:00`). Adjust the timer for your timezone / market. Full catch-up is opt-in: `python -m canswim weekend --catchup` (edit `ExecStart` if you want the timer to catch up).
+Legacy `service/canswim-weekend.timer` templates are **not recommended** (extra unit to operate). Prefer in-process scheduling.
 
 ## 4. Public MCP via gateway + apikey
 

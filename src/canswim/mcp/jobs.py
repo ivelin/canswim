@@ -130,6 +130,50 @@ def find_active_refresh_job() -> Optional[dict[str, Any]]:
     return None
 
 
+def _norm_ticker_set(tickers: Any) -> set[str]:
+    out: set[str] = set()
+    if not tickers:
+        return out
+    if isinstance(tickers, str):
+        parts = tickers.replace("\n", ",").split(",")
+    else:
+        parts = list(tickers)
+    for p in parts:
+        s = str(p).strip().upper()
+        if s:
+            out.add(s)
+    return out
+
+
+def coalesce_with_active_job(
+    ticker_list: list[str],
+    *,
+    include_covariates: bool,
+    dry_run: bool,
+    active: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """If an in-flight refresh already covers this request, return that job.
+
+    Coalesce when the new request's symbols are a **subset** of the active job's
+    ticker list and dry_run / include_covariates match. Clients should poll the
+    existing ``job_id`` instead of starting duplicate work.
+    """
+    job = active if active is not None else find_active_refresh_job()
+    if job is None:
+        return None
+    if bool(job.get("dry_run")) != bool(dry_run):
+        return None
+    if bool(job.get("include_covariates", True)) != bool(include_covariates):
+        return None
+    active_set = _norm_ticker_set(job.get("ticker_list") or job.get("tickers"))
+    req_set = _norm_ticker_set(ticker_list)
+    if not req_set or not active_set:
+        return None
+    if req_set <= active_set:
+        return job
+    return None
+
+
 def _reconcile_orphan(job: dict[str, Any]) -> dict[str, Any]:
     """If status is running/queued but no live worker in this process, mark failed."""
     jid = job.get("job_id")
@@ -338,22 +382,50 @@ def start_refresh_job(
         }
 
     with _start_lock:
+        tlist = list(parsed["tickers"])
         active = find_active_refresh_job()
         if active is not None:
+            # Same/subset request from another client → attach to existing job
+            hit = coalesce_with_active_job(
+                tlist,
+                include_covariates=bool(include_covariates),
+                dry_run=bool(dry_run),
+                active=active,
+            )
+            if hit is not None:
+                view = _public_view(hit)
+                view["coalesced"] = True
+                view["message"] = (
+                    f"Joined in-flight job {hit.get('job_id')} "
+                    f"(request covered by active {hit.get('status')} refresh; "
+                    "no duplicate work). Poll refresh_job_status."
+                )
+                logger.info(
+                    "MCP refresh coalesced into job_id={} n_req={} n_active={}",
+                    hit.get("job_id"),
+                    len(tlist),
+                    hit.get("requested_count"),
+                )
+                return {
+                    "ok": True,
+                    "coalesced": True,
+                    "data": view,
+                }
             view = _public_view(active)
             return {
                 "ok": False,
                 "error": (
                     f"A refresh job is already {active.get('status')} "
                     f"(job_id={active.get('job_id')}). "
-                    "Poll refresh_job_status until it finishes, then start a new one."
+                    "It does not cover this full ticker list. "
+                    "Poll refresh_job_status until it finishes, then start a new one "
+                    "for any remaining symbols."
                 ),
                 "data": view,
                 "active_job_id": active.get("job_id"),
             }
 
         job_id = _new_job_id()
-        tlist = list(parsed["tickers"])
         ticker_csv = ",".join(tlist)
         n = len(tlist)
         store = str(jobs_dir())
@@ -515,14 +587,18 @@ def _run_refresh_worker(
                 _progress(_base + _span * f, msg)
 
             _progress(base, f"Batch {bi + 1}/{n_batches}: starting {batch_csv[:80]}…")
-            result = refresh_symbols(
-                batch_csv,
-                include_covariates=include_covariates,
-                dry_run=dry_run,
-                force_allow=False,
-                progress_cb=_batch_cb,
-                max_tickers=max(len(batch), DEFAULT_MAX_TICKERS),
-            )
+            # Serialize with weekend scheduler / CLI weekend (shared flock)
+            from canswim.data_run_lock import exclusive_data_run
+
+            with exclusive_data_run(f"mcp-refresh-job-{job_id[:8]}", blocking=True):
+                result = refresh_symbols(
+                    batch_csv,
+                    include_covariates=include_covariates,
+                    dry_run=dry_run,
+                    force_allow=False,
+                    progress_cb=_batch_cb,
+                    max_tickers=max(len(batch), DEFAULT_MAX_TICKERS),
+                )
             batch_results.append(
                 {
                     "batch_index": bi,

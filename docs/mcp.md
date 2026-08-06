@@ -159,6 +159,10 @@ Optional: `wait=true` on `refresh_tickers` forces the old blocking path (max ~50
 
 Workers batch symbols (~20). Job state is under `{data_dir}/mcp_jobs/`. Only **one** refresh job at a time.
 
+**Multi-client dedupe:** if client B starts a refresh whose ticker list is a **subset** of an already queued/running job (same `dry_run` / `include_covariates`), the server **coalesces** — `ok=true`, same `job_id`, `coalesced=true`. Poll `refresh_job_status`; do **not** start a second job. If the active job does **not** cover the full request, response is `ok=false` / `fail_reason=job_busy` with `active_job_id` — poll until done, then start only remaining symbols.
+
+Heavy gather/forecast work also takes a process-wide file lock (`data_dir/canswim_data_run.lock`) so MCP refresh does not race the in-process weekend job or CLI `weekend`. Within a job, symbols that already have a complete forecast partition for an origin are skipped (no re-inference).
+
 **Do not** claim portfolio-wide success after a tool timeout, a `dry_run`, a subset list, or while status is still `queued`/`running`.
 
 ### Progress streaming (blocking long runs)
