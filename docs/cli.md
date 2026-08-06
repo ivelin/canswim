@@ -71,7 +71,9 @@ Default forecast origin is the **live week start** (`resolve_start` with a blank
 
 **Scheduled production path:** in-process **APScheduler** inside `canswim-mcp` when
 `MCP_ALLOW_RUNS=1` (see [deploy_service.md](deploy_service.md) §3b). No separate
-systemd timer. CLI below is for manual/one-shot runs.
+systemd timer. **Service default = monthly catch-up + live**
+(`CANSWIM_WEEKEND_CATCHUP=1`). CLI below is for manual/one-shot runs (live-only
+unless `--catchup`).
 
 ```bash
 # Plan only (start date + batch list)

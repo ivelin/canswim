@@ -207,16 +207,17 @@ FastMCP serves the protocol at **`/mcp`** on that port. Details: [mcp.md](mcp.md
 
 ## 3b. Weekend job (in-process — no extra systemd unit)
 
-Recurring **all-DB** gather + **live week** forecast for every DuckDB
-`stock_tickers` symbol runs **inside** the long-lived canswim process via
-**[APScheduler](https://apscheduler.readthedocs.io/)** (`BackgroundScheduler` +
-`CronTrigger`). Do **not** add a separate timer service.
+Recurring **all-DB** gather + **monthly catch-up (~12 origins) + live week**
+forecast for every DuckDB `stock_tickers` symbol runs **inside** the long-lived
+canswim process via **[APScheduler](https://apscheduler.readthedocs.io/)**
+(`BackgroundScheduler` + `CronTrigger`). Do **not** add a separate timer service.
 
 | Process | Default |
 |---------|---------|
 | **MCP** with `MCP_ALLOW_RUNS=1` | Scheduler **on** (Sat 06:00 local) |
 | **Dashboard** | Scheduler **off** unless `CANSWIM_WEEKEND_SCHEDULER=1` |
-| Both | File lock `data_dir/weekend_job.lock` — only one process runs the job |
+| Concurrent heavy work | Shared lock `data_dir/canswim_data_run.lock` — MCP refresh, weekend scheduler, and CLI `weekend` take turns (no parallel stomps) |
+| Multi-client refresh | Same/subset ticker list while a job runs → coalesce to one `job_id` (no duplicate work) |
 
 ```bash
 # MCP unit already has MCP_ALLOW_RUNS=1 on this host → weekend cron is active after restart
@@ -229,7 +230,8 @@ Environment=CANSWIM_WEEKEND_SCHEDULER=1   # or 0
 Environment=CANSWIM_WEEKEND_DOW=sat
 Environment=CANSWIM_WEEKEND_HOUR=6
 Environment=CANSWIM_WEEKEND_MINUTE=0
-# Optional: Environment=CANSWIM_WEEKEND_CATCHUP=1
+# Catch-up is ON by default (monthly backtests + live). Live-only:
+# Environment=CANSWIM_WEEKEND_CATCHUP=0
 ```
 
 Manual one-shot (same code path, no schedule):

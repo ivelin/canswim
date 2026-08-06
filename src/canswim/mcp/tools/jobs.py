@@ -34,7 +34,21 @@ def refresh_job_start_impl(
         dry_run=dry_run,
     )
     if out.get("ok"):
-        return ok_result(out["data"])
+        data = out["data"]
+        # Coalesced onto an in-flight job — same job_id for all clients
+        if out.get("coalesced") and isinstance(data, dict):
+            data = dict(data)
+            data["coalesced"] = True
+            return ok_result(
+                data,
+                coalesced=True,
+                client_hint=(
+                    "Another client (or the weekend scheduler) already runs this "
+                    "refresh. Poll refresh_job_status with this job_id; do not start "
+                    "a second job."
+                ),
+            )
+        return ok_result(data)
     err = out.get("error") or "could not start job"
     fr = out.get("fail_reason") or infer_fail_reason_from_error(err)
     if fr is None:

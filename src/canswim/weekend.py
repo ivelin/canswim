@@ -140,6 +140,37 @@ def run_weekend_all_db(
         messages.append("Dry run only — no gather or forecast executed.")
         return plan
 
+    # Serialize with MCP refresh jobs / other weekend invokers
+    from canswim.data_run_lock import exclusive_data_run
+
+    with exclusive_data_run("weekend-cli", blocking=True):
+        return _run_weekend_batches(
+            universe=universe,
+            batches=batches,
+            batch_size=batch_size,
+            forecast_start=forecast_start,
+            live_start=live_start,
+            start_info=start_info,
+            mode=mode,
+            skip_gather=skip_gather,
+            include_covariates=include_covariates,
+            messages=messages,
+        )
+
+
+def _run_weekend_batches(
+    *,
+    universe: list[str],
+    batches: list[list[str]],
+    batch_size: int,
+    forecast_start: Optional[str],
+    live_start: str,
+    start_info: dict[str, Any],
+    mode: str,
+    skip_gather: bool,
+    include_covariates: bool,
+    messages: list[str],
+) -> dict[str, Any]:
     # Live run
     batch_results: list[dict[str, Any]] = []
     all_forecasted: list[str] = []

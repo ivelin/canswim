@@ -21,16 +21,19 @@ Without `--tickers`, CLI `gatherdata` / `forecast` keep **full-universe / train-
 
 ## Weekend job (all DB symbols)
 
-Loads every symbol from DuckDB **`stock_tickers`**, batches gather + forecast,
-default origin = **live week start**. Optional catch-up (monthly + live).
+Loads every symbol from DuckDB **`stock_tickers`**, batches gather + forecast.
 
-| How | When |
-|-----|------|
-| **In-process (preferred)** | APScheduler inside MCP (`MCP_ALLOW_RUNS=1`) or dashboard if `CANSWIM_WEEKEND_SCHEDULER=1` |
-| **CLI one-shot** | `python -m canswim weekend` / `./weekend.sh` |
+| How | Default origins |
+|-----|-----------------|
+| **In-process (MCP with `MCP_ALLOW_RUNS=1`)** | **Monthly catch-up (~12) + live** (`CANSWIM_WEEKEND_CATCHUP` defaults **on**) |
+| **CLI one-shot** `python -m canswim weekend` | Live week only (pass **`--catchup`** for monthly + live) |
 
-Host path uses `force_allow` (not gated by MCP_ALLOW_RUNS for CLI). File lock
-avoids double runs. See [cli.md](cli.md) and [deploy_service.md](deploy_service.md).
+Host path uses `force_allow` (not gated by MCP_ALLOW_RUNS for CLI). Shared file
+lock `data_dir/canswim_data_run.lock` serializes weekend with MCP async refresh
+(one heavy pipeline at a time). MCP clients that request the same/subset refresh
+while a job is in flight **coalesce** onto that `job_id` (see [mcp.md](mcp.md)).
+Forecast skips origins that already have a saved partition. See [cli.md](cli.md)
+and [deploy_service.md](deploy_service.md).
 
 ## Get market data (lean & rate-limit aware)
 

@@ -9,7 +9,10 @@ Weekend all-DB forecast runs **inside** the long-lived canswim process (APSchedu
 ### Highlights
 
 - **APScheduler** in-process cron (default Sat 06:00 local) on MCP when `MCP_ALLOW_RUNS=1`
-- File lock under `data_dir/weekend_job.lock` so MCP + dashboard do not double-run
+- **Weekend catch-up ON by default** (monthly ~12 backtest origins + live); set `CANSWIM_WEEKEND_CATCHUP=0` for live-only
+- **Multi-client dedupe** — second `refresh_job_start` / async `refresh_tickers` whose symbols are a subset of an in-flight job returns the same `job_id` with `coalesced=true` (no duplicate gather/forecast work)
+- **Shared data-run lock** (`data_dir/canswim_data_run.lock`) serializes MCP refresh batches, weekend scheduler, and CLI `weekend` so they do not stomp parquet/DuckDB or run two heavy pipelines at once
+- Forecast path still **skips symbols that already have a saved partition** for the origin (refresh/backtest re-runs stay cheap)
 - `get_server_info` exposes `weekend_scheduler` status
 - Prefer this over `canswim-weekend.timer` (templates kept for reference only)
 

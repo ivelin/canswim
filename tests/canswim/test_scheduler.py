@@ -67,27 +67,62 @@ def test_run_weekend_job_now_calls_run_weekend(tmp_path, monkeypatch):
     ) as m:
         out = sched.run_weekend_job_now(catchup=False)
     m.assert_called_once()
+    assert m.call_args.kwargs.get("catchup") is False
     assert out["ok"] is True
     assert out["skipped"] is False
     assert out.get("forecasted") == ["AAPL"]
     assert sched.get_scheduler_status()["last_run"]["ok"] is True
 
 
-def test_run_weekend_job_lock_skip(tmp_path, monkeypatch):
-    """Second concurrent call skips when lock held."""
-    import fcntl
+def test_run_weekend_job_defaults_to_catchup(tmp_path, monkeypatch):
+    """Service path: monthly backtests + live unless CANSWIM_WEEKEND_CATCHUP=0."""
+    monkeypatch.setenv("data_dir", str(tmp_path))
+    monkeypatch.delenv("CANSWIM_WEEKEND_CATCHUP", raising=False)
+    with patch(
+        "canswim.weekend.run_weekend_all_db",
+        return_value={"ok": True, "forecasted": [], "incomplete": []},
+    ) as m:
+        sched.run_weekend_job_now()  # catchup=None → env default
+    assert m.call_args.kwargs.get("catchup") is True
+
+
+def test_run_weekend_job_catchup_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("data_dir", str(tmp_path))
+    monkeypatch.setenv("CANSWIM_WEEKEND_CATCHUP", "0")
+    with patch(
+        "canswim.weekend.run_weekend_all_db",
+        return_value={"ok": True, "forecasted": [], "incomplete": []},
+    ) as m:
+        sched.run_weekend_job_now()
+    assert m.call_args.kwargs.get("catchup") is False
+
+
+def test_run_weekend_job_uses_shared_data_run_lock(tmp_path, monkeypatch):
+    """Weekend path holds data_dir/canswim_data_run.lock (shared with MCP refresh)."""
+    import threading
 
     monkeypatch.setenv("data_dir", str(tmp_path))
-    lock = tmp_path / "weekend_job.lock"
-    lock.write_text("")
-    with open(lock, "a+") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        with patch("canswim.weekend.run_weekend_all_db") as m:
-            out = sched.run_weekend_job_now()
-        m.assert_not_called()
-        assert out.get("skipped") is True
-        assert out.get("reason") == "lock_held"
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    probe_busy = threading.Event()
+    continue_weekend = threading.Event()
+
+    def _fake_weekend(**kwargs):
+        from canswim.data_run_lock import try_exclusive_data_run
+
+        # Another thread must see the shared lock as busy while we hold it
+        def probe():
+            if not try_exclusive_data_run("probe", data_dir=tmp_path):
+                probe_busy.set()
+            continue_weekend.set()
+
+        threading.Thread(target=probe).start()
+        assert continue_weekend.wait(timeout=2.0)
+        return {"ok": True, "forecasted": [], "incomplete": []}
+
+    with patch("canswim.weekend.run_weekend_all_db", side_effect=_fake_weekend):
+        out = sched.run_weekend_job_now(catchup=False)
+    assert out["ok"] is True
+    assert probe_busy.is_set()
+    assert (tmp_path / "canswim_data_run.lock").is_file()
 
 
 def test_get_server_info_includes_weekend_scheduler(monkeypatch):

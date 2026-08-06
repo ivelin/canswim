@@ -257,8 +257,10 @@ _DEFAULT_CLIENT_HINTS: dict[str, str] = {
         "(wait=false). Do not invent ids."
     ),
     FAIL_JOB_BUSY: (
-        "Poll refresh_job_status until the active job finishes "
-        "(status succeeded or failed), then start a new refresh_job_start."
+        "A refresh is already running (possibly for a different symbol set). "
+        "Poll refresh_job_status on active_job_id until done, then start a job "
+        "only for remaining symbols. If your list is a subset of the active job, "
+        "the server coalesces and returns that job_id with ok=true instead."
     ),
     FAIL_JOB_FAILED: (
         "Report the error and coverage to the user. Do not claim the portfolio "

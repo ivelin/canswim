@@ -68,65 +68,24 @@ def _data_dir() -> Path:
     return Path(os.getenv("data_dir", "data")).expanduser()
 
 
-def _lock_path() -> Path:
-    d = _data_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "weekend_job.lock"
-
-
-def _try_acquire_lock(fh) -> bool:
-    """Non-blocking exclusive flock; True if held."""
-    import fcntl
-
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return True
-    except BlockingIOError:
-        return False
-    except OSError as e:
-        logger.warning("Weekend lock OSError: {}", e)
-        return False
-
-
-def _release_lock(fh) -> None:
-    import fcntl
-
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-    except OSError:
-        pass
-
-
 def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
     """Execute weekend job with cross-process lock (callable from scheduler or tests)."""
     global _last_run
     from canswim.weekend import run_weekend_all_db
 
+    # Default ON for service path: monthly backtests (~12m) + live week.
+    # Set CANSWIM_WEEKEND_CATCHUP=0 for live-only.
     use_catchup = (
-        _env_truthy("CANSWIM_WEEKEND_CATCHUP", "0")
+        _env_truthy("CANSWIM_WEEKEND_CATCHUP", "1")
         if catchup is None
         else bool(catchup)
     )
-    lock_file = _lock_path()
     started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    with open(lock_file, "a+", encoding="utf-8") as fh:
-        if not _try_acquire_lock(fh):
-            msg = "Weekend job skipped — another process holds weekend_job.lock"
-            logger.info(msg)
-            out = {
-                "ok": True,
-                "skipped": True,
-                "reason": "lock_held",
-                "message": msg,
-                "started_at": started,
-            }
-            _last_run = out
-            return out
+    # Shared with MCP refresh jobs — one heavy pipeline at a time
+    from canswim.data_run_lock import exclusive_data_run
+
+    with exclusive_data_run("weekend-scheduler", blocking=True):
         try:
-            fh.seek(0)
-            fh.truncate()
-            fh.write(f"pid={os.getpid()} started={started}\n")
-            fh.flush()
             logger.info(
                 "Weekend in-process job starting (catchup={}, pid={})",
                 use_catchup,
@@ -135,7 +94,9 @@ def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
             result = run_weekend_all_db(
                 dry_run=False,
                 catchup=use_catchup,
-                include_covariates=not _env_truthy("CANSWIM_WEEKEND_NO_COVARIATES", "0"),
+                include_covariates=not _env_truthy(
+                    "CANSWIM_WEEKEND_NO_COVARIATES", "0"
+                ),
                 skip_gather=_env_truthy("CANSWIM_WEEKEND_SKIP_GATHER", "0"),
             )
             result = dict(result)
@@ -165,8 +126,6 @@ def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
             }
             _last_run = out
             return out
-        finally:
-            _release_lock(fh)
 
 
 def get_scheduler_status() -> dict[str, Any]:
@@ -189,7 +148,10 @@ def get_scheduler_status() -> dict[str, Any]:
             "jobs": jobs,
             "cron": _cron_kwargs(),
             "last_run": dict(_last_run) if _last_run else None,
-            "lock_path": str(_lock_path()),
+            "lock_path": str(
+                Path(os.getenv("data_dir", "data")).expanduser()
+                / "canswim_data_run.lock"
+            ),
         }
 
 
