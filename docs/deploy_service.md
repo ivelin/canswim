@@ -216,7 +216,7 @@ canswim process via **[APScheduler](https://apscheduler.readthedocs.io/)**
 |---------|---------|
 | **MCP** with `MCP_ALLOW_RUNS=1` | Scheduler **on** (Sat 06:00 local) |
 | **Dashboard** | Scheduler **off** unless `CANSWIM_WEEKEND_SCHEDULER=1` |
-| Concurrent heavy work | Shared lock `data_dir/canswim_data_run.lock` — MCP refresh, weekend scheduler, and CLI `weekend` take turns (no parallel stomps) |
+| Concurrent heavy work | Shared **`fcntl.flock`** on `data_dir/canswim_data_run.lock` — MCP refresh, weekend scheduler, and CLI `weekend` take turns. Kernel-released on crash/reboot (leftover file is not a lock) |
 | Multi-client refresh | Same/subset ticker list while a job runs → coalesce to one `job_id` (no duplicate work) |
 
 ```bash

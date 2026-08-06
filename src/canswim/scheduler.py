@@ -128,6 +128,12 @@ def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
             return out
 
 
+def _data_run_lock_status() -> dict[str, Any]:
+    from canswim.data_run_lock import data_run_lock_status
+
+    return data_run_lock_status()
+
+
 def get_scheduler_status() -> dict[str, Any]:
     """Snapshot for get_server_info / operators."""
     with _lock:
@@ -148,10 +154,7 @@ def get_scheduler_status() -> dict[str, Any]:
             "jobs": jobs,
             "cron": _cron_kwargs(),
             "last_run": dict(_last_run) if _last_run else None,
-            "lock_path": str(
-                Path(os.getenv("data_dir", "data")).expanduser()
-                / "canswim_data_run.lock"
-            ),
+            "data_run_lock": _data_run_lock_status(),
         }
 
 
