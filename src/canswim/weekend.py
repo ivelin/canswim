@@ -1,11 +1,14 @@
-"""Weekend routine: gather + live-week forecast for all DB symbols.
+"""Weekend routine: gather + forecast for all DB symbols.
 
-Intended for a recurring systemd timer (or cron) on the host operator account.
-Uses the same ``gather_for_tickers`` / ``forecast_for_tickers`` paths as CLI/MCP
-so policy (price hard-fail, fund gates, skip-existing) stays DRY.
+**In-process service (MCP + APScheduler):** prefer
+:func:`canswim.mcp.jobs.run_all_db_refresh_job` so work uses the same job
+registry as MCP ``refresh_job_start`` — clients with a subset **coalesce** and
+forecast/gather stay idempotent (skip-if-saved). See :mod:`canswim.scheduler`.
 
-Default: **live week start only** (next market week open after the latest close).
-Optional ``--catchup`` runs blank-start catch-up (~12 monthly origins + live).
+**CLI one-shot** (``python -m canswim weekend``): this module’s batch path —
+default **live week only**; ``--catchup`` = monthly + live. Still shares
+policy with MCP (price hard-fail, fund gates, skip-existing) via
+``gather_for_tickers`` / ``forecast_for_tickers``.
 """
 
 from __future__ import annotations
@@ -140,7 +143,8 @@ def run_weekend_all_db(
         messages.append("Dry run only — no gather or forecast executed.")
         return plan
 
-    # Serialize with MCP refresh jobs / other weekend invokers
+    # CLI / live-only: narrow flock per process so we don't race MCP job batches
+    # writing the same parquet. Idempotent forecast/gather still skip completed work.
     from canswim.data_run_lock import exclusive_data_run
 
     with exclusive_data_run("weekend-cli", blocking=True):

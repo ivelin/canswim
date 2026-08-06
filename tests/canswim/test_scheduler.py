@@ -74,16 +74,39 @@ def test_run_weekend_job_now_calls_run_weekend(tmp_path, monkeypatch):
     assert sched.get_scheduler_status()["last_run"]["ok"] is True
 
 
-def test_run_weekend_job_defaults_to_catchup(tmp_path, monkeypatch):
-    """Service path: monthly backtests + live unless CANSWIM_WEEKEND_CATCHUP=0."""
+def test_run_weekend_job_defaults_to_catchup_via_refresh_job(tmp_path, monkeypatch):
+    """Service default: full-universe refresh job (same registry as MCP)."""
     monkeypatch.setenv("data_dir", str(tmp_path))
     monkeypatch.delenv("CANSWIM_WEEKEND_CATCHUP", raising=False)
+    monkeypatch.delenv("CANSWIM_WEEKEND_SKIP_GATHER", raising=False)
+    job_out = {
+        "ok": True,
+        "coalesced": False,
+        "data": {
+            "job_id": "abc",
+            "source": "weekend",
+            "status": "succeeded",
+            "result": {
+                "ok": True,
+                "forecasted": ["AAPL"],
+                "incomplete": [],
+                "ready": ["AAPL"],
+                "coverage": {"requested_count": 1},
+            },
+        },
+    }
     with patch(
-        "canswim.weekend.run_weekend_all_db",
-        return_value={"ok": True, "forecasted": [], "incomplete": []},
+        "canswim.mcp.jobs.run_all_db_refresh_job",
+        return_value=job_out,
     ) as m:
-        sched.run_weekend_job_now()  # catchup=None → env default
-    assert m.call_args.kwargs.get("catchup") is True
+        with patch("canswim.weekend.run_weekend_all_db") as direct:
+            out = sched.run_weekend_job_now()  # catchup=None → env default
+    m.assert_called_once()
+    direct.assert_not_called()
+    assert out["ok"] is True
+    assert out.get("via") == "refresh_job"
+    assert out.get("job_id") == "abc"
+    assert out.get("forecasted") == ["AAPL"]
 
 
 def test_run_weekend_job_catchup_can_be_disabled(tmp_path, monkeypatch):
@@ -93,12 +116,15 @@ def test_run_weekend_job_catchup_can_be_disabled(tmp_path, monkeypatch):
         "canswim.weekend.run_weekend_all_db",
         return_value={"ok": True, "forecasted": [], "incomplete": []},
     ) as m:
-        sched.run_weekend_job_now()
+        with patch("canswim.mcp.jobs.run_all_db_refresh_job") as job_path:
+            sched.run_weekend_job_now()
+    m.assert_called_once()
     assert m.call_args.kwargs.get("catchup") is False
+    job_path.assert_not_called()
 
 
-def test_run_weekend_job_uses_shared_data_run_lock(tmp_path, monkeypatch):
-    """Weekend path holds data_dir/canswim_data_run.lock (shared with MCP refresh)."""
+def test_run_weekend_live_uses_shared_data_run_lock(tmp_path, monkeypatch):
+    """Live-only weekend path holds flock (CLI-style batches)."""
     import threading
 
     monkeypatch.setenv("data_dir", str(tmp_path))
@@ -108,7 +134,6 @@ def test_run_weekend_job_uses_shared_data_run_lock(tmp_path, monkeypatch):
     def _fake_weekend(**kwargs):
         from canswim.data_run_lock import try_exclusive_data_run
 
-        # Another thread must see the shared lock as busy while we hold it
         def probe():
             if not try_exclusive_data_run("probe", data_dir=tmp_path):
                 probe_busy.set()

@@ -69,7 +69,17 @@ def _data_dir() -> Path:
 
 
 def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
-    """Execute weekend job with cross-process lock (callable from scheduler or tests)."""
+    """Execute weekend job (callable from scheduler or tests).
+
+    **Default (catch-up ON):** enqueue the same async **refresh job** MCP clients
+    use (full DuckDB universe). Clients requesting a subset **coalesce** onto
+    that ``job_id`` — no duplicate work. Gather/forecast stay idempotent
+    (skip-if-saved / lean gather). A narrow per-batch flock remains only for
+    safe parquet writes vs CLI ``weekend``.
+
+    **Live-only** (``CANSWIM_WEEKEND_CATCHUP=0``) or ``CANSWIM_WEEKEND_SKIP_GATHER=1``:
+    keeps the direct batch path in :func:`canswim.weekend.run_weekend_all_db`.
+    """
     global _last_run
     from canswim.weekend import run_weekend_all_db
 
@@ -80,52 +90,99 @@ def run_weekend_job_now(*, catchup: Optional[bool] = None) -> dict[str, Any]:
         if catchup is None
         else bool(catchup)
     )
+    include_covariates = not _env_truthy("CANSWIM_WEEKEND_NO_COVARIATES", "0")
+    skip_gather = _env_truthy("CANSWIM_WEEKEND_SKIP_GATHER", "0")
     started = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    # Shared with MCP refresh jobs — one heavy pipeline at a time
-    from canswim.data_run_lock import exclusive_data_run
 
-    with exclusive_data_run("weekend-scheduler", blocking=True):
-        try:
-            logger.info(
-                "Weekend in-process job starting (catchup={}, pid={})",
-                use_catchup,
-                os.getpid(),
-            )
-            result = run_weekend_all_db(
+    try:
+        logger.info(
+            "Weekend in-process job starting (catchup={}, skip_gather={}, pid={})",
+            use_catchup,
+            skip_gather,
+            os.getpid(),
+        )
+        # Preferred path: same job registry as MCP refresh (idempotent + coalesce)
+        if use_catchup and not skip_gather:
+            from canswim.mcp.jobs import run_all_db_refresh_job
+
+            job_out = run_all_db_refresh_job(
+                include_covariates=include_covariates,
                 dry_run=False,
-                catchup=use_catchup,
-                include_covariates=not _env_truthy(
-                    "CANSWIM_WEEKEND_NO_COVARIATES", "0"
-                ),
-                skip_gather=_env_truthy("CANSWIM_WEEKEND_SKIP_GATHER", "0"),
+                wait=True,
             )
+            result = _job_out_to_weekend_result(job_out)
+        else:
+            # Live-only / forecast-only: direct batches (still skip-if-saved)
+            from canswim.data_run_lock import exclusive_data_run
+
+            with exclusive_data_run("weekend-scheduler", blocking=True):
+                result = run_weekend_all_db(
+                    dry_run=False,
+                    catchup=use_catchup,
+                    include_covariates=include_covariates,
+                    skip_gather=skip_gather,
+                )
             result = dict(result)
-            result["skipped"] = False
-            result["started_at"] = started
-            result["finished_at"] = (
-                datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-            )
-            _last_run = result
-            logger.info(
-                "Weekend in-process job finished ok={} forecasted={} incomplete={}",
-                result.get("ok"),
-                len(result.get("forecasted") or []),
-                len(result.get("incomplete") or []),
-            )
-            return result
-        except Exception as e:
-            logger.exception("Weekend in-process job crashed: {}", e)
-            out = {
-                "ok": False,
-                "skipped": False,
-                "error": str(e),
-                "started_at": started,
-                "finished_at": datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat(),
-            }
-            _last_run = out
-            return out
+
+        result["skipped"] = False
+        result["started_at"] = started
+        result["finished_at"] = (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        )
+        _last_run = result
+        logger.info(
+            "Weekend in-process job finished ok={} via={} forecasted={} incomplete={}",
+            result.get("ok"),
+            result.get("via") or "weekend_batches",
+            len(result.get("forecasted") or []),
+            len(result.get("incomplete") or []),
+        )
+        return result
+    except Exception as e:
+        logger.exception("Weekend in-process job crashed: {}", e)
+        out = {
+            "ok": False,
+            "skipped": False,
+            "error": str(e),
+            "started_at": started,
+            "finished_at": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat(),
+        }
+        _last_run = out
+        return out
+
+
+def _job_out_to_weekend_result(job_out: dict[str, Any]) -> dict[str, Any]:
+    """Map refresh job status envelope → weekend-style summary for last_run."""
+    data = job_out.get("data") if isinstance(job_out.get("data"), dict) else {}
+    res = data.get("result") if isinstance(data.get("result"), dict) else {}
+    status = data.get("status")
+    if not job_out.get("ok") and status not in ("succeeded", "failed"):
+        ok = False
+    elif status == "succeeded":
+        ok = True
+    elif status == "failed":
+        ok = False
+    else:
+        ok = bool(res.get("ok")) if res else bool(job_out.get("ok"))
+    forecasted = list(res.get("forecasted") or [])
+    incomplete = list(res.get("incomplete") or [])
+    return {
+        "ok": ok,
+        "via": "refresh_job",
+        "job_id": data.get("job_id") or job_out.get("job_id"),
+        "source": data.get("source") or "weekend",
+        "coalesced": bool(job_out.get("coalesced")),
+        "status": status,
+        "forecasted": forecasted,
+        "incomplete": incomplete,
+        "ready": list(res.get("ready") or []),
+        "coverage": res.get("coverage"),
+        "error": data.get("error") or job_out.get("error") or res.get("error"),
+        "mode": "catchup",
+        "messages": list(res.get("messages") or []),
+    }
 
 
 def _data_run_lock_status() -> dict[str, Any]:
