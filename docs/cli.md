@@ -69,6 +69,10 @@ Without `--tickers`, `gatherdata` / `forecast` keep **full-universe / train-styl
 Uses the Charts/search universe (`stock_tickers` in DuckDB), not a CSV alone.
 Default forecast origin is the **live week start** (`resolve_start` with a blank date). Batches through gather + forecast so a full DB does not hit MCP-style 50-symbol caps.
 
+**Scheduled production path:** in-process **APScheduler** inside `canswim-mcp` when
+`MCP_ALLOW_RUNS=1` (see [deploy_service.md](deploy_service.md) §3b). No separate
+systemd timer. CLI below is for manual/one-shot runs.
+
 ```bash
 # Plan only (start date + batch list)
 data_dir=$HOME/.canswim/data python -m canswim weekend --dry_run
@@ -80,7 +84,7 @@ data_dir=$HOME/.canswim/data python -m canswim weekend
 data_dir=$HOME/.canswim/data python -m canswim weekend --catchup
 ```
 
-Production timer: [deploy_service.md](deploy_service.md) (`canswim-weekend.timer`). Wrapper: `./weekend.sh`.
+Wrapper: `./weekend.sh`. Env: `CANSWIM_WEEKEND_SCHEDULER`, `CANSWIM_WEEKEND_DOW/HOUR/MINUTE`.
 
 ### Flags (scoped gather / forecast)
 

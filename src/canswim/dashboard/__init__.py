@@ -173,6 +173,15 @@ class CanswimPlayground:
 
 
 def main(same_data=False):
+    # Optional in-process weekend job (off unless CANSWIM_WEEKEND_SCHEDULER=1)
+    try:
+        from canswim.scheduler import start_inprocess_scheduler
+
+        start_inprocess_scheduler(role="dashboard")
+    except Exception as e:
+        from loguru import logger
+
+        logger.warning("Could not start in-process weekend scheduler: {}", e)
 
     canswim_playground = CanswimPlayground(same_data=same_data)
     canswim_playground.launch()

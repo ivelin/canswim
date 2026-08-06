@@ -530,6 +530,13 @@ def main(
         )
     else:
         logger.info("canswim-mcp transport=stdio")
+    # Weekend gather+forecast inside this process (APScheduler) — no extra systemd unit
+    try:
+        from canswim.scheduler import start_inprocess_scheduler
+
+        start_inprocess_scheduler(role="mcp")
+    except Exception as e:
+        logger.warning("Could not start in-process weekend scheduler: {}", e)
     mcp.run(transport=resolved)  # type: ignore[arg-type]
 
 

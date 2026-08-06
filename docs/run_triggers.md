@@ -19,13 +19,18 @@ MCP write tools need `MCP_ALLOW_RUNS=1`. CLI and dashboard do not.
 
 Without `--tickers`, CLI `gatherdata` / `forecast` keep **full-universe / train-style** behavior.
 
-## Weekend host job (all DB symbols)
+## Weekend job (all DB symbols)
 
-CLI task **`weekend`** (`./weekend.sh`, `canswim-weekend.timer`) loads every symbol
-from DuckDB **`stock_tickers`**, batches gather + forecast, and defaults to the
-**live week start** from blank `resolve_start`. Optional `--catchup` uses blank
-forecast start (monthly catch-up + live). Host operator path (`force_allow`), not
-an MCP tool. See [cli.md](cli.md) and [deploy_service.md](deploy_service.md).
+Loads every symbol from DuckDB **`stock_tickers`**, batches gather + forecast,
+default origin = **live week start**. Optional catch-up (monthly + live).
+
+| How | When |
+|-----|------|
+| **In-process (preferred)** | APScheduler inside MCP (`MCP_ALLOW_RUNS=1`) or dashboard if `CANSWIM_WEEKEND_SCHEDULER=1` |
+| **CLI one-shot** | `python -m canswim weekend` / `./weekend.sh` |
+
+Host path uses `force_allow` (not gated by MCP_ALLOW_RUNS for CLI). File lock
+avoids double runs. See [cli.md](cli.md) and [deploy_service.md](deploy_service.md).
 
 ## Get market data (lean & rate-limit aware)
 

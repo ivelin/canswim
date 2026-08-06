@@ -97,8 +97,9 @@ def test_deploy_service_doc_covers_gui_and_mcp_split():
         "CANSWIM_HOME",
         "~/.canswim/service",
         "~/.canswim/data",
-        "canswim-weekend",
         "stock_tickers",
+        "APScheduler",
+        "CANSWIM_WEEKEND_SCHEDULER",
     ):
         assert needle in text, f"docs/deploy_service.md missing {needle!r}"
     # Legacy deploy path must not reappear as the documented primary layout

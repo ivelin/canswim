@@ -2,6 +2,23 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260807
+
+Weekend all-DB forecast runs **inside** the long-lived canswim process (APScheduler), not a separate systemd timer.
+
+### Highlights
+
+- **APScheduler** in-process cron (default Sat 06:00 local) on MCP when `MCP_ALLOW_RUNS=1`
+- File lock under `data_dir/weekend_job.lock` so MCP + dashboard do not double-run
+- `get_server_info` exposes `weekend_scheduler` status
+- Prefer this over `canswim-weekend.timer` (templates kept for reference only)
+
+### Install
+
+```bash
+pip install canswim==0.0.20260807
+```
+
 ## 0.0.20260806
 
 Forecast/backtest must not invent fundamentals (zero-filled earnings, key metrics, or estimates).
