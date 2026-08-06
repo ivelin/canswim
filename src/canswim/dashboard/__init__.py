@@ -8,6 +8,11 @@ from canswim.dashboard.charts import ChartTab
 from canswim.dashboard.scans import ScanTab
 from canswim.dashboard.advanced import AdvancedTab
 from canswim.dashboard.run_tab import RunTab
+from canswim.dashboard.url_state import (
+    CHART_URL_SYNC_JS,
+    parse_chart_query,
+    resolve_chart_ticker,
+)
 from canswim.db import DataPaths, init_search_db
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
@@ -99,9 +104,24 @@ class CanswimPlayground:
                     db_path=self.db_path,
                 )
 
-            def _on_load(ticker, lowq):
-                """Page load: chart + company blurb + scan dates + auto-scan."""
-                chart_out = charts_tab.plot_forecast(ticker, lowq)
+            def _on_load(ticker, lowq, request: gr.Request):
+                """Page load: apply ?ticker=&lowq=, chart + scans."""
+                query = {}
+                try:
+                    if request is not None:
+                        query = dict(request.query_params or {})
+                except Exception as e:
+                    logger.debug("chart deep-link query read failed: {}", e)
+                req_ticker, req_lowq = parse_chart_query(query)
+                choices = getattr(charts_tab, "sorted_tickers", None) or []
+                default_ticker = getattr(charts_tab, "default_ticker", None)
+                # Component value is the random default when no query ticker.
+                fallback = ticker if ticker is not None else default_ticker
+                resolved = resolve_chart_ticker(req_ticker, choices, fallback)
+                # parse_chart_query always returns a valid lowq (default 80).
+                resolved_lowq = req_lowq
+
+                chart_out = charts_tab.plot_forecast(resolved, resolved_lowq)
                 start_dd, start_iso, scan_status, scan_table = (
                     scans_tab.initial_scan()
                 )
@@ -109,29 +129,29 @@ class CanswimPlayground:
                     plot_val = chart_out.get(charts_tab.plotComponent)
                     rr_val = chart_out.get(charts_tab.rrTable)
                     company_val = chart_out.get(charts_tab.companyInfo)
-                    return (
-                        plot_val,
-                        rr_val,
-                        company_val,
-                        start_dd,
-                        start_iso,
-                        scan_status,
-                        scan_table,
-                    )
+                else:
+                    plot_val = chart_out[0]
+                    rr_val = chart_out[1]
+                    company_val = charts_tab._company_md(resolved)
                 return (
-                    chart_out[0],
-                    chart_out[1],
-                    charts_tab._company_md(ticker),
+                    gr.update(value=resolved),
+                    gr.update(value=resolved_lowq),
+                    plot_val,
+                    rr_val,
+                    company_val,
                     start_dd,
                     start_iso,
                     scan_status,
                     scan_table,
                 )
 
+            # After resolving query params into controls, sync the address bar.
             demo.load(
                 fn=_on_load,
                 inputs=[charts_tab.tickerDropdown, charts_tab.lowq],
                 outputs=[
+                    charts_tab.tickerDropdown,
+                    charts_tab.lowq,
                     charts_tab.plotComponent,
                     charts_tab.rrTable,
                     charts_tab.companyInfo,
@@ -140,6 +160,10 @@ class CanswimPlayground:
                     scans_tab.scanStatus,
                     scans_tab.scanResult,
                 ],
+            ).then(
+                fn=None,
+                inputs=[charts_tab.tickerDropdown, charts_tab.lowq],
+                js=CHART_URL_SYNC_JS,
             )
 
         import os

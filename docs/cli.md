@@ -25,7 +25,7 @@ Local work should keep **`hfhub_sync=False`** (default) unless you intentionally
 
 | Task | Purpose | Common flags |
 |------|---------|----------------|
-| `dashboard` | Gradio UI: Charts, Scans, Run, Advanced | `--same_data True` to reuse DuckDB |
+| `dashboard` | Gradio UI: Charts, Scans, Run, Advanced | `--same_data True` to reuse DuckDB; share a chart via `?ticker=AAPL&lowq=95` |
 | `gatherdata` | Get market data (full universe or scoped) | `--tickers`, `--no_covariates` |
 | `forecast` | Run forecasts (full or scoped) | `--tickers`, `--forecast_start_date`, `--dry_run` |
 | `resolve_start` | Print which forecast start date would be used | `--forecast_start_date` |

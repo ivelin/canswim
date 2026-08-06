@@ -15,6 +15,7 @@ from canswim.db import (
     get_company_profile,
     format_company_profile_markdown,
 )
+from canswim.dashboard.url_state import CHART_URL_SYNC_JS
 
 # Note: It appears that gradio Plot ignores the backend plot lib setting
 # pd.options.plotting.backend = 'hvplot'
@@ -34,6 +35,8 @@ class ChartTab:
             default_ticker = (
                 random.sample(sorted_tickers, 1)[0] if sorted_tickers else None
             )
+            self.sorted_tickers = sorted_tickers
+            self.default_ticker = default_ticker
             self.tickerDropdown = gr.Dropdown(
                 choices=sorted_tickers,
                 label="Stock Symbol",
@@ -62,6 +65,18 @@ class ChartTab:
             fn=self.plot_forecast,
             inputs=[self.tickerDropdown, self.lowq],
             outputs=[self.plotComponent, self.rrTable, self.companyInfo],
+        )
+        # Live shareable URL (?ticker=&lowq=) — separate from plot handlers so
+        # Gradio js= does not rewrite plot_forecast inputs.
+        self.tickerDropdown.change(
+            fn=None,
+            inputs=[self.tickerDropdown, self.lowq],
+            js=CHART_URL_SYNC_JS,
+        )
+        self.lowq.change(
+            fn=None,
+            inputs=[self.tickerDropdown, self.lowq],
+            js=CHART_URL_SYNC_JS,
         )
 
     def _company_md(self, ticker: str | None) -> str:
