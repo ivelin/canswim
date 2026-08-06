@@ -154,3 +154,162 @@ def test_weekend_skip_gather():
                     )
     g.assert_not_called()
     assert r["forecasted"] == ["AAPL"]
+
+
+def test_weekend_resolve_start_failure():
+    with patch("canswim.weekend.list_db_symbols", return_value=["AAPL"]):
+        with patch(
+            "canswim.weekend.resolve_start_for_run",
+            return_value={"ok": False, "error": "no market calendar", "start": None},
+        ):
+            r = run_weekend_all_db(dry_run=False)
+    assert r["ok"] is False
+    assert "calendar" in (r.get("error") or "").lower() or "start" in (
+        r.get("error") or ""
+    ).lower()
+
+
+def test_weekend_gather_hard_fail_skips_forecast_for_batch():
+    """If gather returns no ready symbols, forecast is not called for that batch."""
+    with patch("canswim.weekend.list_db_symbols", return_value=["ZZZ"]):
+        with patch(
+            "canswim.weekend.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-08-10",
+                "reason": "default_live",
+                "live_default": "2026-08-10",
+                "input": None,
+                "error": None,
+            },
+        ):
+            with patch(
+                "canswim.weekend.gather_for_tickers",
+                return_value={
+                    "ok": False,
+                    "ready": [],
+                    "incomplete": ["ZZZ"],
+                    "error": "Market history incomplete",
+                },
+            ):
+                with patch("canswim.weekend.forecast_for_tickers") as fc:
+                    r = run_weekend_all_db(dry_run=False, batch_size=10)
+    fc.assert_not_called()
+    assert "ZZZ" in (r.get("incomplete") or [])
+    assert r.get("batch_results")
+
+
+def test_weekend_gather_partial_ready_forecasts_only_ready():
+    with patch("canswim.weekend.list_db_symbols", return_value=["AAPL", "IPO"]):
+        with patch(
+            "canswim.weekend.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-08-10",
+                "reason": "default_live",
+                "live_default": "2026-08-10",
+                "input": None,
+                "error": None,
+            },
+        ):
+            with patch(
+                "canswim.weekend.gather_for_tickers",
+                return_value={
+                    "ok": True,
+                    "ready": ["AAPL"],
+                    "incomplete": ["IPO"],
+                    "error": None,
+                },
+            ):
+                with patch(
+                    "canswim.weekend.forecast_for_tickers",
+                    return_value={
+                        "ok": True,
+                        "forecasted": ["AAPL"],
+                        "skipped": [],
+                    },
+                ) as fc:
+                    r = run_weekend_all_db(dry_run=False, batch_size=10)
+    assert fc.call_args[0][0] == "AAPL"
+    assert r["forecasted"] == ["AAPL"]
+    assert "IPO" in r["incomplete"]
+
+
+def test_weekend_explicit_symbols_override():
+    with patch("canswim.weekend.list_db_symbols") as ldb:
+        with patch(
+            "canswim.weekend.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-08-10",
+                "reason": "default_live",
+                "live_default": "2026-08-10",
+                "input": None,
+                "error": None,
+            },
+        ):
+            r = run_weekend_all_db(
+                dry_run=True, symbols=["msft", "aapl"], batch_size=10
+            )
+    ldb.assert_not_called()
+    assert r["symbols"] == ["AAPL", "MSFT"]
+
+
+def test_cli_run_weekend_dry_run():
+    from canswim.cli_run import run_weekend
+
+    with patch(
+        "canswim.weekend.run_weekend_all_db",
+        return_value={"ok": True, "dry_run": True, "symbols": ["AAPL"]},
+    ) as m:
+        code = run_weekend(dry_run=True, catchup=False)
+    assert code == 0
+    m.assert_called_once()
+    assert m.call_args.kwargs.get("dry_run") is True
+
+
+def test_list_db_symbols_normalizes_and_sorts():
+    from canswim.weekend import list_db_symbols
+
+    with patch("canswim.db.get_db_path", return_value="/tmp/x.duckdb"):
+        with patch(
+            "canswim.db.list_tickers",
+            return_value=["msft", "AAPL", " msft ", "", None],
+        ):
+            assert list_db_symbols() == ["AAPL", "MSFT"]
+
+
+def test_weekend_forecast_fail_records_batch_error():
+    with patch("canswim.weekend.list_db_symbols", return_value=["AAPL"]):
+        with patch(
+            "canswim.weekend.resolve_start_for_run",
+            return_value={
+                "ok": True,
+                "start": "2026-08-10",
+                "reason": "default_live",
+                "live_default": "2026-08-10",
+                "input": None,
+                "error": None,
+            },
+        ):
+            with patch(
+                "canswim.weekend.gather_for_tickers",
+                return_value={
+                    "ok": True,
+                    "ready": ["AAPL"],
+                    "incomplete": [],
+                },
+            ):
+                with patch(
+                    "canswim.weekend.forecast_for_tickers",
+                    return_value={
+                        "ok": False,
+                        "forecasted": [],
+                        "skipped": ["AAPL"],
+                        "error": "No real fundamentals",
+                        "fail_reason": "fundamentals",
+                    },
+                ):
+                    r = run_weekend_all_db(dry_run=False, batch_size=5)
+    assert r["batch_results"][0]["forecast"]["fail_reason"] == "fundamentals"
+    assert "AAPL" in r["incomplete"]

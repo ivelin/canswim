@@ -33,7 +33,18 @@ def list_db_symbols(*, db_path: Optional[str] = None) -> list[str]:
 
     path = db_path or get_db_path()
     syms = list_tickers(path)
-    out = sorted({str(s).strip().upper() for s in (syms or []) if str(s).strip()})
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in syms or []:
+        if s is None:
+            continue
+        u = str(s).strip().upper()
+        if not u or u in {"NONE", "NAN", "NULL"}:
+            continue
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    out.sort()
     logger.info("Weekend universe from stock_tickers: {} symbol(s) ({})", len(out), path)
     return out
 
