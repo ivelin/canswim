@@ -109,7 +109,7 @@ python -m canswim dashboard --same_data True
 
 | Tab | Purpose |
 |-----|---------|
-| **Charts** | Price history + forecast bands for a symbol |
+| **Charts** | Price history + forecast bands for a symbol (shareable `?ticker=AAPL&lowq=95`) |
 | **Scans** | Filter forecasts by as-of date, reward, risk, confidence |
 | **Run** | **Refresh data & forecasts** (primary) · more options for gather-only / forecast-only / **Rebuild Charts database** |
 | **Advanced Queries** | Read-only SQL against the search DB |
