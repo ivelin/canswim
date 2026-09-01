@@ -45,6 +45,11 @@ COMPANY_PROFILE_COLS = (
 DEFAULT_ROW_LIMIT = 5000
 DEFAULT_CLOSE_LOOKBACK_DAYS = 252
 
+# Forecast model tags stored on DuckDB rows / new parquet (v2 schema).
+FORECAST_MODEL_TIDE = "tide"
+FORECAST_MODEL_TIMESFM3 = "timesfm3"
+TIMESFM3_FORECAST_SUBDIR = "forecast-timesfm3/"
+
 
 @dataclass(frozen=True)
 class DataPaths:
@@ -53,6 +58,7 @@ class DataPaths:
     data_dir: str
     db_path: str
     forecast_path: str
+    timesfm3_forecast_path: str
     stocks_price_path: str
     stock_tickers_path: str
 
@@ -61,6 +67,9 @@ class DataPaths:
         data_dir = os.getenv("data_dir", "data")
         db_file = os.getenv("db_file", "local.duckdb")
         forecast_subdir = os.getenv("forecast_subdir", "forecast/")
+        timesfm3_subdir = os.getenv(
+            "timesfm3_forecast_subdir", TIMESFM3_FORECAST_SUBDIR
+        )
         data_3rd_party = os.getenv("data-3rd-party", "data-3rd-party")
         price_data = os.getenv("price_data", "all_stocks_price_hist_1d.parquet")
         stock_tickers_list = os.getenv("stock_tickers_list", "all_stocks.csv")
@@ -68,6 +77,7 @@ class DataPaths:
             data_dir=data_dir,
             db_path=f"{data_dir}/{db_file}",
             forecast_path=f"{data_dir}/{forecast_subdir}",
+            timesfm3_forecast_path=f"{data_dir}/{timesfm3_subdir}",
             stocks_price_path=f"{data_dir}/{data_3rd_party}/{price_data}",
             stock_tickers_path=f"{data_dir}/{data_3rd_party}/{stock_tickers_list}",
         )
@@ -117,6 +127,66 @@ def _list_main_tables(db_con) -> set[str]:
             "WHERE table_schema = 'main'"
         ).fetchall()
     }
+
+
+def _table_has_column(db_con, table: str, column: str) -> bool:
+    try:
+        cols = {str(r[0]).lower() for r in db_con.execute(f"DESCRIBE {table}").fetchall()}
+        return column.lower() in cols
+    except Exception:
+        return False
+
+
+def _normalize_forecast_model(model: Optional[str]) -> str:
+    raw = (model or FORECAST_MODEL_TIDE).strip().lower()
+    if raw in ("timesfm3", "timesfm-3", "timesfm_3"):
+        return FORECAST_MODEL_TIMESFM3
+    return FORECAST_MODEL_TIDE
+
+
+def ibd50_csv_path(paths: Optional[DataPaths] = None) -> Path:
+    """Live IBD50 list (CANSWIM_HOME data-3rd-party), not git symbol_lists."""
+    paths = paths or DataPaths.from_env()
+    data_3rd = os.getenv("data-3rd-party", "data-3rd-party")
+    return Path(paths.data_dir) / data_3rd / "IBD50.csv"
+
+
+def load_ibd50_symbols(paths: Optional[DataPaths] = None) -> list[str]:
+    """Symbols from the operator IBD50.csv (GCT, NVDA, …)."""
+    path = ibd50_csv_path(paths)
+    if not path.is_file():
+        logger.warning(f"IBD50.csv not found at {path}")
+        return []
+    return sorted(_symbols_from_ticker_csv(str(path)))
+
+
+def _parquet_glob_has_files(glob_pat: str) -> bool:
+    import glob as _glob
+
+    return bool(_glob.glob(glob_pat, recursive=True))
+
+
+def _forecast_hive_globs(
+    forecast_path: Optional[str] = None,
+    timesfm3_path: Optional[str] = None,
+    *,
+    include_timesfm3: bool = True,
+) -> list[tuple[str, str]]:
+    """Return (glob, default_model) pairs that have parquet files."""
+    paths = DataPaths.from_env()
+    fpath = str(forecast_path or paths.forecast_path).rstrip("/") + "/"
+    tpath = str(
+        timesfm3_path or paths.timesfm3_forecast_path
+    ).rstrip("/") + "/"
+    out: list[tuple[str, str]] = []
+    tide_glob = f"{fpath}**/*.parquet"
+    if _parquet_glob_has_files(tide_glob):
+        out.append((tide_glob, FORECAST_MODEL_TIDE))
+    if include_timesfm3:
+        tglob = f"{tpath}**/*.parquet"
+        if _parquet_glob_has_files(tglob):
+            out.append((tglob, FORECAST_MODEL_TIMESFM3))
+    return out
 
 
 def search_db_status(db_path: Optional[str] = None) -> dict[str, Any]:
@@ -317,6 +387,107 @@ def _should_reuse_db(db_path: str, same_data: bool) -> bool:
         return False
 
 
+def _create_forecast_table_from_parquet(
+    db_con,
+    *,
+    forecast_path: str,
+    timesfm3_path: Optional[str] = None,
+) -> None:
+    """Build ``forecast`` from tide hive ∪ optional timesfm3 hive.
+
+    Missing ``model`` parquet columns are tagged ``tide``. Does not drop
+    existing tide rows on a later sync — this path is full rebuild only.
+    """
+    globs = _forecast_hive_globs(
+        forecast_path, timesfm3_path, include_timesfm3=True
+    )
+    if not globs:
+        raise FileNotFoundError(
+            f"No forecast parquet under {forecast_path} or {timesfm3_path}"
+        )
+    selects = []
+    for glob_pat, default_model in globs:
+        # Probe columns so we can COALESCE model when the hive is untagged.
+        try:
+            pq_cols = {
+                str(r[0]).lower()
+                for r in db_con.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{glob_pat}', "
+                    f"hive_partitioning = 1, union_by_name = true, "
+                    f"hive_types_autocast = true) LIMIT 0"
+                ).fetchall()
+            }
+        except Exception as e:
+            logger.warning(f"forecast hive probe failed for {glob_pat}: {e}")
+            continue
+        has_date = "date" in pq_cols
+        has_time = "time" in pq_cols
+        if has_date and has_time:
+            date_expr = (
+                "COALESCE(TRY_CAST(f.date AS DATE), TRY_CAST(f.time AS DATE))"
+            )
+        elif has_date:
+            date_expr = "CAST(f.date AS DATE)"
+        elif has_time:
+            date_expr = "CAST(f.time AS DATE)"
+        else:
+            logger.warning(f"forecast hive missing date/time: {glob_pat}")
+            continue
+        if "model" in pq_cols:
+            model_expr = (
+                f"COALESCE(TRY_CAST(f.model AS VARCHAR), '{default_model}')"
+            )
+        else:
+            model_expr = f"'{default_model}'"
+        selects.append(
+            f"""
+            SELECT
+                {date_expr} AS date,
+                upper(CAST(f.symbol AS VARCHAR)) AS symbol,
+                make_date(
+                    CAST(f.forecast_start_year AS INTEGER),
+                    CAST(f.forecast_start_month AS INTEGER),
+                    CAST(f.forecast_start_day AS INTEGER)
+                ) AS start_date,
+                {model_expr} AS model,
+                f."close_quantile_0.01",
+                f."close_quantile_0.05",
+                f."close_quantile_0.2",
+                f."close_quantile_0.5",
+                f."close_quantile_0.8",
+                f."close_quantile_0.95",
+                f."close_quantile_0.99"
+            FROM read_parquet(
+                '{glob_pat}',
+                hive_partitioning = 1,
+                union_by_name = true,
+                hive_types_autocast = true
+            ) AS f
+            """
+        )
+    if not selects:
+        raise FileNotFoundError("No readable forecast parquet hives")
+    union_sql = " UNION ALL BY NAME ".join(f"({s})" for s in selects)
+    db_con.sql(
+        f"""--sql
+        CREATE OR REPLACE TABLE forecast
+        AS SELECT * EXCLUDE (rn)
+        FROM (
+            SELECT
+                src.*,
+                row_number() OVER (
+                    PARTITION BY src.symbol, src.model, src.start_date, src.date
+                    ORDER BY src.symbol
+                ) AS rn
+            FROM ({union_sql}) AS src
+            SEMI JOIN stock_tickers
+            ON src.symbol = stock_tickers.symbol
+        )
+        WHERE rn = 1
+        """
+    )
+
+
 def init_search_db(
     db_path: str,
     *,
@@ -391,53 +562,35 @@ def init_search_db(
             Use --help to see all dashboard launch options.
             """
         )
-        # Forecast parquet from darts uses the time index as column "time"
-        db_con.sql(
-            f"""--sql
-            CREATE OR REPLACE TABLE forecast
-            AS SELECT * EXCLUDE (rn)
-            FROM (
-                SELECT
-                    CAST(f.date AS DATE) AS date,
-                    f.symbol,
-                    make_date(
-                        f.forecast_start_year,
-                        f.forecast_start_month,
-                        f.forecast_start_day
-                    ) AS start_date,
-                    COLUMNS('close_quantile_.*'),
-                    row_number() OVER (
-                        PARTITION BY f.symbol,
-                            make_date(
-                                f.forecast_start_year,
-                                f.forecast_start_month,
-                                f.forecast_start_day
-                            ),
-                            CAST(f.date AS DATE)
-                        ORDER BY f.symbol
-                    ) AS rn
-                FROM read_parquet('{forecast_path}/**/*.parquet', hive_partitioning = 1) AS f
-                SEMI JOIN stock_tickers
-                ON f.symbol = stock_tickers.symbol
-            )
-            WHERE rn = 1
-            """
+        # Forecast parquet from darts uses the time index as column "time".
+        # Tag missing model as tide; union sibling timesfm3 hive when present.
+        _create_forecast_table_from_parquet(
+            db_con,
+            forecast_path=forecast_path,
+            timesfm3_path=paths.timesfm3_forecast_path,
         )
         db_con.table("forecast").show()
         db_con.sql(
             """--sql
             CREATE UNIQUE INDEX forecast_symd_idx
-            ON forecast (symbol, start_date, date)
+            ON forecast (symbol, model, start_date, date)
             """
         )
         logger.info("Creating latest_forecast table")
+        # One row per symbol for live-dashboard scalar subqueries (tide preferred
+        # when both models share a symbol). Per-model latest is derived from
+        # forecast when needed.
         db_con.sql(
             """--sql
             CREATE OR REPLACE TABLE latest_forecast AS
-                SELECT symbol, max(start_date) as date
+                SELECT
+                    symbol,
+                    max(start_date) as date,
+                    'tide' AS model
                 FROM forecast as f
                 SEMI JOIN stock_tickers
                 ON f.symbol = stock_tickers.symbol
+                WHERE COALESCE(f.model, 'tide') = 'tide'
                 GROUP BY symbol
             """
         )
@@ -474,6 +627,7 @@ def init_search_db(
             AS SELECT
                 f.symbol,
                 f.start_date,
+                COALESCE(f.model, 'tide') AS model,
                 mean(
                     abs(
                         log(
@@ -486,14 +640,14 @@ def init_search_db(
             INNER JOIN close_price AS cp
               ON cp.symbol = f.symbol
              AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
-            GROUP BY f.symbol, f.start_date
+            GROUP BY f.symbol, f.start_date, COALESCE(f.model, 'tide')
             """
         )
         db_con.table("backtest_error").show()
         db_con.sql(
             """--sql
             CREATE UNIQUE INDEX backtest_error_sym_start_idx
-            ON backtest_error (symbol, start_date)
+            ON backtest_error (symbol, model, start_date)
             """
         )
         _create_or_load_company_profile_table(db_con, paths)
@@ -1088,12 +1242,16 @@ def sync_forecasts_to_search_db(
     symbols: Sequence[str],
     *,
     forecast_path: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
     """Load forecast parquet partitions for symbols into the DuckDB search table.
 
     Charts/Scans read ``forecast`` / ``latest_forecast`` from DuckDB. Scoped
     forecast runs write hive parquet only; with ``--same_data`` the search DB
     is not rebuilt, so charts would stay empty of forecast lines without this.
+
+    ``model`` (tide | timesfm3) scopes DELETE/INSERT so TimesFM-3 ingest never
+    drops tide rows. Missing parquet ``model`` columns are tagged as tide.
     """
     import glob
 
@@ -1102,6 +1260,16 @@ def sync_forecasts_to_search_db(
         return {"ok": True, "symbols": [], "forecast_rows": 0}
 
     paths = DataPaths.from_env()
+    model_tag = _normalize_forecast_model(model)
+    # Ensure v2 model column exists before model-scoped DELETE/INSERT.
+    try:
+        from canswim.db_migrations import apply_migrations
+
+        apply_migrations(db_path, paths=paths)
+    except Exception as e:
+        logger.warning(f"sync_forecasts_to_search_db migration: {e}")
+    if forecast_path is None and model_tag == FORECAST_MODEL_TIMESFM3:
+        forecast_path = paths.timesfm3_forecast_path
     fpath = forecast_path or paths.forecast_path
     # Normalize trailing slash
     fpath = str(fpath)
@@ -1228,24 +1396,54 @@ def sync_forecasts_to_search_db(
                 "message": "No forecast rows for symbols in parquet hive",
             }
 
-        db_con.execute(
-            f"""--sql
-            DELETE FROM forecast
-            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
-            """
-        )
+        has_model_col = _table_has_column(db_con, "forecast", "model")
+        pq_has_model = "model" in pq_cols
+        if pq_has_model:
+            model_expr = (
+                "COALESCE(TRY_CAST(f.model AS VARCHAR), "
+                f"'{model_tag}')"
+            )
+        else:
+            model_expr = f"'{model_tag}'"
+        if has_model_col:
+            db_con.execute(
+                f"""--sql
+                DELETE FROM forecast
+                WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                  AND COALESCE(model, 'tide') = '{model_tag}'
+                """
+            )
+        else:
+            # Pre-v2: only tide hive should use this path.
+            db_con.execute(
+                f"""--sql
+                DELETE FROM forecast
+                WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                """
+            )
         # Dedupe when multiple part files share symbol/start/date (common in hive dirs).
+        qcols = (
+            '"close_quantile_0.01", "close_quantile_0.05", "close_quantile_0.2", '
+            '"close_quantile_0.5", "close_quantile_0.8", "close_quantile_0.95", '
+            '"close_quantile_0.99"'
+        )
+        # Named insert: ALTER ADD COLUMN appends `model` at the end, so a
+        # positional SELECT (date, symbol, start_date, model, quantiles…)
+        # would write the string into close_quantile_0.01.
+        if has_model_col:
+            insert_target = f"(date, symbol, start_date, {qcols}, model)"
+            insert_cols = f"date, symbol, start_date, {qcols}, model"
+        else:
+            insert_target = f"(date, symbol, start_date, {qcols})"
+            insert_cols = f"date, symbol, start_date, {qcols}"
+        select_model = f"{model_expr} AS model," if has_model_col else ""
+        partition_model = (
+            f", {model_expr}" if has_model_col else ""
+        )
         db_con.execute(
             f"""--sql
-            INSERT INTO forecast
-            SELECT date, symbol, start_date,
-                "close_quantile_0.01",
-                "close_quantile_0.05",
-                "close_quantile_0.2",
-                "close_quantile_0.5",
-                "close_quantile_0.8",
-                "close_quantile_0.95",
-                "close_quantile_0.99"
+            INSERT INTO forecast {insert_target}
+            SELECT {insert_cols}
             FROM (
                 SELECT
                     {date_expr} AS date,
@@ -1257,6 +1455,7 @@ def sync_forecasts_to_search_db(
                             CAST(f.forecast_start_day AS INTEGER)
                         ) AS DATE
                     ) AS start_date,
+                    {select_model}
                     f."close_quantile_0.01",
                     f."close_quantile_0.05",
                     f."close_quantile_0.2",
@@ -1265,7 +1464,8 @@ def sync_forecasts_to_search_db(
                     f."close_quantile_0.95",
                     f."close_quantile_0.99",
                     row_number() OVER (
-                        PARTITION BY upper(CAST(f.symbol AS VARCHAR)),
+                        PARTITION BY upper(CAST(f.symbol AS VARCHAR))
+                            {partition_model},
                             make_date(
                                 CAST(f.forecast_start_year AS INTEGER),
                                 CAST(f.forecast_start_month AS INTEGER),
@@ -1287,52 +1487,102 @@ def sync_forecasts_to_search_db(
             WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
             """
         ).fetchone()[0]
-        # Refresh latest_forecast for these symbols
-        db_con.execute(
-            f"""--sql
-            DELETE FROM latest_forecast
-            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
-            """
-        )
-        db_con.execute(
-            f"""--sql
-            INSERT INTO latest_forecast
-            SELECT symbol, max(start_date) AS date
-            FROM forecast
-            WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
-            GROUP BY symbol
-            """
-        )
-        # Refresh backtest_error for these symbols (Charts RR / Scans)
-        try:
+        # Refresh latest_forecast for tide only (one row per symbol — live
+        # dashboard scalar subqueries). TimesFM-3 latest is derived from
+        # forecast WHERE model='timesfm3'.
+        if model_tag == FORECAST_MODEL_TIDE:
+            lf_has_model = _table_has_column(db_con, "latest_forecast", "model")
             db_con.execute(
                 f"""--sql
-                DELETE FROM backtest_error
+                DELETE FROM latest_forecast
                 WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
                 """
             )
-            db_con.execute(
-                f"""--sql
-                INSERT INTO backtest_error
-                SELECT
-                    f.symbol,
-                    f.start_date,
-                    mean(
-                        abs(
-                            log(
-                                greatest(f."close_quantile_0.5", 0.01)
-                                / cp.Close
+            if lf_has_model:
+                db_con.execute(
+                    f"""--sql
+                    INSERT INTO latest_forecast
+                    SELECT symbol, max(start_date) AS date, 'tide' AS model
+                    FROM forecast
+                    WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                      AND COALESCE(model, 'tide') = 'tide'
+                    GROUP BY symbol
+                    """
+                )
+            else:
+                db_con.execute(
+                    f"""--sql
+                    INSERT INTO latest_forecast
+                    SELECT symbol, max(start_date) AS date
+                    FROM forecast
+                    WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                    GROUP BY symbol
+                    """
+                )
+        # Refresh backtest_error for these symbols (Charts RR / Scans)
+        try:
+            be_has_model = _table_has_column(db_con, "backtest_error", "model")
+            if be_has_model:
+                db_con.execute(
+                    f"""--sql
+                    DELETE FROM backtest_error
+                    WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                      AND COALESCE(model, 'tide') = '{model_tag}'
+                    """
+                )
+                db_con.execute(
+                    f"""--sql
+                    INSERT INTO backtest_error (symbol, start_date, mal_error, model)
+                    SELECT
+                        f.symbol,
+                        f.start_date,
+                        mean(
+                            abs(
+                                log(
+                                    greatest(f."close_quantile_0.5", 0.01)
+                                    / cp.Close
+                                )
                             )
-                        )
-                    ) AS mal_error
-                FROM forecast AS f
-                INNER JOIN close_price AS cp
-                  ON upper(CAST(cp.symbol AS VARCHAR)) = upper(CAST(f.symbol AS VARCHAR))
-                 AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
-                WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
-                GROUP BY f.symbol, f.start_date
-                """
-            )
+                        ) AS mal_error,
+                        COALESCE(f.model, 'tide') AS model
+                    FROM forecast AS f
+                    INNER JOIN close_price AS cp
+                      ON upper(CAST(cp.symbol AS VARCHAR)) = upper(CAST(f.symbol AS VARCHAR))
+                     AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
+                    WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+                      AND COALESCE(f.model, 'tide') = '{model_tag}'
+                    GROUP BY f.symbol, f.start_date, COALESCE(f.model, 'tide')
+                    """
+                )
+            else:
+                db_con.execute(
+                    f"""--sql
+                    DELETE FROM backtest_error
+                    WHERE upper(CAST(symbol AS VARCHAR)) IN ({in_list})
+                    """
+                )
+                db_con.execute(
+                    f"""--sql
+                    INSERT INTO backtest_error
+                    SELECT
+                        f.symbol,
+                        f.start_date,
+                        mean(
+                            abs(
+                                log(
+                                    greatest(f."close_quantile_0.5", 0.01)
+                                    / cp.Close
+                                )
+                            )
+                        ) AS mal_error
+                    FROM forecast AS f
+                    INNER JOIN close_price AS cp
+                      ON upper(CAST(cp.symbol AS VARCHAR)) = upper(CAST(f.symbol AS VARCHAR))
+                     AND CAST(cp.Date AS DATE) = CAST(f.date AS DATE)
+                    WHERE upper(CAST(f.symbol AS VARCHAR)) IN ({in_list})
+                    GROUP BY f.symbol, f.start_date
+                    """
+                )
         except Exception as e:
             logger.warning(f"backtest_error refresh after forecast sync: {e}")
 
@@ -1349,6 +1599,7 @@ def get_reward_risk(
     min_reward: float = 1.0,
     latest_only: bool = True,
     uptrending_only: bool = True,
+    model: Optional[str] = None,
 ) -> pd.DataFrame:
     """Reward/risk metrics for a symbol's forecast start dates.
 
@@ -1369,8 +1620,15 @@ def get_reward_risk(
             AND f.start_date = (
                 SELECT lf.date FROM latest_forecast lf
                 WHERE lf.symbol = f.symbol
+                LIMIT 1
             )
         """
+    model_clause = ""
+    error_join_model = ""
+    if model:
+        tag = _normalize_forecast_model(model)
+        model_clause = f" AND COALESCE(f.model, 'tide') = '{tag}' "
+        error_join_model = f" AND COALESCE(e.model, 'tide') = '{tag}' "
     having_clause = ""
     if uptrending_only:
         having_clause = f"""
@@ -1440,8 +1698,10 @@ def get_reward_risk(
             FROM forecast f
             LEFT JOIN backtest_error e
               ON e.symbol = f.symbol AND e.start_date = f.start_date
+              {error_join_model}
             WHERE f.symbol = $ticker
             {latest_clause}
+            {model_clause}
             GROUP BY f.symbol, f.start_date
             {having_clause}
             ORDER BY f.start_date
@@ -1456,20 +1716,27 @@ def get_reward_risk(
 _DEFAULT_PRED_HORIZON_BDAYS = 42
 
 
-def list_forecast_start_dates(db_path: str) -> list[str]:
+def list_forecast_start_dates(
+    db_path: str, *, model: Optional[str] = None
+) -> list[str]:
     """Distinct forecast origin dates (YYYY-MM-DD), newest first.
 
     Efficient single aggregate over ``forecast.start_date`` (not a full scan of
     all horizon rows as wide dataframes). Used to populate the Scans backtest
     dropdown; first element is the default (most recent).
     """
+    model_clause = ""
+    if model:
+        tag = _normalize_forecast_model(model)
+        model_clause = f" AND COALESCE(model, 'tide') = '{tag}' "
     with connect_readonly(db_path) as db_con:
         # GROUP BY is cheap on the start_date column; strftime avoids Python loops
         rows = db_con.execute(
-            """--sql
+            f"""--sql
             SELECT strftime(start_date, '%Y-%m-%d') AS d
             FROM forecast
             WHERE start_date IS NOT NULL
+            {model_clause}
             GROUP BY start_date
             ORDER BY start_date DESC
             """
@@ -1482,6 +1749,7 @@ def list_forecast_start_date_choices(
     *,
     pred_horizon_bdays: int = _DEFAULT_PRED_HORIZON_BDAYS,
     asof: Optional[Union[str, pd.Timestamp]] = None,
+    model: Optional[str] = None,
 ) -> list[tuple[str, str]]:
     """Gradio dropdown choices: ``(label, value)`` newest first.
 
@@ -1496,7 +1764,7 @@ def list_forecast_start_date_choices(
     """
     from pandas.tseries.offsets import BDay
 
-    dates = list_forecast_start_dates(db_path)
+    dates = list_forecast_start_dates(db_path, model=model)
     if not dates:
         return []
 
@@ -1533,6 +1801,8 @@ def scan_forecasts(
     reward: float,
     rr: float,
     forecast_start_date: Optional[Union[str, pd.Timestamp]] = None,
+    *,
+    model: Optional[str] = None,
 ) -> pd.DataFrame:
     """Universe scan (ScanTab.scan_forecasts SQL). lowq is confidence 80/95/99.
 
@@ -1549,7 +1819,7 @@ def scan_forecasts(
     if forecast_start_date is None or (
         isinstance(forecast_start_date, str) and not str(forecast_start_date).strip()
     ):
-        starts = list_forecast_start_dates(db_path)
+        starts = list_forecast_start_dates(db_path, model=model)
         asof = starts[0] if starts else None
     else:
         # Dropdown may send "YYYY-MM-DD  —  label" if misconfigured; take ISO prefix
@@ -1558,6 +1828,12 @@ def scan_forecasts(
     if asof is None:
         logger.warning("scan_forecasts: no forecast start dates in database")
         return pd.DataFrame()
+    scan_model_clause = ""
+    scan_error_model = ""
+    if model:
+        tag = _normalize_forecast_model(model)
+        scan_model_clause = f" AND COALESCE(f.model, 'tide') = '{tag}' "
+        scan_error_model = f" AND COALESCE(e.model, 'tide') = '{tag}' "
     with connect_readonly(db_path) as db_con:
         has_profile = False
         try:
@@ -1605,8 +1881,10 @@ def scan_forecasts(
              AND CAST(c.Date AS DATE) < f.start_date
             LEFT JOIN backtest_error e
               ON e.symbol = f.symbol AND e.start_date = f.start_date
+              {scan_error_model}
             {profile_join}
             WHERE f.start_date = CAST($start AS DATE)
+            {scan_model_clause}
             GROUP BY f.symbol, f.start_date
             HAVING forecast_close_high > prior_close_price AND
                 reward_risk >= $rr AND reward_percent >= $reward
@@ -1688,18 +1966,47 @@ def get_saved_forecasts_as_series(
     db_path: str,
     ticker: str,
     start_date=None,
+    *,
+    model: Optional[str] = None,
+    start_date_eq=None,
 ) -> list[pd.DataFrame]:
-    """Dashboard chart helper: list of per-start_date forecast frames indexed by Date."""
-    logger.info(f"Loading saved forecast for {ticker} starting after: {start_date}")
+    """Dashboard chart helper: list of per-start_date forecast frames indexed by Date.
+
+    When ``model`` is set, only that model's rows are returned. Grouping is
+    (model, start_date) so tide and timesfm3 origins do not mix in one series.
+    ``start_date_eq`` restricts to a single origin (origin picker).
+    """
+    logger.info(
+        f"Loading saved forecast for {ticker} starting after: {start_date} "
+        f"model={model} start_eq={start_date_eq}"
+    )
+    clauses = ["f.symbol = $ticker"]
+    params: dict[str, Any] = {"ticker": ticker}
+    if start_date is not None:
+        clauses.append("f.start_date >= $start_date")
+        params["start_date"] = start_date
+    if start_date_eq is not None and str(start_date_eq).strip().lower() not in (
+        "",
+        "all",
+        "none",
+    ):
+        raw = str(start_date_eq).strip()[:10]
+        clauses.append("f.start_date = CAST($start_eq AS DATE)")
+        params["start_eq"] = raw
+    if model:
+        tag = _normalize_forecast_model(model)
+        clauses.append("COALESCE(f.model, 'tide') = $model")
+        params["model"] = tag
+    where = " AND ".join(clauses)
     with connect_readonly(db_path) as db_con:
         sql_result = db_con.sql(
-            """--sql
+            f"""--sql
             SELECT *
             FROM forecast as f
-            WHERE f.symbol = $ticker AND f.start_date >= $start_date
+            WHERE {where}
             ORDER BY f.symbol, f.start_date, f.date
             """,
-            params={"ticker": ticker, "start_date": start_date},
+            params=params,
         )
         df = sql_result.df()
     logger.debug(f"df columns count: {len(df.columns)}")
@@ -1709,16 +2016,20 @@ def get_saved_forecasts_as_series(
     df = df.drop(columns=["symbol"])
     df.sort_index(ascending=True, inplace=True)
     df_list = []
-    for d in df["start_date"].unique():
-        single_forecast = df.loc[df["start_date"] == d]
-        single_forecast = single_forecast.drop(columns=["start_date"])
+    model_col = "model" if "model" in df.columns else None
+    group_cols = ["start_date"] + ([model_col] if model_col else [])
+    for keys, single_forecast in df.groupby(group_cols, sort=False):
+        single_forecast = single_forecast.drop(
+            columns=[c for c in ("start_date", "model") if c in single_forecast.columns]
+        )
         date_col = "Date" if "Date" in single_forecast.columns else "date"
         single_forecast = single_forecast.set_index(date_col)
         single_forecast.index = pd.to_datetime(single_forecast.index)
         if not single_forecast.empty:
             df_list.append(single_forecast)
             logger.debug(
-                f"Loaded forecast series with {len(single_forecast)} samples, start date: {d}"
+                f"Loaded forecast series with {len(single_forecast)} samples, "
+                f"group: {keys}"
             )
     return df_list
 
@@ -1755,6 +2066,47 @@ def get_close_prices(
     if not df.empty:
         df = df.sort_values("date").reset_index(drop=True)
     return _format_date_columns(df, ["date"])
+
+
+def forecast_counts_by_model(db_path: str) -> dict[str, int]:
+    """Row counts grouped by COALESCE(model,'tide'). Empty dict if table missing."""
+    out: dict[str, int] = {}
+    try:
+        with connect_readonly(db_path) as db_con:
+            if not _table_has_column(db_con, "forecast", "model"):
+                n = db_con.execute("SELECT count(*) FROM forecast").fetchone()[0]
+                return {FORECAST_MODEL_TIDE: int(n)}
+            rows = db_con.execute(
+                """
+                SELECT COALESCE(model, 'tide') AS m, count(*) 
+                FROM forecast GROUP BY 1
+                """
+            ).fetchall()
+            for m, n in rows:
+                out[str(m)] = int(n)
+    except Exception as e:
+        logger.debug(f"forecast_counts_by_model: {e}")
+    return out
+
+
+def backtest_counts_by_model(db_path: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    try:
+        with connect_readonly(db_path) as db_con:
+            if not _table_has_column(db_con, "backtest_error", "model"):
+                n = db_con.execute("SELECT count(*) FROM backtest_error").fetchone()[0]
+                return {FORECAST_MODEL_TIDE: int(n)}
+            rows = db_con.execute(
+                """
+                SELECT COALESCE(model, 'tide') AS m, count(*)
+                FROM backtest_error GROUP BY 1
+                """
+            ).fetchall()
+            for m, n in rows:
+                out[str(m)] = int(n)
+    except Exception as e:
+        logger.debug(f"backtest_counts_by_model: {e}")
+    return out
 
 
 def get_backtest_error(
@@ -1798,14 +2150,17 @@ SEARCH_TABLE_DOCS: dict[str, str] = {
         "Column is usually Symbol or symbol."
     ),
     "forecast": (
-        "Quantile forecast paths. One row per (symbol, start_date, date) where "
-        "date is the forecast horizon calendar date and start_date is the origin. "
-        "Quantile columns: close_quantile_0.01 … close_quantile_0.99 "
-        "(0.5 ≈ median). Used for charts and scans."
+        "Quantile forecast paths. One row per (symbol, model, start_date, date) "
+        "where date is the forecast horizon calendar date, start_date is the "
+        "origin, and model is tide (TiDE) or timesfm3 (research TimesFM-3). "
+        "Missing model is treated as tide. Quantile columns: "
+        "close_quantile_0.01 … close_quantile_0.99 (0.5 ≈ median)."
     ),
     "latest_forecast": (
-        "Per-symbol max(start_date) of available forecasts. "
-        "Join to forecast on symbol + start_date = latest_forecast.date."
+        "Per-symbol max(start_date) of **tide** forecasts (one row/symbol so "
+        "live scalar subqueries stay valid). TimesFM-3 latest is "
+        "max(start_date) from forecast WHERE model='timesfm3'. "
+        "Join tide on symbol + start_date = latest_forecast.date."
     ),
     "close_price": (
         "Historical closes (Date, Symbol/symbol, Close). "
@@ -1813,7 +2168,7 @@ SEARCH_TABLE_DOCS: dict[str, str] = {
     ),
     "backtest_error": (
         "Mean absolute log-error of median forecast vs actual close, "
-        "per (symbol, start_date). Lower is better model fit on that origin."
+        "per (symbol, model, start_date). Lower is better model fit on that origin."
     ),
     "company_profile": (
         "Optional company metadata: name, sector, industry, country, "

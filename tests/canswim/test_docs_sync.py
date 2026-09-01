@@ -60,7 +60,7 @@ def test_cli_tasks_mentioned_in_cli_doc():
     # choices list in argparse
     m = re.search(r"choices\s*=\s*\[(.*?)\]", main_src, re.S)
     assert m, "could not find argparse choices"
-    tasks = re.findall(r'"([a-z_]+)"', m.group(1))
+    tasks = re.findall(r'"([a-z0-9_-]+)"', m.group(1))
     assert "gatherdata" in tasks and "forecast" in tasks
     cli_doc = _read("docs/cli.md")
     for t in tasks:

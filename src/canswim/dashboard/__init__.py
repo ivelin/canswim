@@ -1,5 +1,6 @@
 """CANSWIM Playground. A gradio app intended to be deployed on HF Hub."""
 
+import os
 from canswim.model import CanswimModel
 import gradio as gr
 from canswim.hfhub import HFHub
@@ -25,8 +26,14 @@ repo_id = "ivelin/canswim"
 
 class CanswimPlayground:
 
-    def __init__(self, same_data=False):
+    def __init__(self, same_data=False, *, timesfm3_ui=False, skip_tide_model=False):
         self.same_data = same_data
+        self.timesfm3_ui = bool(timesfm3_ui) or os.getenv(
+            "CANSWIM_TIMESFM3_UI", ""
+        ).strip().lower() in ("1", "true", "yes")
+        self.skip_tide_model = bool(skip_tide_model) or os.getenv(
+            "CANSWIM_SKIP_TIDE_MODEL", ""
+        ).strip().lower() in ("1", "true", "yes")
         self.canswim_model = CanswimModel()
         self.hfhub = HFHub()
         paths = DataPaths.from_env()
@@ -71,37 +78,56 @@ class CanswimPlayground:
         return self.init_db_result
 
     def launch(self):
-        self.download_model()
-        self.download_data()
+        if not self.skip_tide_model:
+            self.download_model()
+            self.download_data()
+        else:
+            logger.info(
+                "Skipping TiDE weight load (timesfm3 dashboard). "
+                "Charts use DuckDB close + saved forecasts."
+            )
         self.initdb()
-        with gr.Blocks(theme=gr.themes.Soft(), title="CANSWIM") as demo:
+        title = "CANSWIM TimesFM-3 (research)" if self.timesfm3_ui else "CANSWIM"
+        notice = ""
+        if self.timesfm3_ui:
+            notice = """
+            **TimesFM-3 research UI** (NC / non-production weights:
+            `google/timesfm-3.0-pytorch`). Side-by-side with live **tide** (TiDE)
+            forecasts on IBD50. This process is **not** the live :7860 dashboard.
+            """
+        with gr.Blocks(theme=gr.themes.Soft(), title=title) as demo:
             gr.Markdown(
-                """
+                f"""
             CANSWIM Playground for CANSLIM style investors.
             * __NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK!__
             * Model trainer source repo [here](https://github.com/ivelin/canswim). Feedback welcome via github issues.
+            {notice}
             """
             )
             with gr.Tab("Charts"):
                 charts_tab = ChartTab(
                     canswim_model=self.canswim_model,
                     db_path=self.db_path,
+                    timesfm3_ui=self.timesfm3_ui,
                 )
             with gr.Tab("Scans"):
                 scans_tab = ScanTab(
                     self.canswim_model,
                     db_path=self.db_path,
+                    timesfm3_ui=self.timesfm3_ui,
                 )
             with gr.Tab("Run"):
                 RunTab(
                     self.canswim_model,
                     db_path=self.db_path,
                     charts_tab=charts_tab,
+                    timesfm3_ui=self.timesfm3_ui,
                 )
             with gr.Tab("Advanced Queries"):
                 AdvancedTab(
                     self.canswim_model,
                     db_path=self.db_path,
+                    timesfm3_ui=self.timesfm3_ui,
                 )
 
             def _on_load(ticker, lowq, request: gr.Request):
@@ -166,8 +192,6 @@ class CanswimPlayground:
                 js=CHART_URL_SYNC_JS,
             )
 
-        import os
-
         server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
         server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
         share = os.getenv("GRADIO_SHARE", "").strip().lower() in (
@@ -196,18 +220,29 @@ class CanswimPlayground:
         )
 
 
-def main(same_data=False):
+def main(same_data=False, timesfm3_ui=False):
     # Optional in-process weekend job (off unless CANSWIM_WEEKEND_SCHEDULER=1)
-    try:
-        from canswim.scheduler import start_inprocess_scheduler
+    # TimesFM-3 research UI does not start the live weekend scheduler.
+    if not timesfm3_ui:
+        try:
+            from canswim.scheduler import start_inprocess_scheduler
 
-        start_inprocess_scheduler(role="dashboard")
-    except Exception as e:
-        from loguru import logger
+            start_inprocess_scheduler(role="dashboard")
+        except Exception as e:
+            from loguru import logger
 
-        logger.warning("Could not start in-process weekend scheduler: {}", e)
+            logger.warning("Could not start in-process weekend scheduler: {}", e)
 
-    canswim_playground = CanswimPlayground(same_data=same_data)
+    skip = timesfm3_ui or os.getenv("CANSWIM_SKIP_TIDE_MODEL", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    canswim_playground = CanswimPlayground(
+        same_data=same_data,
+        timesfm3_ui=timesfm3_ui,
+        skip_tide_model=skip,
+    )
     canswim_playground.launch()
 
 

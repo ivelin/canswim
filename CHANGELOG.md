@@ -2,6 +2,23 @@
 
 All notable releases are documented here. Versioning follows date-style `0.0.YYYYMMDD` unless noted.
 
+## 0.0.20260901
+
+TimesFM-3 research path (NC / non-production weights). Does not replace live TiDE.
+
+### Highlights
+
+- DuckDB search schema **v2**: `model` column (`tide` \| `timesfm3`) on `forecast`, `backtest_error`, `latest_forecast`
+- CLI `timesfm3-forecast --ibd50 --origins 12` writes `data/forecast-timesfm3/` (does not mutate tide parquet)
+- CLI `timesfm3-dashboard` — Gradio on `:7861` with IBD50 side-by-side tide vs timesfm3, model picker, origin picker
+- Live `:7860` dashboard / `:3472` MCP units are unchanged
+
+### Install
+
+```bash
+pip install canswim==0.0.20260901
+```
+
 ## 0.0.20260808
 
 Idempotent multi-entry work: weekend and MCP share one refresh job registry.

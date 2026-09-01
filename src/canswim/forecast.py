@@ -141,7 +141,7 @@ def validate_forecast_dataframe(
     keep = (
         required
         + qcols
-        + [c for c in ("date", "time", time_col) if c in df.columns]
+        + [c for c in ("date", "time", time_col, "model") if c in df.columns]
     )
     keep = list(dict.fromkeys(keep))  # stable unique
     df = df[[c for c in keep if c in df.columns]]

@@ -24,7 +24,7 @@ from loguru import logger
 # ---------------------------------------------------------------------------
 
 # Bump when search-DB layout changes. Keep MIGRATIONS in sync.
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 META_TABLE = "canswim_schema_meta"
 
@@ -145,6 +145,120 @@ def _migrate_to_v1(db_con, paths=None) -> None:
     )
 
 
+def _table_columns(db_con, table: str) -> set[str]:
+    try:
+        return {
+            str(r[0]).lower()
+            for r in db_con.execute(f"DESCRIBE {table}").fetchall()
+        }
+    except Exception:
+        return set()
+
+
+def _add_varchar_column_if_missing(
+    db_con, table: str, column: str, default: str
+) -> bool:
+    """ADD COLUMN if absent. DuckDB fills DEFAULT on existing rows.
+
+    Returns True when the column was added (or already present after a
+    successful no-op). Never errors solely because the column exists.
+    """
+    cols = _table_columns(db_con, table)
+    if column.lower() in cols:
+        logger.info(f"Migration: {table}.{column} already present")
+        return False
+    try:
+        db_con.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR DEFAULT '{default}'"
+        )
+        logger.info(f"Migration: added {table}.{column} DEFAULT '{default}'")
+        return True
+    except Exception as e:
+        msg = str(e).lower()
+        if "already exists" in msg or "duplicate column" in msg:
+            logger.info(f"Migration: {table}.{column} exists ({e})")
+            return False
+        raise
+
+
+def _drop_index_if_exists(db_con, name: str) -> None:
+    try:
+        db_con.execute(f"DROP INDEX IF EXISTS {name}")
+    except Exception as e:
+        logger.debug(f"DROP INDEX {name}: {e}")
+
+
+def _migrate_to_v2(db_con, paths=None) -> None:
+    """v2: ``model`` column (tide | timesfm3) on forecast tables.
+
+    Existing rows are tagged ``tide``. Unique indexes include ``model`` so
+    TimesFM-3 partitions can coexist with TiDE without dropping tide rows.
+    ``latest_forecast`` gets the column but stays one row per symbol (tide
+    latest) so in-flight live dashboards' scalar subqueries keep working.
+    """
+    default_model = "tide"
+    for table in ("forecast", "backtest_error", "latest_forecast"):
+        tables = _list_main_tables_safe(db_con)
+        if table not in tables:
+            logger.info(f"Migration v2: skip missing table {table}")
+            continue
+        _add_varchar_column_if_missing(db_con, table, "model", default_model)
+        try:
+            db_con.execute(
+                f"UPDATE {table} SET model = '{default_model}' WHERE model IS NULL"
+            )
+        except Exception as e:
+            logger.debug(f"UPDATE {table}.model: {e}")
+
+    # Recreate unique indexes to include model (forecast + backtest_error).
+    # latest_forecast keeps (symbol, date) uniqueness — still one row/symbol.
+    _drop_index_if_exists(db_con, "forecast_symd_idx")
+    try:
+        db_con.execute(
+            """
+            CREATE UNIQUE INDEX forecast_symd_idx
+            ON forecast (symbol, model, start_date, date)
+            """
+        )
+    except Exception as e:
+        logger.warning(f"Migration v2: forecast unique index: {e}")
+
+    _drop_index_if_exists(db_con, "backtest_error_sym_start_idx")
+    try:
+        db_con.execute(
+            """
+            CREATE UNIQUE INDEX backtest_error_sym_start_idx
+            ON backtest_error (symbol, model, start_date)
+            """
+        )
+    except Exception as e:
+        logger.warning(f"Migration v2: backtest_error unique index: {e}")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db_con.execute(
+        f"""
+        INSERT OR REPLACE INTO {META_TABLE} (key, value, updated_at)
+        VALUES ('migration_2', ?, ?)
+        """,
+        ["forecast_model_column_v2", now],
+    )
+
+
+def _list_main_tables_safe(db_con) -> set[str]:
+    try:
+        from canswim.db import _list_main_tables
+
+        return _list_main_tables(db_con)
+    except Exception:
+        return {
+            r[0]
+            for r in db_con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main'"
+            ).fetchall()
+        }
+
+
 MIGRATIONS: list[Migration] = [
     Migration(
         version=1,
@@ -156,6 +270,17 @@ MIGRATIONS: list[Migration] = [
             f"{META_TABLE} tracks schema_version."
         ),
         upgrade=_migrate_to_v1,
+    ),
+    Migration(
+        version=2,
+        name="forecast_model_column_v2",
+        description=(
+            "Add model VARCHAR DEFAULT 'tide' to forecast, backtest_error, "
+            "and latest_forecast. Tag existing rows as tide. Unique indexes "
+            "on forecast and backtest_error include model so timesfm3 rows "
+            "coexist with tide (no drop of tide data)."
+        ),
+        upgrade=_migrate_to_v2,
     ),
 ]
 

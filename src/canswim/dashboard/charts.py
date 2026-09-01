@@ -14,6 +14,10 @@ from canswim.db import (
     get_saved_forecasts_as_series,
     get_company_profile,
     format_company_profile_markdown,
+    list_forecast_start_dates,
+    load_ibd50_symbols,
+    FORECAST_MODEL_TIDE,
+    FORECAST_MODEL_TIMESFM3,
 )
 from canswim.dashboard.url_state import CHART_URL_SYNC_JS
 
@@ -23,11 +27,14 @@ from canswim.dashboard.url_state import CHART_URL_SYNC_JS
 
 class ChartTab:
 
-    def __init__(self, canswim_model: CanswimModel = None, db_path=None):
+    def __init__(
+        self, canswim_model: CanswimModel = None, db_path=None, timesfm3_ui=False
+    ):
         assert canswim_model is not None
         assert db_path is not None
         self.canswim_model = canswim_model
         self.db_path = db_path
+        self.timesfm3_ui = bool(timesfm3_ui)
         self.plotComponent = gr.Plot()
         with gr.Row():
             sorted_tickers = sorted(self.get_tickers())
@@ -48,6 +55,25 @@ class ChartTab:
                 label="Confidence level for lowest close price",
                 info="Choose low price confidence percentage",
             )
+        self.modelPicker = None
+        self.originPicker = None
+        if self.timesfm3_ui:
+            origin_choices = ["all"] + list_forecast_start_dates(self.db_path)
+            with gr.Row():
+                self.modelPicker = gr.Radio(
+                    choices=["both", FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3],
+                    value="both",
+                    label="Timeseries model",
+                    info="Side-by-side IBD50 comparison: tide (TiDE) vs timesfm3 (research)",
+                )
+                self.originPicker = gr.Dropdown(
+                    choices=origin_choices,
+                    value="all",
+                    label="Backtest origin",
+                    info="Chart a single monthly/live origin, or all saved starts",
+                    allow_custom_value=False,
+                    filterable=True,
+                )
         self.companyInfo = gr.Markdown(
             value=self._company_md(default_ticker),
             label="Company",
@@ -56,16 +82,30 @@ class ChartTab:
             self.rrTable = gr.Dataframe(
                 label="Reward / Risk metrics (only for uptrending forecasts)"
             )
+        plot_inputs = [self.tickerDropdown, self.lowq]
+        if self.timesfm3_ui and self.modelPicker is not None:
+            plot_inputs.extend([self.modelPicker, self.originPicker])
         self.tickerDropdown.change(
             fn=self.plot_forecast,
-            inputs=[self.tickerDropdown, self.lowq],
+            inputs=plot_inputs,
             outputs=[self.plotComponent, self.rrTable, self.companyInfo],
         )
         self.lowq.change(
             fn=self.plot_forecast,
-            inputs=[self.tickerDropdown, self.lowq],
+            inputs=plot_inputs,
             outputs=[self.plotComponent, self.rrTable, self.companyInfo],
         )
+        if self.timesfm3_ui and self.modelPicker is not None:
+            self.modelPicker.change(
+                fn=self.plot_forecast,
+                inputs=plot_inputs,
+                outputs=[self.plotComponent, self.rrTable, self.companyInfo],
+            )
+            self.originPicker.change(
+                fn=self.plot_forecast,
+                inputs=plot_inputs,
+                outputs=[self.plotComponent, self.rrTable, self.companyInfo],
+            )
         # Live shareable URL (?ticker=&lowq=) — separate from plot handlers so
         # Gradio js= does not rewrite plot_forecast inputs.
         self.tickerDropdown.change(
@@ -91,7 +131,17 @@ class ChartTab:
             return "_Company profile unavailable._"
 
     def get_tickers(self):
-        return list_tickers(self.db_path)
+        all_t = list_tickers(self.db_path)
+        if not self.timesfm3_ui:
+            return all_t
+        ibd = set(load_ibd50_symbols())
+        if not ibd:
+            return all_t
+        preferred = [t for t in all_t if t in ibd]
+        # Keep IBD50 names even if not yet in stock_tickers (still chartable
+        # from close_price / parquet).
+        extra = sorted(ibd - set(preferred))
+        return preferred + extra
 
     def get_target(self, ticker):
         try:
@@ -117,18 +167,20 @@ class ChartTab:
         )
         return future_covariates
 
-    def get_rr(self, ticker=None, lq=None):
+    def get_rr(self, ticker=None, lq=None, model=None):
         assert ticker is not None
         assert lq is not None and lq >= 0
         # Chart plots all backtest starts in range — table must match (not latest-only).
         # Still filter to uptrending rows (label); prior close is as-of each start.
-        df = get_reward_risk(
-            self.db_path,
+        kwargs = dict(
             symbol=ticker,
             low_quantile=lq,
             latest_only=False,
             uptrending_only=True,
         )
+        if model in (FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3):
+            kwargs["model"] = model
+        df = get_reward_risk(self.db_path, **kwargs)
         logger.info(f"rr table df: {df}")
         if df is None or df.empty:
             return df
@@ -294,28 +346,54 @@ class ChartTab:
         ax.legend()
         return ax
 
-    def plot_forecast(self, ticker: str = None, lowq: int = 0.2):
+    def plot_forecast(
+        self,
+        ticker: str = None,
+        lowq: int = 0.2,
+        model: str = None,
+        origin: str = None,
+    ):
         # Chart / forecast display only needs forecast-horizon history, not full train min_samples
         # (train min_samples ≈ lookback*2 + horizons; scoped gather keeps ~2y of prices).
-        th = int(self.canswim_model.train_history)
-        ph = int(self.canswim_model.pred_horizon)
+        try:
+            th = int(self.canswim_model.train_history)
+            ph = int(self.canswim_model.pred_horizon)
+            have_tide = getattr(self.canswim_model, "torch_model", None) is not None
+        except Exception:
+            th, ph, have_tide = 252, 42, False
         chart_min_samples = th + ph + ph  # same floor as forecast_only mode
         load_start_date = pd.Timestamp.now() - BDay(n=chart_min_samples + th)
-        self.canswim_model.load_data(
-            stock_tickers=[ticker],
-            start_date=load_start_date,
-            min_samples=chart_min_samples,
-        )
-        # prepare timeseries for forecast
-        self.canswim_model.prepare_stock_price_data(start_date=load_start_date)
-        fig, axes = plt.subplots(figsize=(20, 12))
-        target = self.get_target(ticker)
-        # reward risk df
+        if have_tide:
+            self.canswim_model.load_data(
+                stock_tickers=[ticker],
+                start_date=load_start_date,
+                min_samples=chart_min_samples,
+            )
+            # prepare timeseries for forecast
+            self.canswim_model.prepare_stock_price_data(start_date=load_start_date)
+        model = (model or ("both" if self.timesfm3_ui else FORECAST_MODEL_TIDE)).lower()
+        origin = origin or "all"
+        side_by_side = self.timesfm3_ui and model == "both"
+        if side_by_side:
+            fig, axes_arr = plt.subplots(2, 1, figsize=(20, 16), sharex=True)
+        else:
+            fig, axes_arr = plt.subplots(figsize=(20, 12))
+            axes_arr = [plt.gca()]
+        target = self.get_target(ticker) if have_tide else None
         rr_df = None
         plot_start_date = pd.Timestamp.now() - BDay(th)
         lq = (100 - lowq) / 100
+        models_to_plot = (
+            [FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3]
+            if side_by_side
+            else [
+                model
+                if model in (FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3)
+                else FORECAST_MODEL_TIDE
+            ]
+        )
+        close_s = None
         if target is None:
-            # Fallback: plot closes from search DB so newly gathered symbols still show a price chart
             from canswim.db import get_close_prices
 
             try:
@@ -330,63 +408,57 @@ class ChartTab:
             if close_df is not None and len(close_df) > 0:
                 date_col = "date" if "date" in close_df.columns else "Date"
                 close_col = "close" if "close" in close_df.columns else "Close"
-                s = close_df.set_index(date_col)[close_col].sort_index()
-                s.index = pd.to_datetime(s.index)
-                axes.plot(s.index, s.values, label=f"{ticker} Close actual")
-                msg = (
-                    f"{ticker}: showing local prices. "
-                    f"No forecast lines yet — run a forecast for this symbol on the Run tab."
-                )
-                gr.Info(msg)
-                axes.set_title(msg)
+                close_s = close_df.set_index(date_col)[close_col].sort_index()
+                close_s.index = pd.to_datetime(close_s.index)
+
+        for ax, mname in zip(axes_arr, models_to_plot):
+            plt.sca(ax)
+            if target is not None:
+                visible_target = target.drop_before(plot_start_date)
+                visible_target.plot(label=f"{ticker} Close actual")
+            elif close_s is not None:
+                ax.plot(close_s.index, close_s.values, label=f"{ticker} Close actual")
             else:
-                msg = (
-                    f"Not enough local price history for {ticker} to chart. "
-                    f"Use Run → Update market data first."
+                ax.text(
+                    0.5,
+                    0.5,
+                    f"Not enough local price history for {ticker} to chart.",
+                    fontsize="large",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
                 )
-                gr.Info(msg)
-                plt.text(0.5, 0.5, msg, fontsize="large", ha="center", va="center")
-        else:
-            visible_target = target.drop_before(plot_start_date)
-            saved_forecast_df_list = self.get_saved_forecasts(
-                ticker=ticker, start_date=plot_start_date
+            saved = self.get_saved_forecasts(
+                ticker=ticker,
+                start_date=plot_start_date,
+                model=mname if self.timesfm3_ui else None,
+                origin=origin,
             )
-            visible_target.plot(label=f"{ticker} Close actual")
-            if saved_forecast_df_list is not None and len(saved_forecast_df_list) > 0:
-                for forecast in saved_forecast_df_list:
+            if saved:
+                for forecast in saved:
                     self.plot_quantiles_df(
                         df=forecast,
                         low_quantile=lq,
                         high_quantile=0.95,
-                        label=f"{ticker} Close forecast",
+                        label=f"{ticker} {mname} forecast",
+                        ax=ax,
                     )
-            else:
-                gr.Info(
-                    f"{ticker}: prices shown. No saved forecasts yet — "
-                    f"run a forecast on the Run tab to add prediction lines."
-                )
-            # Reward/Risk for all uptrending forecast starts (incl. monthly backtests),
-            # not only the global latest start (which may be flat/down while older
-            # starts still plot on the chart).
-            rr_df = self.get_rr(ticker=ticker, lq=lq)
-            # Set the locator
-            major_locator = mdates.YearLocator()  # every year
-            minor_locator = mdates.MonthLocator()  # every month
-            # Specify the format - %b gives us Jan, Feb...
-            major_fmt = mdates.DateFormatter('"%Y"')
-            minor_fmt = mdates.DateFormatter("%b")
-            X = plt.gca().xaxis
-            X.set_major_locator(major_locator)
-            X.set_minor_locator(minor_locator)
-            # Specify formatter
-            X.set_major_formatter(major_fmt)
-            X.set_minor_formatter(minor_fmt)
-            # plt.grid(gridOn=True, which='major', color='b', linestyle='-')
-            plt.grid(which="minor", color="lightgrey", linestyle="--")
-            plt.legend()
-        if target is None:
-            axes.legend()
-            axes.grid(True, which="major", linestyle="-", alpha=0.3)
+            ax.set_title(f"{ticker} · {mname}")
+            ax.legend()
+            ax.grid(True, which="major", linestyle="-", alpha=0.3)
+            ax.grid(True, which="minor", color="lightgrey", linestyle="--")
+            major_locator = mdates.YearLocator()
+            minor_locator = mdates.MonthLocator()
+            ax.xaxis.set_major_locator(major_locator)
+            ax.xaxis.set_minor_locator(minor_locator)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('"%Y"'))
+            ax.xaxis.set_minor_formatter(mdates.DateFormatter("%b"))
+
+        rr_model = None if side_by_side else (
+            model if model in (FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3) else None
+        )
+        if target is not None or close_s is not None:
+            rr_df = self.get_rr(ticker=ticker, lq=lq, model=rr_model)
         company_md = self._company_md(ticker)
         return {
             self.plotComponent: fig,
@@ -394,8 +466,17 @@ class ChartTab:
             self.companyInfo: company_md,
         }
 
-    def get_saved_forecasts(self, ticker: str = None, start_date=None):
+    def get_saved_forecasts(
+        self, ticker: str = None, start_date=None, model=None, origin=None
+    ):
         """Load forecasts from storage to a list of individual forecast series with quantile sampling"""
+        start_eq = None
+        if origin and str(origin).strip().lower() not in ("", "all", "none"):
+            start_eq = str(origin).strip()[:10]
         return get_saved_forecasts_as_series(
-            self.db_path, ticker=ticker, start_date=start_date
+            self.db_path,
+            ticker=ticker,
+            start_date=start_date if start_eq is None else None,
+            model=model,
+            start_date_eq=start_eq,
         )

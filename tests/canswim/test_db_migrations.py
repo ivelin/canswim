@@ -77,7 +77,7 @@ def test_legacy_db_migrates_to_v1(tmp_path: Path):
     _legacy_core_db(db)
     assert get_schema_version(str(db)) is None
 
-    report = apply_migrations(str(db))
+    report = apply_migrations(str(db), target_version=1)
     assert report["ok"] is True
     assert report["from_version"] == 0
     assert report["to_version"] == 1
@@ -96,11 +96,62 @@ def test_legacy_db_migrates_to_v1(tmp_path: Path):
     assert META_TABLE in tables
     assert "company_profile" in tables
 
-    # Idempotent
-    report2 = apply_migrations(str(db))
+    # Idempotent at v1
+    report2 = apply_migrations(str(db), target_version=1)
     assert report2["ok"] is True
     assert report2["applied"] == []
     assert report2["to_version"] == 1
+
+
+def test_legacy_db_migrates_to_current(tmp_path: Path):
+    db = tmp_path / "legacy_current.duckdb"
+    _legacy_core_db(db)
+    report = apply_migrations(str(db))
+    assert report["ok"] is True
+    assert report["to_version"] == CURRENT_SCHEMA_VERSION
+    assert get_schema_version(str(db)) == CURRENT_SCHEMA_VERSION
+    report2 = apply_migrations(str(db))
+    assert report2["ok"] is True
+    assert report2["applied"] == []
+
+
+def test_v1_to_v2_adds_model_column_tagged_tide(tmp_path: Path):
+    db = tmp_path / "v1.duckdb"
+    _legacy_core_db(db)
+    r1 = apply_migrations(str(db), target_version=1)
+    assert r1["ok"] is True
+    assert get_schema_version(str(db)) == 1
+
+    r2 = apply_migrations(str(db))
+    assert r2["ok"] is True
+    assert r2["from_version"] == 1
+    assert r2["to_version"] == 2
+    assert any(a["version"] == 2 for a in r2["applied"])
+    assert get_schema_version(str(db)) == 2
+
+    with duckdb.connect(str(db), read_only=True) as con:
+        for table in ("forecast", "backtest_error", "latest_forecast"):
+            cols = {str(r[0]).lower() for r in con.execute(f"DESCRIBE {table}").fetchall()}
+            assert "model" in cols, table
+        fmodels = [
+            r[0]
+            for r in con.execute(
+                "SELECT DISTINCT COALESCE(model, 'tide') FROM forecast"
+            ).fetchall()
+        ]
+        assert fmodels == ["tide"]
+        bmodels = [
+            r[0]
+            for r in con.execute(
+                "SELECT DISTINCT COALESCE(model, 'tide') FROM backtest_error"
+            ).fetchall()
+        ]
+        assert bmodels == ["tide"]
+
+    # Idempotent
+    r3 = apply_migrations(str(db))
+    assert r3["ok"] is True
+    assert r3["applied"] == []
 
 
 def test_stamp_after_conceptual_rebuild(tmp_path: Path):

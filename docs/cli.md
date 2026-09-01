@@ -30,6 +30,8 @@ Local work should keep **`hfhub_sync=False`** (default) unless you intentionally
 | `forecast` | Run forecasts (full or scoped) | `--tickers`, `--forecast_start_date`, `--dry_run` |
 | `resolve_start` | Print which forecast start date would be used | `--forecast_start_date` |
 | `weekend` | Host job: gather + **live week** forecast for **all** DuckDB `stock_tickers` | `--dry_run`, `--catchup`, `--skip_gather`, `--batch_size`, `--no_covariates` |
+| `timesfm3-forecast` | Research TimesFM-3 zero-shot (IBD50, 12 monthly origins + live) | `--ibd50`, `--origins`, `--tickers`, `--dry_run`. NC/non-production weights. Does not replace TiDE. |
+| `timesfm3-dashboard` | Gradio UI on `:7861` with tide vs timesfm3 side-by-side | `--same_data`. Do not use this as the live `:7860` unit. |
 | `mcp` | MCP server for clients | env `MCP_ALLOW_RUNS=1` for writes; `--http --host --port` for Streamable HTTP |
 | `train` | Continuous model training (full history) | `--new_model` |
 | `modelsearch` | Hyperparameter search | — |
@@ -63,6 +65,19 @@ python -m canswim dashboard --same_data True
 ```
 
 Without `--tickers`, `gatherdata` / `forecast` keep **full-universe / train-style** behavior (longer history, not the lean 2y scoped path).
+
+### TimesFM-3 research (does not replace TiDE)
+
+Weights: HuggingFace `google/timesfm-3.0-pytorch` (non-commercial / non-production). Forecasts write a **sibling** hive `data/forecast-timesfm3/` with `model=timesfm3` so live `data/forecast/` is not mutated.
+
+```bash
+# IBD50, 12 monthly origins + live (uses ~/.canswim/data/data-3rd-party/IBD50.csv)
+hfhub_sync=False data_dir=$HOME/.canswim/data \
+  python -m canswim timesfm3-forecast --ibd50 --origins 12
+
+# Research UI on :7861 (leave live :7860 alone)
+CANSWIM_DASHBOARD_PORT=7861 python -m canswim timesfm3-dashboard --same_data True
+```
 
 ### Weekend job (all symbols in the database)
 

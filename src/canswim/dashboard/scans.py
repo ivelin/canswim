@@ -4,6 +4,8 @@ import gradio as gr
 from canswim.db import (
     list_forecast_start_date_choices,
     scan_forecasts as db_scan_forecasts,
+    FORECAST_MODEL_TIDE,
+    FORECAST_MODEL_TIMESFM3,
 )
 
 
@@ -23,11 +25,14 @@ def _normalize_start_value(current) -> str | None:
 
 class ScanTab:
 
-    def __init__(self, canswim_model: CanswimModel = None, db_path=None):
+    def __init__(
+        self, canswim_model: CanswimModel = None, db_path=None, timesfm3_ui=False
+    ):
         assert canswim_model is not None
         assert db_path is not None
         self.canswim_model = canswim_model
         self.db_path = db_path
+        self.timesfm3_ui = bool(timesfm3_ui)
         # Horizon for open-vs-completed labels (TiDE output_chunk_length when loaded)
         try:
             self._pred_horizon = int(self.canswim_model.pred_horizon)
@@ -87,6 +92,16 @@ class ScanTab:
                 info="Upside vs downside (low-confidence quantile)",
             )
 
+        self.modelPicker = None
+        if self.timesfm3_ui:
+            with gr.Row():
+                self.modelPicker = gr.Radio(
+                    choices=[FORECAST_MODEL_TIDE, FORECAST_MODEL_TIMESFM3],
+                    value=FORECAST_MODEL_TIMESFM3,
+                    label="Timeseries model",
+                    info="Scan tide (TiDE) or timesfm3 (research) forecasts",
+                )
+
         with gr.Row():
             self.scanStatus = gr.Markdown(
                 value="_Pick filters — results update automatically._"
@@ -102,6 +117,8 @@ class ScanTab:
             self.forecastStart,
             self.selectedStart,
         ]
+        if self.modelPicker is not None:
+            scan_inputs.append(self.modelPicker)
         scan_outputs = [self.selectedStart, self.scanStatus, self.scanResult]
 
         # Auto-scan on any control change (same pattern as Charts tab)
@@ -125,6 +142,12 @@ class ScanTab:
             inputs=scan_inputs,
             outputs=scan_outputs,
         )
+        if self.modelPicker is not None:
+            self.modelPicker.change(
+                fn=self.apply_and_scan,
+                inputs=scan_inputs,
+                outputs=scan_outputs,
+            )
         # Optional: reload date list only (new forecast origins in DB)
         self.refreshStartsBtn.click(
             fn=self.refresh_start_dates,
@@ -137,14 +160,22 @@ class ScanTab:
         )
 
     def apply_and_scan(
-        self, lowq, reward, rr, forecast_start_date=None, stored_start=None
+        self,
+        lowq,
+        reward,
+        rr,
+        forecast_start_date=None,
+        stored_start=None,
+        model=None,
     ):
         """Update selection state + run scan. Used by control change handlers."""
         asof = (
             _normalize_start_value(forecast_start_date)
             or _normalize_start_value(stored_start)
         )
-        status, table = self._run_scan(lowq=lowq, reward=reward, rr=rr, asof=asof)
+        status, table = self._run_scan(
+            lowq=lowq, reward=reward, rr=rr, asof=asof, model=model
+        )
         return asof, status, table
 
     def refresh_start_dates(self, current=None, stored=None):
@@ -182,13 +213,17 @@ class ScanTab:
         status, table = self._run_scan(lowq=80, reward=5, rr=1, asof=iso)
         return dd, iso, status, table
 
-    def _run_scan(self, lowq, reward, rr, asof):
+    def _run_scan(self, lowq, reward, rr, asof, model=None):
+        scan_model = model
+        if self.timesfm3_ui and not scan_model:
+            scan_model = FORECAST_MODEL_TIMESFM3
         df = db_scan_forecasts(
             self.db_path,
             lowq=lowq,
             reward=reward,
             rr=rr,
             forecast_start_date=asof,
+            model=scan_model,
         )
         n = 0 if df is None else len(df)
         logger.info(

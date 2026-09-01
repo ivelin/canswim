@@ -44,6 +44,8 @@ parser = argparse.ArgumentParser(
         "NOTE: NOT FINANCIAL OR INVESTMENT ADVICE. USE AT YOUR OWN RISK.\n"
         "Get market data: gatherdata --tickers …\n"
         "Run a forecast: forecast --tickers … [--forecast_start_date] [--dry_run]\n"
+        "TimesFM-3 research: timesfm3-forecast --ibd50 --origins 12\n"
+        "TimesFM-3 dashboard: timesfm3-dashboard (port 7861; does not replace live :7860)\n"
         "See docs/run_triggers.md for start-date rules and operator detail.\n"
         f"{RUNS_OPT_IN_HELP}"
     ),
@@ -66,6 +68,10 @@ parser.add_argument(
         `resolve_start` — show which forecast start date would be used.
         `weekend` — host job: gather + live-week forecast for all DB symbols
           (stock_tickers). Use with systemd timer or cron on weekends.
+        `timesfm3-forecast` — research TimesFM-3 zero-shot on IBD50
+          (12 monthly origins + live). Does not replace TiDE.
+        `timesfm3-dashboard` — Gradio UI on :7861 with tide vs timesfm3
+          side-by-side (does not restart live :7860).
         """,
     choices=[
         "dashboard",
@@ -78,6 +84,8 @@ parser.add_argument(
         "mcp",
         "resolve_start",
         "weekend",
+        "timesfm3-forecast",
+        "timesfm3-dashboard",
     ],
 )
 
@@ -193,6 +201,21 @@ parser.add_argument(
         "With `mcp --http` / streamable-http / sse: bind address "
         "(default 127.0.0.1). Also: CANSWIM_MCP_HOST / MCP_HOST."
     ),
+)
+
+parser.add_argument(
+    "--ibd50",
+    action="store_true",
+    default=False,
+    help="With `timesfm3-forecast`: run the operator IBD50 list only (default for that task).",
+)
+
+parser.add_argument(
+    "--origins",
+    type=int,
+    required=False,
+    default=12,
+    help="With `timesfm3-forecast`: number of prior monthly origins plus live (default 12).",
 )
 
 parser.add_argument(
@@ -320,5 +343,25 @@ match args.task:
             port=args.port,
             http=bool(args.http),
         )
+    case "timesfm3-forecast":
+        from canswim.timesfm3_forecast import main as timesfm3_main
+
+        sys.exit(
+            timesfm3_main(
+                ibd50=True if args.ibd50 or not args.tickers else False,
+                origins=int(args.origins or 12),
+                tickers=args.tickers,
+                dry_run=bool(args.dry_run),
+            )
+        )
+    case "timesfm3-dashboard":
+        from canswim.dashboard import main as dashboard_main
+
+        os.environ.setdefault("CANSWIM_DASHBOARD_PORT", "7861")
+        os.environ.setdefault("GRADIO_SERVER_PORT", "7861")
+        os.environ.setdefault("CANSWIM_TIMESFM3_UI", "1")
+        os.environ.setdefault("CANSWIM_SKIP_TIDE_MODEL", "1")
+        os.environ.setdefault("hfhub_sync", "False")
+        dashboard_main(same_data=args.same_data, timesfm3_ui=True)
     case _:
         logger.error("Unrecognized task argument {m} ", m=args.task)

@@ -134,7 +134,7 @@ Historical example chart:
 python -m canswim -h
 ```
 
-Main tasks: `dashboard`, `gatherdata`, `forecast`, `resolve_start`, `mcp`, `train`, `modelsearch`, `downloaddata`, `uploaddata`.
+Main tasks: `dashboard`, `gatherdata`, `forecast`, `resolve_start`, `mcp`, `train`, `modelsearch`, `downloaddata`, `uploaddata`, `timesfm3-forecast`, `timesfm3-dashboard`.
 
 | Flag | Used by | Meaning |
 |------|---------|---------|

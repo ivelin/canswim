@@ -24,17 +24,17 @@ Scoped gather/forecast also **sync** symbols, forecast rows, and **company profi
 
 **Code:** `canswim.db` (tables), `canswim.db_migrations` (version + upgrades).  
 **Runtime export:** MCP `get_db_schema` / `describe_search_schema()` (live columns, types, indexes, `schema_version`).  
-**Current schema version:** `CURRENT_SCHEMA_VERSION` in `src/canswim/db_migrations.py` (v**1** as of this doc).
+**Current schema version:** `CURRENT_SCHEMA_VERSION` in `src/canswim/db_migrations.py` (v**2** as of this doc).
 
 ### Core tables (required for reuse)
 
 | Table | Role | Typical keys / columns |
 |-------|------|-------------------------|
 | `stock_tickers` | Charts/Scans symbol universe | `symbol` (or `Symbol`) |
-| `forecast` | Quantile paths | `symbol`, `start_date` (origin), `date` (horizon day), `close_quantile_*` |
-| `latest_forecast` | Per-symbol latest origin | `symbol`, `date` (= max start_date) |
+| `forecast` | Quantile paths | `symbol`, `model` (`tide` \| `timesfm3`), `start_date` (origin), `date` (horizon day), `close_quantile_*` |
+| `latest_forecast` | Per-symbol latest **tide** origin | `symbol`, `date` (= max tide start_date), `model` |
 | `close_price` | Historical closes | `Date`, `Symbol`/`symbol`, `Close` |
-| `backtest_error` | Mean abs log-error of median vs close | `symbol`, `start_date`, `mal_error` |
+| `backtest_error` | Mean abs log-error of median vs close | `symbol`, `model`, `start_date`, `mal_error` |
 
 ### Optional tables
 
@@ -48,17 +48,18 @@ Scoped gather/forecast also **sync** symbols, forecast rows, and **company profi
 | Parquet / path | DuckDB table | Notes |
 |----------------|--------------|--------|
 | `symbol_lists/*.csv` ∪ price ∪ forecast hive | `stock_tickers` | Union on rebuild; expand on reuse |
-| `data/forecast/**/*.parquet` (hive) | `forecast`, `latest_forecast` | Rebuild from hive partitions |
+| `data/forecast/**/*.parquet` (hive, TiDE) | `forecast` (`model=tide`), `latest_forecast` | Rebuild from hive partitions; missing model tagged tide |
+| `data/forecast-timesfm3/**/*.parquet` | `forecast` (`model=timesfm3`) | Sibling hive — does not mutate tide parquet |
 | `data-3rd-party/all_stocks_price_hist_1d.parquet` | `close_price` | Target column (default Close) |
 | (derived from forecast + close) | `backtest_error` | Computed on rebuild / refreshed on forecast sync |
 | `data-3rd-party/company_profile.parquet` | `company_profile` | Optional; lazy repair on reuse |
 
 ### Indexes (created on full rebuild)
 
-- `forecast_symd_idx` on `forecast (symbol, start_date, date)`
-- `latest_forecast_symd_idx` on `latest_forecast (symbol, date)`
+- `forecast_symd_idx` on `forecast (symbol, model, start_date, date)`
+- `latest_forecast_symd_idx` on `latest_forecast (symbol, date)` (one row per symbol; tide)
 - `close_price_symd_idx` on `close_price (symbol, date)`
-- `backtest_error_sym_start_idx` on `backtest_error (symbol, start_date)`
+- `backtest_error_sym_start_idx` on `backtest_error (symbol, model, start_date)`
 
 Column casing may vary (`Symbol` vs `symbol`); prefer `upper(symbol)` joins in custom SQL.
 
@@ -100,6 +101,7 @@ Column casing may vary (`Symbol` vs `symbol`); prefer `upper(symbol)` joins in c
 | Version | Name | App note | What the migration does |
 |---------|------|----------|-------------------------|
 | **1** | `baseline_search_v1` | Introduced with schema versioning | Ensures `canswim_schema_meta`; ensures optional `company_profile`; stamps `schema_version=1`. Legacy DBs with core tables but no meta are treated as v0 → v1. |
+| **2** | `forecast_model_column_v2` | TimesFM-3 research path (branch `canswim-timesfm3`) | `ALTER TABLE` add `model VARCHAR DEFAULT 'tide'` on `forecast`, `backtest_error`, `latest_forecast`; tag existing rows `tide`; unique indexes on forecast/backtest_error include `model`. Additive — does **not** drop tide rows. TimesFM-3 parquet lives under `data/forecast-timesfm3/` (copy, not mutate tide hive). |
 
 *When adding v2+: append a row here in the same PR as the code migration.*
 

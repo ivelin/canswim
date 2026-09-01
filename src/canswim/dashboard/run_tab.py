@@ -534,9 +534,11 @@ class RunTab:
         charts_ticker_dropdown=None,
         charts_tab=None,
         db_status_banner=None,  # unused; kept for call-site compatibility
+        timesfm3_ui=False,
     ):
         self.canswim_model = canswim_model
         self.db_path = db_path
+        self.timesfm3_ui = bool(timesfm3_ui)
         # Prefer full charts_tab (replot after refresh); fallback to dropdown only
         self.charts_tab = charts_tab
         self.charts_ticker_dropdown = (
@@ -547,6 +549,60 @@ class RunTab:
         self.db_status_banner = None  # no global debug banner
 
         # ---- Primary path only (everything else under More options) ----
+        if self.timesfm3_ui:
+            with gr.Group():
+                gr.Markdown(
+                    "### TimesFM-3 research forecast\n"
+                    "Pick **timesfm3** to run IBD50 12-month backtest + live "
+                    "(writes `forecast-timesfm3/` parquet, tags DuckDB `model=timesfm3`). "
+                    "Does not replace live TiDE. Weights are NC / non-production."
+                )
+                self.tfmModel = gr.Radio(
+                    choices=["timesfm3", "tide"],
+                    value="timesfm3",
+                    label="Timeseries model for new forecast",
+                )
+                self.tfmOrigins = gr.Number(
+                    value=12,
+                    precision=0,
+                    label="Monthly backtest origins (+ live)",
+                )
+                self.tfmRunBtn = gr.Button(
+                    "Run TimesFM-3 IBD50 forecast", variant="primary"
+                )
+                self.tfmStatus = gr.Markdown(
+                    "_Idle — click to forecast IBD50 with TimesFM-3._"
+                )
+
+                def _run_tfm(model, n_orig):
+                    if str(model).lower() != "timesfm3":
+                        return (
+                            "Use the live :7860 dashboard / TiDE Run tab for **tide**. "
+                            "This research UI runs TimesFM-3 only."
+                        )
+                    try:
+                        from canswim.timesfm3_forecast import run_timesfm3_forecast
+
+                        n = int(n_orig or 12)
+                        result = run_timesfm3_forecast(
+                            ibd50=True, origins=n, dry_run=False
+                        )
+                        saved = len(result.get("saved") or [])
+                        skipped = len(result.get("skipped") or [])
+                        ok = "✅" if result.get("ok") else "⚠️"
+                        return (
+                            f"{ok} TimesFM-3 saved **{saved}** symbol@origin rows, "
+                            f"skipped {skipped}. Parquet: `{result.get('parquet_dir')}`"
+                        )
+                    except Exception as e:
+                        return f"❌ TimesFM-3 run failed: {type(e).__name__}: {e}"
+
+                self.tfmRunBtn.click(
+                    fn=_run_tfm,
+                    inputs=[self.tfmModel, self.tfmOrigins],
+                    outputs=[self.tfmStatus],
+                )
+
         with gr.Group():
             gr.Markdown(f"### {REFRESH_SYMBOLS_SECTION_TITLE}")
             gr.Markdown(REFRESH_SYMBOLS_SECTION_HELP.strip())
