@@ -66,6 +66,9 @@ if ! "${PY[@]}" -c "import pytest" 2>/dev/null; then
   "${PY[@]}" -m pip install -q -e ".[dev]"
 fi
 
+echo "==> verify:user-path (python -m canswim -h)"
+./scripts/verify-user-path
+
 echo "==> python -m pytest tests/canswim/ -v   # same path + flags as GHA Tests"
 # Isolation: tests/conftest.py (autouse temp data_dir + write guards).
 "${PY[@]}" -m pytest tests/canswim/ -v --tb=short

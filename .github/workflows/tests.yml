@@ -33,6 +33,11 @@ jobs:
         mkdir -p data/data-3rd-party
         mkdir -p data/forecast
     
+    - name: verify:user-path (CLI help; never production)
+      run: |
+        echo "CI green on this job is necessary and is not an independent pstack verdict."
+        python -m canswim -h
+
     - name: Run tests
       run: |
         python -m pytest tests/canswim/ -v
